@@ -1,13 +1,44 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import multipart from "@fastify/multipart";
 import { timingSafeEqual } from "node:crypto";
-import { healthResponseSchema, legalDocumentResponseSchema, partnerOnboardingRequestSchema, readyResponseSchema } from "@watch/contracts";
+import {
+  adminCategoryCreateRequestSchema,
+  adminCategoryListQuerySchema,
+  adminCategoryPatchRequestSchema,
+  adminProductCreateRequestSchema,
+  adminProductListQuerySchema,
+  adminProductPatchRequestSchema,
+  adminVariantCreateRequestSchema,
+  adminVariantPatchRequestSchema,
+  adminTextAssetRequestSchema,
+  adminAssetPatchRequestSchema,
+  assetPurposeSchema,
+  MAX_MEDIA_MULTIPART_BYTES,
+  MAX_VIDEO_UPLOAD_BYTES,
+  healthResponseSchema,
+  legalDocumentResponseSchema,
+  partnerOnboardingRequestSchema,
+  readyResponseSchema,
+  storefrontProductsQuerySchema
+} from "@watch/contracts";
 import type { LegalDocumentType } from "@watch/config";
-import { createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
+import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
 import { InvalidTelegramInitData, verifyTelegramInitData } from "./auth/telegram.js";
+import type { CatalogService } from "./catalog/catalog.js";
+import { CatalogNotFoundError, CatalogValidationError } from "./catalog/catalog.js";
+import { ActiveProductInvariantError } from "./catalog/invariant.js";
+import { type AssetService, StorageUnavailableError } from "./catalog/assets.js";
+import { stageMedia } from "./catalog/media-upload.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
+
+export type CatalogApi = Pick<CatalogService,
+  "listCategories" | "createCategory" | "updateCategory"
+  | "listProducts" | "getProduct" | "createProduct" | "updateProduct"
+  | "createVariant" | "updateVariant"
+  | "listStorefrontCategories" | "listStorefrontProducts" | "getStorefrontProduct">;
 
 export interface AppDependencies {
   checkReadiness: () => Promise<void>;
@@ -24,11 +55,53 @@ export interface AppDependencies {
     loadState: (userId: string) => Promise<PartnerState>;
     onboard: (userId: string, documentId: string, documentVersion: string) => Promise<OnboardResult>;
   };
+  catalog?: { service: CatalogApi };
+  assets?: { service: AssetService };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, catalog, assets, webhook }: AppDependencies) {
   const app = Fastify({ logger });
+  if (assets) {
+    app.register(multipart, { limits: {
+      files: 1, fields: 3, parts: 4, fieldSize: 100, fieldNameSize: 32,
+      headerPairs: 12, fileSize: MAX_VIDEO_UPLOAD_BYTES + 1
+    } });
+  }
+
+  const catalogError = (request: FastifyRequest, reply: FastifyReply, error: unknown): void => {
+    if (error instanceof CatalogValidationError) {
+      reply.code(400).send({
+        error: { code: "VALIDATION_ERROR", message: error.message, details: error.details, requestId: request.id }
+      });
+      return;
+    }
+    if (error instanceof ActiveProductInvariantError) {
+      reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "ACTIVE Product invariant is not satisfied",
+          details: { productId: error.invariant.productId, unmet: error.invariant.unmet },
+          requestId: request.id
+        }
+      });
+      return;
+    }
+    if (error instanceof CatalogNotFoundError) {
+      reply.code(404).send({
+        error: { code: "NOT_FOUND", message: error.message, details: {}, requestId: request.id }
+      });
+      return;
+    }
+    if (error instanceof StorageUnavailableError) {
+      reply.code(503).send({ error: { code: "STORAGE_UNAVAILABLE", message: error.message, details: {}, requestId: request.id } });
+      return;
+    }
+    throw error;
+  };
+
+  const validUuid = (value: string | undefined): value is string =>
+    typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
   app.get("/health", async () => healthResponseSchema.parse({ status: "ok" }));
 
@@ -126,6 +199,264 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         }
         return { partner: result.partner };
       });
+    }
+
+    if (catalog) {
+      const service = catalog.service;
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+
+      app.get("/api/v1/catalog/categories", { preHandler: requireSession }, async () => {
+        return service.listStorefrontCategories();
+      });
+
+      app.get("/api/v1/catalog/products", { preHandler: requireSession }, async (request, reply) => {
+        const parsed = storefrontProductsQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid catalog query", details: {}, requestId: request.id }
+          });
+        }
+        return service.listStorefrontProducts(parsed.data);
+      });
+
+      app.get("/api/v1/catalog/products/:slug", { preHandler: requireSession }, async (request, reply) => {
+        const slug = (request.params as { slug?: string }).slug ?? "";
+        try {
+          return await service.getStorefrontProduct(slug);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.get("/api/v1/admin/categories", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const parsed = adminCategoryListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid category query", details: {}, requestId: request.id }
+          });
+        }
+        return service.listCategories(parsed.data);
+      });
+
+      app.post("/api/v1/admin/categories", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const parsed = adminCategoryCreateRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid category request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.createCategory(request.auth!.user.id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.patch("/api/v1/admin/categories/:id", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminCategoryPatchRequestSchema.safeParse(request.body);
+        if (!validUuid(id)) {
+          return reply.code(404).send({
+            error: { code: "NOT_FOUND", message: "Category not found", details: {}, requestId: request.id }
+          });
+        }
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid category request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.updateCategory(request.auth!.user.id, id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.get("/api/v1/admin/products", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const parsed = adminProductListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid product query", details: {}, requestId: request.id }
+          });
+        }
+        return service.listProducts(parsed.data);
+      });
+
+      app.post("/api/v1/admin/products", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const parsed = adminProductCreateRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid product request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.createProduct(request.auth!.user.id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.get("/api/v1/admin/products/:id", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) {
+          return reply.code(404).send({
+            error: { code: "NOT_FOUND", message: "Product not found", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.getProduct(id);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.patch("/api/v1/admin/products/:id", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminProductPatchRequestSchema.safeParse(request.body);
+        if (!validUuid(id)) {
+          return reply.code(404).send({
+            error: { code: "NOT_FOUND", message: "Product not found", details: {}, requestId: request.id }
+          });
+        }
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid product request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.updateProduct(request.auth!.user.id, id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.post("/api/v1/admin/products/:id/variants", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminVariantCreateRequestSchema.safeParse(request.body);
+        if (!validUuid(id)) {
+          return reply.code(404).send({
+            error: { code: "NOT_FOUND", message: "Product not found", details: {}, requestId: request.id }
+          });
+        }
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid variant request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.createVariant(request.auth!.user.id, id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      app.patch("/api/v1/admin/variants/:id", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminVariantPatchRequestSchema.safeParse(request.body);
+        if (!validUuid(id)) {
+          return reply.code(404).send({
+            error: { code: "NOT_FOUND", message: "Variant not found", details: {}, requestId: request.id }
+          });
+        }
+        if (!parsed.success) {
+          return reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid variant request", details: {}, requestId: request.id }
+          });
+        }
+        try {
+          return await service.updateVariant(request.auth!.user.id, id, parsed.data);
+        } catch (error) {
+          catalogError(request, reply, error);
+          return reply;
+        }
+      });
+
+      if (assets) {
+        const assetService = assets.service;
+        app.post("/api/v1/admin/products/:id/assets/text", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+          const id = (request.params as { id?: string }).id;
+          if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Product not found", details: {}, requestId: request.id } });
+          const parsed = adminTextAssetRequestSchema.safeParse(request.body);
+          if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid text asset", details: {}, requestId: request.id } });
+          try { return await assetService.createText(request.auth!.user.id, id, parsed.data); }
+          catch (error) { catalogError(request, reply, error); return reply; }
+        });
+
+        app.patch("/api/v1/admin/assets/:id", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+          const id = (request.params as { id?: string }).id;
+          if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Asset not found", details: {}, requestId: request.id } });
+          const parsed = adminAssetPatchRequestSchema.safeParse(request.body);
+          if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid asset update", details: {}, requestId: request.id } });
+          try { return await assetService.update(request.auth!.user.id, id, parsed.data); }
+          catch (error) { catalogError(request, reply, error); return reply; }
+        });
+
+        app.post("/api/v1/admin/products/:id/assets/media", {
+          bodyLimit: MAX_MEDIA_MULTIPART_BYTES,
+          preHandler: [requireSession, requireCsrf, requireAdmin]
+        }, async (request, reply) => {
+          const id = (request.params as { id?: string }).id;
+          if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Product not found", details: {}, requestId: request.id } });
+          const declaredLength = Number(request.headers["content-length"]);
+          if (Number.isFinite(declaredLength) && declaredLength > MAX_MEDIA_MULTIPART_BYTES) {
+            return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Multipart request exceeds upload limit", details: {}, requestId: request.id } });
+          }
+          let staged: Awaited<ReturnType<typeof stageMedia>> | undefined;
+          let mimeType: string | undefined;
+          const fields: Record<string, unknown> = {};
+          try {
+            for await (const part of request.parts()) {
+              if (part.type === "file") {
+                if (staged || part.fieldname !== "file") throw new CatalogValidationError("Expected one media file");
+                staged = await stageMedia(part);
+                mimeType = part.mimetype;
+              } else {
+                if (part.valueTruncated || fields[part.fieldname] !== undefined) throw new CatalogValidationError("Invalid media fields");
+                fields[part.fieldname] = part.value;
+              }
+            }
+            if (!staged || !assetPurposeSchema.safeParse(fields.purpose).success ||
+                (fields.variantId !== undefined && !validUuid(String(fields.variantId))) ||
+                Object.keys(fields).some((key) => !["purpose", "variantId"].includes(key))) {
+              throw new CatalogValidationError("Invalid media asset request");
+            }
+            return await assetService.createMedia(request.auth!.user.id, id, {
+              type: staged.type, path: staged.path, sizeBytes: staged.sizeBytes,
+              mimeType: mimeType!, purpose: fields.purpose as "STOREFRONT" | "PARTNER_CONTENT",
+              variantId: fields.variantId === undefined ? null : String(fields.variantId)
+            });
+          } catch (error) {
+            if (error instanceof CatalogValidationError || error instanceof CatalogNotFoundError || error instanceof StorageUnavailableError || error instanceof ActiveProductInvariantError) {
+              catalogError(request, reply, error);
+            } else if (error instanceof Error && "code" in error && typeof error.code === "string" &&
+                error.code.startsWith("FST_")) {
+              catalogError(request, reply, new CatalogValidationError("Media upload exceeds request limits"));
+            } else throw error;
+            return reply;
+          } finally { await staged?.cleanup(); }
+        });
+
+        app.get("/api/v1/catalog/assets/:id/media", { preHandler: requireSession }, async (request, reply) => {
+          const id = (request.params as { id?: string }).id;
+          if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Asset not found", details: {}, requestId: request.id } });
+          try {
+            const partnerAccess = partner ? (await partner.loadState(request.auth!.user.id)).partner !== null : false;
+            const media = await assetService.media(id, partnerAccess);
+            return reply.header("Content-Type", media.mimeType)
+              .header("Content-Length", media.sizeBytes)
+              .header("Cache-Control", "private, no-store")
+              .header("X-Content-Type-Options", "nosniff")
+              .send(media.stream);
+          } catch (error) { catalogError(request, reply, error); return reply; }
+        });
+      }
     }
 
     if (legal) {

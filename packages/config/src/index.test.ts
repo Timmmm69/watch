@@ -15,6 +15,7 @@ describe("API runtime configuration", () => {
     SUPPORT_CONTACT: "@support",
     ADMIN_TELEGRAM_IDS: "42, 9007199254740993",
     CSRF_SECRET: Buffer.alloc(32, 7).toString("base64url"),
+    PLATFORM_CURRENCY: "BYN",
     LEGAL_PARTNER_TERMS_ID: partnerTermsId,
     LEGAL_PARTNER_TERMS_VERSION: "2026-09-01"
   };
@@ -27,6 +28,14 @@ describe("API runtime configuration", () => {
       ADMIN_TELEGRAM_IDS: ["42", "9007199254740993"],
       CSRF_SECRET: Buffer.alloc(32, 7)
     });
+  });
+
+  it("requires a 3-letter PLATFORM_CURRENCY", () => {
+    expect(() => loadApiRuntimeConfig({ ...valid, PLATFORM_CURRENCY: undefined })).toThrow();
+    for (const currency of ["byn", "RUB ", "EURO", "12"]) {
+      expect(() => loadApiRuntimeConfig({ ...valid, PLATFORM_CURRENCY: currency })).toThrow();
+    }
+    expect(loadApiRuntimeConfig({ ...valid, PLATFORM_CURRENCY: "USD" })).toMatchObject({ PLATFORM_CURRENCY: "USD" });
   });
 
   it("rejects duplicate or malformed Admin IDs and invalid CSRF secrets", () => {

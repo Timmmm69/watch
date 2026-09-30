@@ -11,10 +11,13 @@
     "worker:dev": "tsx watch src/telegram/worker.ts",
     "telegram:configure": "tsx src/telegram/configure.ts",
     "legal:publish": "tsx src/legal/publish.ts",
+    "catalog:bootstrap": "tsx src/catalog/bootstrap.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1142.0",
+    "@fastify/multipart": "^10.1.2",
     "@watch/config": "workspace:*",
     "@watch/contracts": "workspace:*",
     "@watch/db": "workspace:*",

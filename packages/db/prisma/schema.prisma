@@ -119,6 +119,174 @@ model PartnerTermsAcceptance {
   @@map("partner_terms_acceptances")
 }
 
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CategoryStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum VariantStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  TEXT
+}
+
+enum AssetPurpose {
+  STOREFRONT
+  PARTNER_CONTENT
+}
+
+enum AssetStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum InventorySourceStatus {
+  UNINITIALIZED
+  OK
+  MISSING
+  INVALID
+}
+
+model PlatformSetting {
+  singletonId      Int      @id @default(1) @map("singleton_id") @db.SmallInt
+  platformCurrency String   @unique @map("platform_currency") @db.VarChar(3)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
+model Supplier {
+  id        String         @id @default(uuid()) @db.Uuid
+  name      String         @db.VarChar(200)
+  status    SupplierStatus @default(ACTIVE)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  products  Product[]
+
+  @@map("suppliers")
+}
+
+model Category {
+  id        String         @id @default(uuid()) @db.Uuid
+  name      String         @db.VarChar(120)
+  slug      String         @unique @db.VarChar(140)
+  sortOrder Int            @default(0) @map("sort_order")
+  status    CategoryStatus @default(ACTIVE)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  products  ProductCategory[]
+
+  @@index([status, sortOrder])
+  @@map("categories")
+}
+
+model Product {
+  id             String          @id @default(uuid()) @db.Uuid
+  supplierId     String          @map("supplier_id") @db.Uuid
+  title          String          @db.VarChar(200)
+  slug           String          @unique @db.VarChar(220)
+  description    String          @default("")
+  brand          String?         @db.VarChar(120)
+  specifications Json            @default("{}") @db.JsonB
+  status         ProductStatus   @default(DRAFT)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  variants       ProductVariant[]
+  categories     ProductCategory[]
+  assets         ProductAsset[]
+
+  @@index([supplierId, status])
+  @@index([status, brand])
+  @@map("products")
+}
+
+model ProductVariant {
+  id                           String          @id @default(uuid()) @db.Uuid
+  productId                    String          @map("product_id") @db.Uuid
+  sku                          String          @unique @db.VarChar(100)
+  attributes                   Json            @default("{}") @db.JsonB
+  priceMinor                   Int             @map("price_minor")
+  currency                     String          @db.VarChar(3)
+  partnerCommissionUnitMinor   Int             @map("partner_commission_unit_minor")
+  supplierSettlementUnitMinor  Int?            @map("supplier_settlement_unit_minor")
+  inventoryExternalKey         String          @unique @map("inventory_external_key") @db.VarChar(200)
+  status                       VariantStatus   @default(DRAFT)
+  createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  product                      Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  inventoryItem                InventoryItem?
+  assets                       ProductAsset[]
+
+  @@unique([id, productId])
+  @@index([productId, status])
+  @@map("product_variants")
+}
+
+model ProductCategory {
+  productId String   @map("product_id") @db.Uuid
+  categoryId String  @map("category_id") @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category  Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([productId, categoryId])
+  @@index([categoryId, productId])
+  @@map("product_categories")
+}
+
+model ProductAsset {
+  id          String       @id @default(uuid()) @db.Uuid
+  productId   String       @map("product_id") @db.Uuid
+  variantId   String?      @map("variant_id") @db.Uuid
+  type        AssetType
+  purpose     AssetPurpose
+  storageKey  String?      @map("storage_key") @db.VarChar(500)
+  textContent String?      @map("text_content")
+  mimeType    String?      @map("mime_type") @db.VarChar(100)
+  sizeBytes   Int?         @map("size_bytes")
+  sortOrder   Int          @default(0) @map("sort_order")
+  status      AssetStatus  @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant     ProductVariant? @relation(fields: [variantId, productId], references: [id, productId], onDelete: Restrict)
+
+  @@index([productId, purpose, status, sortOrder])
+  @@map("product_assets")
+}
+
+model InventoryItem {
+  variantId                String                @id @map("variant_id") @db.Uuid
+  sourceQuantity           Int?                  @map("source_quantity")
+  safetyBuffer             Int                   @default(0) @map("safety_buffer")
+  sourceStatus             InventorySourceStatus @default(UNINITIALIZED) @map("source_status")
+  sourceVersion            String?               @map("source_version") @db.VarChar(200)
+  lastAttemptAt            DateTime?             @map("last_attempt_at") @db.Timestamptz(6)
+  lastSuccessfulSyncAt     DateTime?             @map("last_successful_sync_at") @db.Timestamptz(6)
+  lastSuccessfulSyncRunId  String?               @map("last_successful_sync_run_id") @db.Uuid
+  updatedAt                DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  variant                  ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@map("inventory_items")
+}
+
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
   actorUserId String?  @map("actor_user_id") @db.Uuid

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { deriveCsrfToken } from "./auth/middleware.js";
 import { SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
+import { CatalogNotFoundError, CatalogValidationError } from "./catalog/catalog.js";
+import { ActiveProductInvariantError } from "./catalog/invariant.js";
 
 describe("infrastructure endpoints", () => {
   it("serves liveness without checking dependencies", async () => {
@@ -202,6 +204,120 @@ describe("partner onboarding endpoint", () => {
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe("CSRF_INVALID");
     expect(onboard).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe("catalog endpoints", () => {
+  const secret = Buffer.alloc(32, 9);
+  const admin = {
+    session: { id: "session-1", userId: "user-1", createdAt: new Date(), expiresAt: new Date(), revokedAt: null },
+    user: { id: "user-1", telegramUserId: "42", firstName: "Ada", lastName: null, username: null,
+      languageCode: null, isAdmin: true, isBlocked: false }
+  };
+  const buyer = {
+    session: { id: "session-2", userId: "user-2", createdAt: new Date(), expiresAt: new Date(), revokedAt: null },
+    user: { id: "user-2", telegramUserId: "43", firstName: "Bob", lastName: null, username: null,
+      languageCode: null, isAdmin: false, isBlocked: false }
+  };
+  const adminCookie = `${SESSION_COOKIE_NAME}=${"a".repeat(43)}`;
+  const buyerCookie = `${SESSION_COOKIE_NAME}=${"b".repeat(43)}`;
+  const adminCsrf = deriveCsrfToken(secret, "session-1");
+  const categoryId = "00000000-0000-4000-8000-000000000020";
+  const category = {
+    id: categoryId, name: "Наручные", slug: "watches", sortOrder: 0, status: "ACTIVE",
+    createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z"
+  };
+
+  function buildApp(service: Record<string, unknown>, session = admin) {
+    const loadCurrent = vi.fn().mockImplementation((token: string) => {
+      if (token === "a".repeat(43)) return Promise.resolve(admin);
+      if (token === "b".repeat(43)) return Promise.resolve(buyer);
+      return Promise.resolve(session);
+    });
+    return createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set(["42"]) },
+      catalog: { service: service as never } });
+  }
+
+  it("creates a category for an authorized Admin", async () => {
+    const createCategory = vi.fn().mockResolvedValue(category);
+    const app = buildApp({ createCategory });
+    const response = await app.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: adminCookie, origin: "https://app.example", "x-csrf-token": adminCsrf },
+      payload: { name: "Наручные", sortOrder: 0 } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: categoryId, slug: "watches" });
+    expect(createCategory).toHaveBeenCalledWith("user-1", { name: "Наручные", slug: undefined, sortOrder: 0 });
+    await app.close();
+  });
+
+  it("rejects non-Admin users and missing CSRF for Admin catalog mutations", async () => {
+    const createCategory = vi.fn();
+    const app = buildApp({ createCategory });
+    const forbidden = await app.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: buyerCookie, origin: "https://app.example", "x-csrf-token": deriveCsrfToken(secret, "session-2") },
+      payload: { name: "Наручные" } });
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json().error.code).toBe("ADMIN_REQUIRED");
+    const noCsrf = await app.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: adminCookie, origin: "https://app.example" }, payload: { name: "Наручные" } });
+    expect(noCsrf.statusCode).toBe(403);
+    expect(noCsrf.json().error.code).toBe("CSRF_INVALID");
+    expect(createCategory).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("maps catalog validation, invariant, and not-found errors", async () => {
+    const createCategory = vi.fn().mockRejectedValue(new CatalogValidationError("Slug already in use", { field: "slug" }));
+    const app = buildApp({ createCategory });
+    const response = await app.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: adminCookie, origin: "https://app.example", "x-csrf-token": adminCsrf },
+      payload: { name: "Наручные" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatchObject({ code: "VALIDATION_ERROR", message: "Slug already in use" });
+    expect(response.json().error.details).toEqual({ field: "slug" });
+
+    const invariant = vi.fn().mockRejectedValue(
+      new ActiveProductInvariantError({ productId: "00000000-0000-4000-8000-000000000030", unmet: ["ACTIVE_STOREFRONT_IMAGE_REQUIRED"] })
+    );
+    const invariantApp = buildApp({ createCategory: invariant });
+    const invariantResponse = await invariantApp.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: adminCookie, origin: "https://app.example", "x-csrf-token": adminCsrf },
+      payload: { name: "Наручные" } });
+    expect(invariantResponse.statusCode).toBe(400);
+    expect(invariantResponse.json().error).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(invariantResponse.json().error.details).toEqual({
+      productId: "00000000-0000-4000-8000-000000000030", unmet: ["ACTIVE_STOREFRONT_IMAGE_REQUIRED"]
+    });
+
+    const missing = vi.fn().mockRejectedValue(new CatalogNotFoundError("Category not found"));
+    const missingApp = buildApp({ createCategory: missing });
+    const missingResponse = await missingApp.inject({ method: "POST", url: "/api/v1/admin/categories",
+      headers: { cookie: adminCookie, origin: "https://app.example", "x-csrf-token": adminCsrf },
+      payload: { name: "Наручные" } });
+    expect(missingResponse.statusCode).toBe(404);
+    expect(missingResponse.json().error.code).toBe("NOT_FOUND");
+    await app.close();
+    await invariantApp.close();
+    await missingApp.close();
+  });
+
+  it("serves the buyer catalog shell only to authenticated users", async () => {
+    const listStorefrontCategories = vi.fn().mockResolvedValue({ items: [{ id: categoryId, name: "Наручные", slug: "watches", sortOrder: 0 }] });
+    const listStorefrontProducts = vi.fn().mockResolvedValue({ items: [], page: 1, limit: 20, total: 0 });
+    const app = buildApp({ listStorefrontCategories, listStorefrontProducts });
+    const categories = await app.inject({ method: "GET", url: "/api/v1/catalog/categories", headers: { cookie: buyerCookie } });
+    expect(categories.statusCode).toBe(200);
+    expect(categories.json()).toEqual({ items: [{ id: categoryId, name: "Наручные", slug: "watches", sortOrder: 0 }] });
+    const products = await app.inject({ method: "GET", url: "/api/v1/catalog/products?page=1&limit=20", headers: { cookie: buyerCookie } });
+    expect(products.statusCode).toBe(200);
+    expect(products.json()).toEqual({ items: [], page: 1, limit: 20, total: 0 });
+    expect(listStorefrontProducts).toHaveBeenCalledWith({ page: 1, limit: 20 });
+    const anonymous = await app.inject({ method: "GET", url: "/api/v1/catalog/categories" });
+    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.json().error.code).toBe("AUTH_REQUIRED");
     await app.close();
   });
 });
