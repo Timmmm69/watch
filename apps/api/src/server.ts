@@ -8,6 +8,7 @@ import { CatalogService } from "./catalog/catalog.js";
 import { AssetService, S3ObjectStorage } from "./catalog/assets.js";
 import { LegalDocuments } from "./legal/legal.js";
 import { PartnerService } from "./partner/partner.js";
+import { ReferralService } from "./referral/referral.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -43,6 +44,7 @@ const app = createApp({
   },
   legal: legalDocuments,
   partner: partnerService,
+  referral: new ReferralService(pool, legalDocuments, runtimeConfig.TELEGRAM_BOT_USERNAME),
   catalog: { service: catalogService },
   assets: { service: assetService },
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }

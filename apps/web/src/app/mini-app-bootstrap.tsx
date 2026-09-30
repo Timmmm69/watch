@@ -5,6 +5,9 @@ import { Storefront } from "./storefront";
 
 interface AuthResponse {
   user: { firstName: string };
+  partner?: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
+  partnerTermsReacceptRequired?: boolean;
+  csrfToken: string;
   launchTarget?: string;
 }
 
@@ -16,7 +19,7 @@ declare global {
 
 export function MiniAppBootstrap() {
   const started = useRef(false);
-  const [state, setState] = useState<{ name?: string; error?: string }>({});
+  const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
 
   useEffect(() => {
     if (started.current) return;
@@ -40,14 +43,15 @@ export function MiniAppBootstrap() {
       if (!response.ok) throw new Error("Authentication failed");
       return response.json() as Promise<AuthResponse>;
     }).then((result) => {
-      if (result.launchTarget && window.location.pathname === "/") {
+      if (result.launchTarget && (window.location.pathname === "/" || result.launchTarget.includes("?product="))) {
         window.history.replaceState(null, "", result.launchTarget);
       }
-      setState({ name: result.user.firstName });
+      setState({ auth: result });
     }).catch(() => setState({ error: "Не удалось войти. Откройте приложение заново через Telegram." }));
   }, []);
 
-  if (state.name) return <Storefront name={state.name} />;
+  if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}
+    partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
     <div className="text-center"><h1 className="text-2xl font-semibold">Watch</h1>
       <p className="mt-4">{state.error ?? "Вход через Telegram…"}</p></div>

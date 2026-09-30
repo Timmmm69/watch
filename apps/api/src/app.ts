@@ -33,6 +33,7 @@ import { stageMedia } from "./catalog/media-upload.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
+import { ReferralError, type ReferralService } from "./referral/referral.js";
 
 export type CatalogApi = Pick<CatalogService,
   "listCategories" | "createCategory" | "updateCategory"
@@ -55,12 +56,13 @@ export interface AppDependencies {
     loadState: (userId: string) => Promise<PartnerState>;
     onboard: (userId: string, documentId: string, documentVersion: string) => Promise<OnboardResult>;
   };
+  referral?: ReferralService;
   catalog?: { service: CatalogApi };
   assets?: { service: AssetService };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, catalog, assets, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, assets, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -103,6 +105,13 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
   const validUuid = (value: string | undefined): value is string =>
     typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
+  const referralError = (request: FastifyRequest, reply: FastifyReply, error: unknown): void => {
+    if (!(error instanceof ReferralError)) throw error;
+    reply.code(error.code === "NOT_FOUND" || error.code === "PARTNER_REQUIRED" ? 404 : 403).send({
+      error: { code: error.code, message: error.message, details: {}, requestId: request.id }
+    });
+  };
+
   app.get("/health", async () => healthResponseSchema.parse({ status: "ok" }));
 
   app.get("/ready", async (request, reply) => {
@@ -138,7 +147,8 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
       }
       try {
         const identity = verifyTelegramInitData((body as { initData: string }).initData, auth.botToken!);
-        const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie));
+        const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie),
+          referral ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
         reply.header("Set-Cookie", serializeSessionCookie(current.token, current.session.expiresAt,
           new URL(auth.appBaseUrl).protocol === "https:"));
         const state = await partnerState(current.user.id);
@@ -149,7 +159,7 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
           partner: state.partner, isAdmin: isAdmin(current, auth.adminIds()),
           partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
           csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id),
-          launchTarget: "/shop"
+          launchTarget: current.launchTarget ?? "/shop"
         };
       } catch (error) {
         if (error instanceof InvalidTelegramInitData || error instanceof BlockedUserError) {
@@ -198,6 +208,35 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
           return reply.code(409).send({ error: { code: "TERMS_VERSION_CHANGED", message: "Partner Terms version changed", details: { currentDocument: result.currentDocument }, requestId: request.id } });
         }
         return { partner: result.partner };
+      });
+    }
+
+    if (referral) {
+      app.post("/api/v1/partner/referral-links", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+        const body = request.body;
+        if (!body || typeof body !== "object" || Array.isArray(body) ||
+            !Object.hasOwn(body, "productId") || Object.keys(body).some((key) => key !== "productId") ||
+            ((body as { productId: unknown }).productId !== null &&
+              !validUuid((body as { productId?: string }).productId))) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid referral scope", details: {}, requestId: request.id } });
+        }
+        try { return await referral.getOrCreate(request.auth!.user.id, (body as { productId: string | null }).productId); }
+        catch (error) { referralError(request, reply, error); return reply; }
+      });
+
+      app.post("/api/v1/admin/referral-links/:id/disable", {
+        preHandler: [requireSession, requireCsrf, createRequireAdmin(auth.adminIds)]
+      }, async (request, reply) => {
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Referral link not found", details: {}, requestId: request.id } });
+        const body = request.body;
+        const reason = body && typeof body === "object" && !Array.isArray(body) &&
+          Object.keys(body).length === 1 ? (body as { reason?: unknown }).reason : undefined;
+        if (typeof reason !== "string" || reason.trim().length < 1 || reason.length > 500) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid disable reason", details: {}, requestId: request.id } });
+        }
+        try { return await referral.disable(request.auth!.user.id, id, reason.trim()); }
+        catch (error) { referralError(request, reply, error); return reply; }
       });
     }
 

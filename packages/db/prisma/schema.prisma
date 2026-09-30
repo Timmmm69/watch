@@ -23,6 +23,8 @@ model User {
   sessions         Session[]
   partner          Partner?
   auditLogs        AuditLog[]
+  referralLinksDisabled ReferralLink[] @relation("ReferralLinkDisabledBy")
+  attributionTouches AttributionTouch[]
 
   @@map("users")
 }
@@ -103,6 +105,8 @@ model Partner {
   updatedAt   DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
   user        User          @relation(fields: [userId], references: [id], onDelete: Restrict)
   acceptances PartnerTermsAcceptance[]
+  referralLinks ReferralLink[]
+  attributionTouches AttributionTouch[]
 
   @@index([status])
   @@map("partners")
@@ -212,6 +216,7 @@ model Product {
   variants       ProductVariant[]
   categories     ProductCategory[]
   assets         ProductAsset[]
+  referralLinks  ReferralLink[]
 
   @@index([supplierId, status])
   @@index([status, brand])
@@ -300,4 +305,47 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+enum ReferralLinkStatus {
+  ACTIVE
+  DISABLED
+}
+
+model ReferralLink {
+  id                    String             @id @default(uuid()) @db.Uuid
+  token                 String             @unique @db.VarChar(64)
+  partnerId             String             @map("partner_id") @db.Uuid
+  productId             String?            @map("product_id") @db.Uuid
+  status                ReferralLinkStatus @default(ACTIVE)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  disabledAt            DateTime?          @map("disabled_at") @db.Timestamptz(6)
+  disabledByAdminUserId String?            @map("disabled_by_admin_user_id") @db.Uuid
+  disableReason         String?            @map("disable_reason")
+  partner               Partner            @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  product               Product?           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  disabledByAdmin       User?              @relation("ReferralLinkDisabledBy", fields: [disabledByAdminUserId], references: [id], onDelete: Restrict)
+  touches               AttributionTouch[]
+
+  @@unique([id, partnerId])
+  @@map("referral_links")
+}
+
+model AttributionTouch {
+  id                String       @id @default(uuid()) @db.Uuid
+  buyerUserId       String       @map("buyer_user_id") @db.Uuid
+  partnerId         String       @map("partner_id") @db.Uuid
+  referralLinkId    String       @map("referral_link_id") @db.Uuid
+  sourceFingerprint String       @unique @map("source_fingerprint") @db.Char(64)
+  occurredAt        DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(6)
+  buyer             User         @relation(fields: [buyerUserId], references: [id], onDelete: Restrict)
+  partner           Partner      @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  referralLink      ReferralLink @relation(fields: [referralLinkId, partnerId], references: [id, partnerId], onDelete: Restrict)
+
+  @@unique([id, partnerId])
+  @@index([buyerUserId, occurredAt])
+  @@index([partnerId, occurredAt])
+  @@index([expiresAt])
+  @@map("attribution_touches")
 }

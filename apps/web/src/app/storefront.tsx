@@ -22,7 +22,10 @@ const reasonLabel = (reason: PartnerViewReason) => reason === "PARTNER_BLOCKED" 
 const price = (minor: number | null, currency: string) => minor === null ? "Цена уточняется" :
   new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(minor / 100);
 
-export function Storefront({ name }: { name: string }) {
+export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequired }: {
+  name: string; csrfToken: string; partner: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
+  partnerTermsReacceptRequired: boolean;
+}) {
   const [items, setItems] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -35,6 +38,9 @@ export function Storefront({ name }: { name: string }) {
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [filterError, setFilterError] = useState("");
+  const [link, setLink] = useState("");
+  const [linkError, setLinkError] = useState("");
+  const [linkLoading, setLinkLoading] = useState(false);
   const limit = 20;
 
   useEffect(() => {
@@ -74,7 +80,7 @@ export function Storefront({ name }: { name: string }) {
   };
   const reset = () => { setDraft(empty); setFilters(empty); setPage(1); setDrawer(false); setFilterError(""); };
   const open = async (slug: string) => {
-    setError(false);
+    setError(false); setLink(""); setLinkError("");
     try {
       const response = await fetch(`/api/v1/catalog/products/${encodeURIComponent(slug)}`, { credentials: "same-origin", cache: "no-store" });
       if (!response.ok) throw new Error();
@@ -82,13 +88,46 @@ export function Storefront({ name }: { name: string }) {
     } catch { setError(true); }
   };
 
+  useEffect(() => {
+    const slug = new URLSearchParams(window.location.search).get("product");
+    if (slug) void open(slug);
+  }, []);
+
+  const copyReferral = async (productId: string | null) => {
+    setLinkLoading(true); setLinkError(""); setLink("");
+    try {
+      const response = await fetch("/api/v1/partner/referral-links", {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+        body: JSON.stringify({ productId })
+      });
+      if (!response.ok) throw new Error();
+      const result = await response.json() as { url: string };
+      setLink(result.url);
+      await navigator.clipboard.writeText(result.url);
+    } catch { setLinkError("Не удалось скопировать ссылку. Повторите попытку."); }
+    finally { setLinkLoading(false); }
+  };
+
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl">
     <header className="mb-8 flex items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Watch</h1>
       <span className="text-sm text-slate-400">Здравствуйте, {name}</span></header>
+    {partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Партнёрская ссылка">
+      <h2 className="text-lg font-semibold">Ваша ссылка на магазин</h2>
+      {partner.status === "ACTIVE" && !partnerTermsReacceptRequired
+        ? <button type="button" disabled={linkLoading} className="mt-3 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50"
+            onClick={() => void copyReferral(null)}>Скопировать ссылку</button>
+        : <p className="mt-2 text-amber-300">{partner.status === "BLOCKED" ? "Партнёр заблокирован" : "Требуется принять новые условия"}</p>}
+      {link && <p className="mt-2 break-all text-sm text-emerald-300">Ссылка скопирована: {link}</p>}
+      {linkError && <p role="alert" className="mt-2 text-rose-300">{linkError}</p>}
+    </section>}
     {error && <div role="alert" className="mb-5 flex items-center gap-4 text-rose-300">Не удалось загрузить каталог.
       <button type="button" className="min-h-11 underline" onClick={() => { if (detail) void open(detail.slug); else setRetry((n) => n + 1); }}>Повторить</button></div>}
     {detail ? <section>
-      <button type="button" className="mb-5 min-h-11 underline" onClick={() => setDetail(null)}>← Все товары</button>
+      <button type="button" className="mb-5 min-h-11 underline" onClick={() => {
+        setDetail(null); setLink(""); setLinkError("");
+        if (window.location.search) window.history.replaceState(null, "", "/shop");
+      }}>← Все товары</button>
       <h2 className="mb-2 text-3xl font-semibold">{detail.title}</h2>
       {detail.brand && <p className="text-slate-300">{detail.brand}</p>}
       <p className="mb-5 text-slate-300">{detail.description}</p>
@@ -99,8 +138,11 @@ export function Storefront({ name }: { name: string }) {
       {detail.partnerView && <div className="mt-6 rounded-xl bg-slate-900 p-4">
         <h3 className="mb-3 text-lg font-semibold">Партнёрская информация</h3>
         {detail.partnerView.referralEligible
-          ? <p className="mb-3 text-blue-300">Реферальная ссылка: доступна</p>
+          ? <button type="button" disabled={linkLoading} className="mb-3 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50"
+              onClick={() => void copyReferral(detail.id)}>Скопировать ссылку на товар</button>
           : <p className="mb-3 text-amber-300">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>}
+        {link && <p className="mb-3 break-all text-sm text-emerald-300">Ссылка скопирована: {link}</p>}
+        {linkError && <p role="alert" className="mb-3 text-rose-300">{linkError}</p>}
         <table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия</th></tr></thead><tbody>
           {detail.partnerView.variants.map((variant) => <tr key={variant.id} className="border-t border-slate-700">
             <td className="py-2">{detail.variants.find((v) => v.id === variant.id)?.sku ?? variant.id}</td>
