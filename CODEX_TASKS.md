@@ -265,6 +265,8 @@ Implement the source-specific adapter without redesigning T16/T17:
 - Google Sheets is the authoritative physical-inventory source;
 - backend access uses a dedicated read-only Google service account;
 - preserve the existing InventoryProvider/config abstractions from T16/T17;
+- extend the centralized `@watch/config` layer, not scattered `process.env` reads, with `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_WORKSHEET_NAME`, and secret `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`;
+- decode/validate service-account JSON safely and never include credentials/private-key material in logs, errors, events or API responses;
 - each fetch reads the entire configured worksheet as a complete snapshot;
 - required source columns: `external_key`, `sku`, `stock_quantity`; extra columns are ignored by this adapter;
 - map `external_key` exactly to `product_variants.inventory_external_key`;
