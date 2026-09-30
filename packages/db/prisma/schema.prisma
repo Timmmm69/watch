@@ -21,6 +21,8 @@ model User {
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   sessions         Session[]
+  partner          Partner?
+  auditLogs        AuditLog[]
 
   @@map("users")
 }
@@ -79,8 +81,55 @@ model LegalDocument {
   requiresReacceptance Boolean           @default(false) @map("requires_reacceptance")
   effectiveAt          DateTime          @map("effective_at") @db.Timestamptz(6)
   createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  acceptances          PartnerTermsAcceptance[]
 
   @@unique([type, version])
   @@unique([type, sha256])
   @@map("legal_documents")
+}
+
+enum PartnerStatus {
+  ACTIVE
+  BLOCKED
+}
+
+model Partner {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @unique @map("user_id") @db.Uuid
+  status      PartnerStatus @default(ACTIVE)
+  blockReason String?       @map("block_reason")
+  blockedAt   DateTime?     @map("blocked_at") @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  acceptances PartnerTermsAcceptance[]
+
+  @@index([status])
+  @@map("partners")
+}
+
+model PartnerTermsAcceptance {
+  partnerId       String        @map("partner_id") @db.Uuid
+  legalDocumentId String        @map("legal_document_id") @db.Uuid
+  acceptedAt      DateTime      @default(now()) @map("accepted_at") @db.Timestamptz(6)
+  partner         Partner       @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  legalDocument   LegalDocument @relation(fields: [legalDocumentId], references: [id], onDelete: Restrict)
+
+  @@id([partnerId, legalDocumentId])
+  @@map("partner_terms_acceptances")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  requestId   String?  @map("request_id")
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
 }

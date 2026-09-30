@@ -1,11 +1,12 @@
 import Fastify from "fastify";
 import { timingSafeEqual } from "node:crypto";
-import { healthResponseSchema, legalDocumentResponseSchema, readyResponseSchema } from "@watch/contracts";
+import { healthResponseSchema, legalDocumentResponseSchema, partnerOnboardingRequestSchema, readyResponseSchema } from "@watch/contracts";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
 import { InvalidTelegramInitData, verifyTelegramInitData } from "./auth/telegram.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
+import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 
 export interface AppDependencies {
@@ -19,10 +20,14 @@ export interface AppDependencies {
     botToken?: string;
   };
   legal?: { getCurrent: (type: LegalDocumentType) => Promise<LegalDocumentProjection | null> };
+  partner?: {
+    loadState: (userId: string) => Promise<PartnerState>;
+    onboard: (userId: string, documentId: string, documentVersion: string) => Promise<OnboardResult>;
+  };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, webhook }: AppDependencies) {
   const app = Fastify({ logger });
 
   app.get("/health", async () => healthResponseSchema.parse({ status: "ok" }));
@@ -50,6 +55,8 @@ export function createApp({ checkReadiness, logger = true, auth, legal, webhook 
   if (auth) {
     const requireSession = createRequireSession(auth.store);
     const requireCsrf = createRequireCsrf(auth.csrfSecret, auth.appBaseUrl);
+    const partnerState = (userId: string) =>
+      partner ? partner.loadState(userId) : Promise.resolve<PartnerState>({ partner: null, partnerTermsReacceptRequired: false });
     if (auth.botToken) app.post("/api/v1/auth/telegram", { bodyLimit: 17_000 }, async (request, reply) => {
       const body = request.body;
       if (!body || typeof body !== "object" || Array.isArray(body) ||
@@ -61,12 +68,13 @@ export function createApp({ checkReadiness, logger = true, auth, legal, webhook 
         const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie));
         reply.header("Set-Cookie", serializeSessionCookie(current.token, current.session.expiresAt,
           new URL(auth.appBaseUrl).protocol === "https:"));
+        const state = await partnerState(current.user.id);
         return {
           user: { id: current.user.id, telegramUserId: current.user.telegramUserId,
             firstName: current.user.firstName, lastName: current.user.lastName,
             username: current.user.username, languageCode: current.user.languageCode },
-          partner: null, isAdmin: isAdmin(current, auth.adminIds()),
-          partnerTermsReacceptRequired: false,
+          partner: state.partner, isAdmin: isAdmin(current, auth.adminIds()),
+          partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
           csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id),
           launchTarget: "/shop"
         };
@@ -84,6 +92,7 @@ export function createApp({ checkReadiness, logger = true, auth, legal, webhook 
     });
     app.get("/api/v1/auth/session", { preHandler: requireSession }, async (request) => {
       const current = request.auth!;
+      const state = await partnerState(current.user.id);
       return {
         user: {
           id: current.user.id,
@@ -93,9 +102,9 @@ export function createApp({ checkReadiness, logger = true, auth, legal, webhook 
           username: current.user.username,
           languageCode: current.user.languageCode
         },
-        partner: null,
+        partner: state.partner,
         isAdmin: isAdmin(current, auth.adminIds()),
-        partnerTermsReacceptRequired: false,
+        partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
         csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id)
       };
     });
@@ -104,6 +113,20 @@ export function createApp({ checkReadiness, logger = true, auth, legal, webhook 
       reply.header("Set-Cookie", `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT${new URL(auth.appBaseUrl).protocol === "https:" ? "; Secure" : ""}`);
       return { ok: true };
     });
+
+    if (partner) {
+      app.post("/api/v1/partner/onboarding", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+        const parsed = partnerOnboardingRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid onboarding request", details: {}, requestId: request.id } });
+        }
+        const result = await partner.onboard(request.auth!.user.id, parsed.data.documentId, parsed.data.documentVersion);
+        if (result.kind === "stale") {
+          return reply.code(409).send({ error: { code: "TERMS_VERSION_CHANGED", message: "Partner Terms version changed", details: { currentDocument: result.currentDocument }, requestId: request.id } });
+        }
+        return { partner: result.partner };
+      });
+    }
 
     if (legal) {
       app.get("/api/v1/legal/:type/current", { preHandler: requireSession }, async (request, reply) => {

@@ -132,3 +132,76 @@ describe("session and logout endpoints", () => {
     await app.close();
   });
 });
+
+describe("partner onboarding endpoint", () => {
+  const secret = Buffer.alloc(32, 5);
+  const current = {
+    session: { id: "session-1", userId: "user-1", createdAt: new Date(), expiresAt: new Date(), revokedAt: null },
+    user: { id: "user-1", telegramUserId: "42", firstName: "Ada", lastName: null, username: null,
+      languageCode: null, isAdmin: false, isBlocked: false }
+  };
+  const cookie = `${SESSION_COOKIE_NAME}=${"a".repeat(43)}`;
+  const csrf = deriveCsrfToken(secret, "session-1");
+  const documentId = "00000000-0000-4000-8000-000000000001";
+
+  function buildApp(onboard: ReturnType<typeof vi.fn>) {
+    const loadCurrent = vi.fn().mockResolvedValue(current);
+    return createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set() },
+      partner: { loadState: vi.fn().mockResolvedValue({ partner: null, partnerTermsReacceptRequired: false }), onboard } });
+  }
+
+  it("creates or returns the Partner for a valid current-terms acceptance", async () => {
+    const onboard = vi.fn().mockResolvedValue({ kind: "ok", partner: { id: "00000000-0000-4000-8000-000000000010", status: "ACTIVE" } });
+    const app = buildApp(onboard);
+    const response = await app.inject({ method: "POST", url: "/api/v1/partner/onboarding",
+      headers: { cookie, origin: "https://app.example", "x-csrf-token": csrf },
+      payload: { documentId, documentVersion: "v1", accept: true } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ partner: { id: "00000000-0000-4000-8000-000000000010", status: "ACTIVE" } });
+    expect(onboard).toHaveBeenCalledWith("user-1", documentId, "v1");
+    await app.close();
+  });
+
+  it("returns TERMS_VERSION_CHANGED with current document metadata on a stale acceptance", async () => {
+    const onboard = vi.fn().mockResolvedValue({ kind: "stale", currentDocument: { id: "00000000-0000-4000-8000-000000000099", version: "v2" } });
+    const app = buildApp(onboard);
+    const response = await app.inject({ method: "POST", url: "/api/v1/partner/onboarding",
+      headers: { cookie, origin: "https://app.example", "x-csrf-token": csrf },
+      payload: { documentId, documentVersion: "v1", accept: true } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatchObject({ code: "TERMS_VERSION_CHANGED" });
+    expect(response.json().error.details.currentDocument).toEqual({ id: "00000000-0000-4000-8000-000000000099", version: "v2" });
+    await app.close();
+  });
+
+  it("rejects a missing or false acceptance without invoking onboarding", async () => {
+    const onboard = vi.fn();
+    const app = buildApp(onboard);
+    for (const payload of [
+      { documentId, documentVersion: "v1", accept: false },
+      { documentId, documentVersion: "v1" },
+      { documentId, documentVersion: "v1", accept: "yes" }
+    ]) {
+      const response = await app.inject({ method: "POST", url: "/api/v1/partner/onboarding",
+        headers: { cookie, origin: "https://app.example", "x-csrf-token": csrf }, payload });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe("VALIDATION_ERROR");
+    }
+    expect(onboard).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("requires a valid CSRF token", async () => {
+    const onboard = vi.fn();
+    const app = buildApp(onboard);
+    const response = await app.inject({ method: "POST", url: "/api/v1/partner/onboarding",
+      headers: { cookie, origin: "https://app.example" },
+      payload: { documentId, documentVersion: "v1", accept: true } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("CSRF_INVALID");
+    expect(onboard).not.toHaveBeenCalled();
+    await app.close();
+  });
+});

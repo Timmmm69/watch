@@ -14,3 +14,16 @@ export const legalDocumentResponseSchema = z.object({
   effectiveAt: z.string(),
   requiresReacceptance: z.boolean()
 });
+
+export const partnerStatusSchema = z.enum(["ACTIVE", "BLOCKED"]);
+
+export const partnerSummarySchema = z.object({
+  id: z.string().uuid(),
+  status: partnerStatusSchema
+});
+
+export const partnerOnboardingRequestSchema = z.object({
+  documentId: z.string().uuid(),
+  documentVersion: z.string().min(1).max(64),
+  accept: z.literal(true)
+});

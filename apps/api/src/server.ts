@@ -5,6 +5,7 @@ import { checkDatabaseReady, createDatabasePool } from "@watch/db";
 import { createApp } from "./app.js";
 import { SessionStore } from "./auth/session.js";
 import { LegalDocuments } from "./legal/legal.js";
+import { PartnerService } from "./partner/partner.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -13,6 +14,7 @@ const runtimeConfig = loadApiRuntimeConfig();
 const pool = createDatabasePool(runtimeConfig.DATABASE_URL);
 const adminTelegramIds = new Set(runtimeConfig.ADMIN_TELEGRAM_IDS);
 const legalDocuments = new LegalDocuments(pool, currentLegalDocuments(runtimeConfig));
+const partnerService = new PartnerService(pool, legalDocuments);
 const app = createApp({
   checkReadiness: async () => {
     await checkDatabaseReady(pool);
@@ -26,6 +28,7 @@ const app = createApp({
     botToken: runtimeConfig.TELEGRAM_BOT_TOKEN
   },
   legal: legalDocuments,
+  partner: partnerService,
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }
 });
 pool.on("error", (error) => {
