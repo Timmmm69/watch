@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type CartLine = { variantId: string; productId: string; slug: string; title: string; sku: string;
   quantity: number; priceMinor: number; lineTotalMinor: number; availability: string; issues: string[] };
-type Cart = { id: string; currency: string; items: CartLine[]; totalMinor: number; canCheckout: boolean };
+export type Cart = { id: string; currency: string; items: CartLine[]; totalMinor: number; canCheckout: boolean };
 const messages: Record<string, string> = {
   ITEM_UNAVAILABLE: "Товар больше недоступен.", PRODUCT_NOT_ACTIVE: "Товар больше недоступен.",
   VARIANT_NOT_ACTIVE: "Вариант больше недоступен.", OUT_OF_STOCK: "Недостаточно товара в наличии. Уменьшите количество или удалите товар.",
@@ -125,8 +125,8 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
       <section className="fixed inset-x-0 bottom-0 border-t border-slate-700 bg-slate-950 px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-4xl"><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
           {!cart.canCheckout && <p className="text-sm text-amber-300">Устраните проблемы товаров перед оформлением.</p>}
-          <button type="button" disabled className="mt-2 min-h-11 w-full rounded-lg bg-blue-600 opacity-40">Оформить заказ</button>
-          <p className="mt-1 text-sm text-slate-400">Оформление заказа будет доступно на следующем этапе.</p>
+          <button type="button" disabled={readOnly || !cart.canCheckout || pending.size > 0}
+            onClick={() => router.push("/checkout")} className="mt-2 min-h-11 w-full rounded-lg bg-blue-600 disabled:opacity-40">Оформить заказ</button>
         </div>
       </section>
     </>}

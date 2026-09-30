@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Storefront } from "./storefront";
 import { CartScreen } from "./cart-client";
+import { CheckoutScreen } from "./checkout-client";
 
 interface AuthResponse {
   user: { firstName: string };
@@ -23,7 +24,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart" }) {
+export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart" | "checkout" }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -45,7 +46,7 @@ export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart"
       return response.json() as Promise<AuthResponse>;
     }).then((result) => {
       if (!launchNavigationHandled && result.launchTarget && (window.location.pathname === "/" || result.launchTarget.includes("?product="))) {
-        if (screen === "cart") router.replace(result.launchTarget);
+        if (screen !== "shop") router.replace(result.launchTarget);
         else window.history.replaceState(null, "", result.launchTarget);
       }
       launchNavigationHandled = true;
@@ -54,6 +55,7 @@ export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart"
   }, []);
 
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
+  if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}
     partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">

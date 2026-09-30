@@ -6,6 +6,11 @@ import { CheckoutService } from "./checkout.js";
 import { CartService } from "../cart/cart.js";
 import { CatalogService } from "../catalog/catalog.js";
 import { InventoryService } from "../inventory/service.js";
+import { ReferralService } from "../referral/referral.js";
+import { LegalDocuments } from "../legal/legal.js";
+import { createApp } from "../app.js";
+import { SessionStore, hashSessionToken } from "../auth/session.js";
+import { deriveCsrfToken } from "../auth/middleware.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const schema = `checkout_test_${randomUUID().replaceAll("-", "")}`;
@@ -24,7 +29,7 @@ function request(items = [{ variantId: variants[0]!, quantity: 1, expectedUnitPr
 beforeAll(async () => {
   if (!pool) return;
   await pool.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ["users", "platform_settings", "suppliers", "partners", "partner_terms_acceptances", "legal_documents",
+  for (const table of ["users", "sessions", "referral_links", "platform_settings", "suppliers", "partners", "partner_terms_acceptances", "legal_documents",
     "products", "product_variants", "inventory_items", "inventory_sync_runs", "attribution_touches", "events"]) {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   }
@@ -49,7 +54,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   if (!pool) return;
-  await pool.query("TRUNCATE orders, carts, events, attribution_touches, partner_terms_acceptances CASCADE");
+  await pool.query("TRUNCATE orders, carts, events, attribution_touches, referral_links, sessions, partner_terms_acceptances CASCADE");
   await pool.query("UPDATE users SET is_blocked=false");
   await pool.query("UPDATE partners SET status='ACTIVE', user_id=$1", [partnerUser]);
   await pool.query("UPDATE products SET status='ACTIVE', title='Watch'");
@@ -78,7 +83,189 @@ async function addTouch() {
     VALUES ($1,$2,$3,$4,$5,now()+interval '30 days')`, [touch, buyers[0], partner, randomUUID(), randomBytes(32).toString("hex")]);
 }
 
+// Observe an actual PostgreSQL lock wait, so these tests cannot pass with sequential requests.
+async function waitForBlocker(pid: number) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const result = await pool!.query<{ pid: number }>("SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))", [pid]);
+    if (result.rows[0]) return result.rows[0].pid;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`No PostgreSQL waiter observed for blocker ${pid}`);
+}
+
+async function mutationFirst(lock: string, change: string, input = request()) {
+  const writer = await pool!.connect();
+  let pending: Promise<unknown> | undefined;
+  try {
+    await writer.query("BEGIN");
+    const pid = (await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+    await writer.query(lock); await writer.query(change);
+    pending = service.checkout(buyers[0]!, "race", input).then((value) => ({ value }), (error: unknown) => ({ error }));
+    await waitForBlocker(pid);
+    await writer.query("COMMIT");
+    return await pending;
+  } finally {
+    await writer.query("ROLLBACK"); writer.release(); await pending;
+  }
+}
+
+const productLock = `SELECT id FROM products WHERE id='${product}' FOR UPDATE`;
+const variantLock = `${productLock}; SELECT id FROM product_variants WHERE id='${variants[0]}' FOR UPDATE`;
+const partnerLock = `SELECT id FROM partners WHERE id='${partner}' FOR UPDATE`;
+const inventoryLock = `SELECT id FROM product_variants ORDER BY id FOR UPDATE; SELECT variant_id FROM inventory_items ORDER BY variant_id FOR UPDATE`;
+const races = [
+  { name: "Product archive", lock: productLock, change: "UPDATE products SET status='ARCHIVED'", code: "CART_CHANGED" },
+  { name: "Variant archive", lock: variantLock, change: "UPDATE product_variants SET status='ARCHIVED'", code: "CART_CHANGED" },
+  { name: "price", lock: variantLock, change: "UPDATE product_variants SET price_minor=2000", code: "PRICE_CHANGED" },
+  { name: "commission and settlement", lock: variantLock,
+    change: "UPDATE product_variants SET partner_commission_unit_minor=200,supplier_settlement_unit_minor=800", code: null },
+  { name: "Partner block", lock: partnerLock, change: "UPDATE partners SET status='BLOCKED'", code: null },
+  { name: "inventory source apply", lock: inventoryLock, change: "UPDATE inventory_items SET source_quantity=0,source_version='new',last_successful_sync_at=now()", code: "OUT_OF_STOCK" }
+];
+
 describe.skipIf(!databaseUrl)("Atomic checkout against PostgreSQL", () => {
+  it.each(races)("$name first makes waiting checkout observe the committed state", async ({ lock, change, code, name }) => {
+    await addTouch();
+    const outcome = await mutationFirst(lock, change);
+    if (code) {
+      expect(outcome).toMatchObject({ error: { code, ...(code === "CART_CHANGED" ? { details: { reason: "ITEM_UNAVAILABLE", affectedVariantIds: [variants[0]] } } : {}) } });
+      await noSideEffects();
+    } else {
+      expect(outcome).toMatchObject({ value: { created: true } });
+      if (name === "Partner block") expect((await pool!.query("SELECT commission_eligible_snapshot FROM orders")).rows[0].commission_eligible_snapshot).toBe(false);
+      else expect((await pool!.query("SELECT * FROM order_items")).rows[0]).toMatchObject({ partner_commission_unit_snapshot_minor: 200, supplier_settlement_unit_snapshot_minor: 800 });
+    }
+  });
+  it.each(races)("checkout first serializes $name behind the complete old snapshot", async ({ lock, change }) => {
+    await addTouch();
+    const gate = await pool!.connect(), writer = await pool!.connect();
+    let checkout: Promise<unknown> | undefined, mutation: Promise<unknown> | undefined;
+    try {
+      await gate.query("BEGIN");
+      const gatePid = (await gate.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      await gate.query("SELECT variant_id FROM inventory_items ORDER BY variant_id FOR UPDATE");
+      checkout = service.checkout(buyers[0]!, "checkout-first", request()).then((value) => ({ value }), (error: unknown) => ({ error }));
+      const checkoutPid = await waitForBlocker(gatePid);
+      mutation = (async () => { await writer.query("BEGIN"); await writer.query(lock); await writer.query(change); await writer.query("COMMIT"); })();
+      const mutationOutcome = mutation.then(() => ({ ok: true }), (error: unknown) => ({ error }));
+      await waitForBlocker(checkoutPid);
+      await gate.query("COMMIT");
+      expect(await checkout).toMatchObject({ value: { created: true } });
+      expect(await mutationOutcome).toEqual({ ok: true });
+      expect((await pool!.query("SELECT commission_eligible_snapshot FROM orders")).rows[0].commission_eligible_snapshot).toBe(true);
+      expect((await pool!.query("SELECT * FROM order_items")).rows[0]).toMatchObject({ unit_price_minor: 1000,
+        partner_commission_unit_snapshot_minor: 100, supplier_settlement_unit_snapshot_minor: 500 });
+      expect((await pool!.query("SELECT count(*)::int AS count FROM inventory_reservations WHERE status='ACTIVE'")).rows[0].count).toBe(1);
+    } finally {
+      await gate.query("ROLLBACK"); gate.release();
+      await checkout; await mutation?.catch(() => undefined); await writer.query("ROLLBACK"); writer.release();
+    }
+  });
+  it("Cart mutation first is observed by waiting checkout without losing its new quantity", async () => {
+    expect(await mutationFirst("SELECT id FROM carts ORDER BY id FOR UPDATE", "UPDATE cart_items SET quantity=2"))
+      .toMatchObject({ error: { code: "CART_CHANGED" } });
+    await noSideEffects();
+    expect((await new CartService(pool!, currency).read(buyers[0]!)).items[0]!.quantity).toBe(2);
+  });
+  it("Cart mutation after checkout waits and keeps the newly added line after Cart clear", async () => {
+    const gate = await pool!.connect(); let checkout: Promise<unknown> | undefined, mutation: Promise<unknown> | undefined;
+    try {
+      await gate.query("BEGIN");
+      const pid = (await gate.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      await gate.query(productLock);
+      checkout = service.checkout(buyers[0]!, "cart-first", request()).then((value) => ({ value }), (error: unknown) => ({ error }));
+      const checkoutPid = await waitForBlocker(pid);
+      mutation = new CartService(pool!, currency).put(buyers[0]!, variants[0]!, 2);
+      const outcome = mutation.then((value) => ({ value }), (error: unknown) => ({ error }));
+      await waitForBlocker(checkoutPid); await gate.query("COMMIT");
+      expect(await checkout).toMatchObject({ value: { created: true } });
+      expect(await outcome).toMatchObject({ value: { items: [{ quantity: 2 }] } });
+      expect((await pool!.query("SELECT quantity FROM order_items")).rows[0].quantity).toBe(1);
+      expect((await new CartService(pool!, currency).read(buyers[0]!)).items[0]!.quantity).toBe(2);
+    } finally { await gate.query("ROLLBACK"); gate.release(); await checkout; await mutation?.catch(() => undefined); }
+  });
+  it.each([true, false])("referral touch and checkout follow Buyer commit order: touch first=%s", async (touchFirst) => {
+    const link = randomUUID(), linkToken = randomBytes(24).toString("base64url");
+    await pool!.query("INSERT INTO referral_links (id,token,partner_id) VALUES ($1,$2,$3)", [link, linkToken, partner]);
+    const referral = new ReferralService(pool!, new LegalDocuments(pool!, docs), "test_bot");
+    const launch = await pool!.connect(), gate = await pool!.connect();
+    let checkout: Promise<unknown> | undefined, attribution: Promise<unknown> | undefined;
+    try {
+      await launch.query("BEGIN");
+      await gate.query("BEGIN");
+      const launchPid = (await launch.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      const gatePid = (await gate.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      const buyerLock = "SELECT id FROM users WHERE id=$1 FOR UPDATE";
+      const applyTouch = () => referral.processLaunch(launch, { id: buyers[0]!, telegramUserId: "42", firstName: "Buyer", lastName: null,
+        username: null, languageCode: null, isAdmin: false, isBlocked: false }, { telegramUserId: "42", firstName: "Buyer", lastName: null,
+        username: null, languageCode: null, startParam: `r_${linkToken}`, replayIdentity: randomBytes(32).toString("hex") });
+      if (touchFirst) {
+        await launch.query(buyerLock, [buyers[0]]); await applyTouch();
+        checkout = service.checkout(buyers[0]!, "touch-race", request()).then((value) => ({ value }), (error: unknown) => ({ error }));
+        await waitForBlocker(launchPid); await launch.query("COMMIT");
+      } else {
+        await gate.query(productLock);
+        checkout = service.checkout(buyers[0]!, "touch-race", request()).then((value) => ({ value }), (error: unknown) => ({ error }));
+        const checkoutPid = await waitForBlocker(gatePid);
+        attribution = (async () => { await launch.query(buyerLock, [buyers[0]]); await applyTouch(); await launch.query("COMMIT"); })();
+        const outcome = attribution.then(() => ({ ok: true }), (error: unknown) => ({ error }));
+        await waitForBlocker(checkoutPid); await gate.query("COMMIT"); expect(await outcome).toEqual({ ok: true });
+      }
+      expect(await checkout).toMatchObject({ value: { created: true } });
+      const snapshot = (await pool!.query("SELECT attribution_touch_id,commission_eligible_snapshot FROM orders")).rows[0];
+      const newTouch = (await pool!.query("SELECT id FROM attribution_touches")).rows[0].id;
+      expect(snapshot).toEqual({ attribution_touch_id: touchFirst ? newTouch : null, commission_eligible_snapshot: touchFirst });
+    } finally {
+      await gate.query("ROLLBACK"); gate.release(); await checkout; await attribution?.catch(() => undefined);
+      await launch.query("ROLLBACK"); launch.release();
+    }
+  });
+  it("concurrent different fingerprints with one key produce exactly one winner and one conflict", async () => {
+    const results = await Promise.allSettled([request(), { ...request(), address: "Other address" }]
+      .map((input) => service.checkout(buyers[0]!, "conflict-race", input)));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "IDEMPOTENCY_CONFLICT" } });
+    for (const table of ["orders", "order_items", "inventory_reservations", "events"]) {
+      expect((await pool!.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count).toBe(1);
+    }
+  });
+  it("opposite multi-line request orders use deterministic locks and never partially reserve", async () => {
+    await pool!.query("UPDATE inventory_items SET source_quantity=1");
+    await pool!.query("INSERT INTO cart_items (cart_id,variant_id,quantity) SELECT id,$1,1 FROM carts", [variants[1]]);
+    const lines = variants.map((variantId) => ({ variantId, quantity: 1, expectedUnitPriceMinor: 1000 }));
+    const results = await Promise.allSettled(buyers.map((buyer, index) => service.checkout(buyer, "multi-line", request(index ? [...lines].reverse() : lines))));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "OUT_OF_STOCK" } });
+    expect((await pool!.query("SELECT count(*)::int AS count FROM orders")).rows[0].count).toBe(1);
+    expect((await pool!.query("SELECT variant_id,SUM(quantity)::int AS quantity FROM inventory_reservations GROUP BY variant_id ORDER BY variant_id")).rows)
+      .toEqual(variants.map((variant_id) => ({ variant_id, quantity: 1 })));
+    const loser = buyers[results.findIndex((result) => result.status === "rejected")]!;
+    expect((await new CartService(pool!, currency).read(loser)).items).toHaveLength(2);
+  });
+  it("real sessions isolate CSRF, Cart ownership and same-key Orders across Buyers", async () => {
+    const secret = Buffer.alloc(32, 9);
+    const sessions = buyers.map((buyer) => ({ buyer, id: randomUUID(), token: randomBytes(32).toString("base64url") }));
+    for (const session of sessions) await pool!.query("INSERT INTO sessions (id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,now()+interval '1 hour')",
+      [session.id, session.buyer, hashSessionToken(session.token)]);
+    const app = createApp({ logger: false, checkReadiness: async () => undefined, checkout: service,
+      auth: { store: new SessionStore(pool!, new Set()), csrfSecret: secret, appBaseUrl: "https://app.example", adminIds: () => new Set() } });
+    const headers = (index: number) => ({ cookie: `watch_session=${sessions[index]!.token}`, origin: "https://app.example",
+      "x-csrf-token": deriveCsrfToken(secret, sessions[index]!.id), "idempotency-key": "shared-key" });
+    try {
+      expect((await app.inject({ method: "POST", url: "/api/v1/orders", payload: request(),
+        headers: { ...headers(1), "x-csrf-token": headers(0)["x-csrf-token"] } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST", url: "/api/v1/orders", payload: { ...request(), buyerUserId: buyers[0] }, headers: headers(1) })).statusCode).toBe(400);
+      await noSideEffects();
+      const first = await app.inject({ method: "POST", url: "/api/v1/orders", payload: request(), headers: headers(0) });
+      expect(first.statusCode).toBe(201);
+      expect((await new CartService(pool!, currency).read(buyers[1]!)).items).toHaveLength(1);
+      const second = await app.inject({ method: "POST", url: "/api/v1/orders", payload: request(), headers: headers(1) });
+      expect(second.statusCode).toBe(201); expect(second.json().id).not.toBe(first.json().id);
+      const replay = await app.inject({ method: "POST", url: "/api/v1/orders", payload: request(), headers: headers(1) });
+      expect(replay.statusCode).toBe(200); expect(replay.json().id).toBe(second.json().id);
+      expect((await pool!.query("SELECT count(*)::int AS count FROM events")).rows[0].count).toBe(2);
+    } finally { await app.close(); }
+  });
   it("creates all snapshots, ACTIVE reservation, legal evidence and one safe event, then clears only this Buyer's Cart", async () => {
     await addTouch();
     const result = await service.checkout(buyers[0]!, "success", request());
