@@ -316,6 +316,33 @@ model InventorySyncRun {
   @@map("inventory_sync_runs")
 }
 
+enum EventProcessingStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model Event {
+  id                  String                @id @default(uuid()) @db.Uuid
+  type                String
+  aggregateType       String                @map("aggregate_type")
+  aggregateId         String                @map("aggregate_id") @db.Uuid
+  dedupeKey           String                @unique @map("dedupe_key")
+  payload             Json                  @db.JsonB
+  status              EventProcessingStatus @default(PENDING)
+  attempts            Int                   @default(0)
+  nextAttemptAt       DateTime              @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  processingStartedAt DateTime?             @map("processing_started_at") @db.Timestamptz(6)
+  leaseExpiresAt      DateTime?             @map("lease_expires_at") @db.Timestamptz(6)
+  processedAt         DateTime?             @map("processed_at") @db.Timestamptz(6)
+  lastError           String?               @map("last_error")
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([status, nextAttemptAt, leaseExpiresAt])
+  @@map("events")
+}
+
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
   actorUserId String?  @map("actor_user_id") @db.Uuid

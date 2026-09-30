@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { normalizeInventorySnapshot } from "./normalize.js";
 
 describe("inventory snapshot normalization", () => {
+  it("rejects snapshot versions rather than truncating their identity", () => {
+    for (const sourceVersion of ["v".repeat(201), "", 42]) {
+      expect(normalizeInventorySnapshot({ fetchedAt: new Date(), sourceVersion, records: [] }).kind).toBe("invalid");
+    }
+  });
+
+  it("rejects quantities outside PostgreSQL INTEGER range", () => {
+    const result = normalizeInventorySnapshot({ fetchedAt: new Date(), records: [{ externalKey: "sku", quantity: 2_147_483_648 }] });
+    expect(result).toMatchObject({ kind: "valid", snapshot: { records: [], issues: [{ kind: "INVALID_QUANTITY" }] } });
+  });
   it("rejects structurally invalid snapshots", () => {
     expect(normalizeInventorySnapshot(null)).toEqual({ kind: "invalid", reason: "Snapshot must be an object" });
     expect(normalizeInventorySnapshot("records")).toEqual({ kind: "invalid", reason: "Snapshot must be an object" });

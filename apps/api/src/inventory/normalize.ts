@@ -47,9 +47,12 @@ export function normalizeInventorySnapshot(raw: unknown): NormalizeResult {
   if (!fetchedAt) return { kind: "invalid", reason: "Snapshot fetchedAt is required" };
   if (!Array.isArray(raw.records)) return { kind: "invalid", reason: "Snapshot records must be an array" };
 
-  const sourceVersion = typeof raw.sourceVersion === "string" && raw.sourceVersion.length > 0
-    ? raw.sourceVersion.slice(0, MAX_SOURCE_VERSION_LENGTH)
-    : null;
+  if (raw.sourceVersion !== undefined && raw.sourceVersion !== null &&
+      (typeof raw.sourceVersion !== "string" || raw.sourceVersion.length === 0 ||
+       raw.sourceVersion.length > MAX_SOURCE_VERSION_LENGTH)) {
+    return { kind: "invalid", reason: "Snapshot sourceVersion is invalid" };
+  }
+  const sourceVersion = typeof raw.sourceVersion === "string" ? raw.sourceVersion : null;
   const issues: InventorySnapshotIssue[] = [];
   const records: NormalizedInventoryRecord[] = [];
   const seen = new Set<string>();
@@ -71,7 +74,7 @@ export function normalizeInventorySnapshot(raw: unknown): NormalizeResult {
     }
 
     const quantityValue = record.quantity;
-    if (typeof quantityValue !== "number" || !Number.isInteger(quantityValue) || quantityValue < 0) {
+    if (typeof quantityValue !== "number" || !Number.isInteger(quantityValue) || quantityValue < 0 || quantityValue > 2_147_483_647) {
       issues.push({ kind: "INVALID_QUANTITY", index, externalKey, quantity: quantityValue ?? null });
       return;
     }

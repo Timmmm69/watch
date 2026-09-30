@@ -36,6 +36,7 @@ import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 import { ReferralError, type ReferralService } from "./referral/referral.js";
 import type { InventoryService } from "./inventory/service.js";
+import { InventorySyncError, type InventorySyncOrchestrator } from "./inventory/orchestrator.js";
 
 export type CatalogApi = Pick<CatalogService,
   "listCategories" | "createCategory" | "updateCategory"
@@ -62,7 +63,7 @@ export interface AppDependencies {
   };
   referral?: ReferralService;
   catalog?: { service: CatalogApi };
-  inventory?: { service: InventoryApi };
+  inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
@@ -517,6 +518,21 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
 
     if (inventory) {
       const requireAdmin = createRequireAdmin(auth.adminIds);
+      app.post("/api/v1/admin/inventory/sync", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        if (request.body !== undefined && (request.body === null || typeof request.body !== "object" ||
+            Array.isArray(request.body) || Object.keys(request.body).length > 0)) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Sync body must be empty", details: {}, requestId: request.id } });
+        }
+        try {
+          if (!inventory.orchestrator) throw new InventorySyncError("DEPENDENCY_UNAVAILABLE");
+          return await inventory.orchestrator.run(request.auth!.user.id);
+        } catch (error) {
+          if (!(error instanceof InventorySyncError)) throw error;
+          return reply.code(error.code === "SYNC_ALREADY_RUNNING" ? 409 : 503).send({
+            error: { code: error.code, message: error.message, details: error.details, requestId: request.id }
+          });
+        }
+      });
       const parsePage = (request: FastifyRequest, reply: FastifyReply): { page: number; limit: number } | null => {
         const parsed = pageQuerySchema.safeParse(request.query ?? {});
         if (!parsed.success) {
