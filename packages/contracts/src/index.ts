@@ -54,6 +54,26 @@ export const adminAssetPatchRequestSchema = z.object({
 const jsonRecord = z.record(z.string(), z.unknown());
 const moneyMinor = z.number().int().min(0).max(2_147_483_647);
 
+export const MAX_CART_LINES = 100;
+export const cartItemRequestSchema = z.object({ quantity: z.number().int().min(1).max(99) }).strict();
+export const cartLineIssueSchema = z.enum([
+  "ITEM_UNAVAILABLE", "OUT_OF_STOCK", "INVENTORY_STALE", "INVENTORY_UNKNOWN"
+]);
+export const cartResponseSchema = z.object({
+  id: z.string().uuid(),
+  currency: z.string().length(3),
+  items: z.array(z.object({
+    variantId: z.string().uuid(), productId: z.string().uuid(), slug: z.string(), title: z.string(), sku: z.string(),
+    quantity: z.number().int().min(1).max(99), priceMinor: moneyMinor,
+    lineTotalMinor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    availability: z.enum(["IN_STOCK", "OUT_OF_STOCK", "STALE", "UNKNOWN"]),
+    issues: z.array(cartLineIssueSchema)
+  })).max(MAX_CART_LINES),
+  totalMinor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  canCheckout: z.boolean()
+});
+export type CartView = z.infer<typeof cartResponseSchema>;
+
 export const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20)

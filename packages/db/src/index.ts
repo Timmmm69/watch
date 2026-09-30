@@ -8,6 +8,7 @@ const partnerOnboardingMigration = "20260930040000_partner_onboarding";
 const catalogFoundationMigration = "20260930050000_catalog_foundation";
 const inventorySyncRunsMigration = "20260930080000_inventory_sync_runs";
 const inventorySyncEventsMigration = "20260930090000_inventory_sync_events";
+const cartMigration = "20260930100000_cart";
 
 export function createDatabasePool(connectionString: string): Pool {
   const options: PoolConfig = {
@@ -52,5 +53,8 @@ export async function checkDatabaseReady(pool: Pool): Promise<void> {
   }
   if (!result.rows.some((row) => row.migration_name === inventorySyncEventsMigration && row.finished_at !== null)) {
     throw new Error("Inventory sync events migration has not been applied");
+  }
+  if (!result.rows.some((row) => row.migration_name === cartMigration && row.finished_at !== null)) {
+    throw new Error("Cart migration has not been applied");
   }
 }

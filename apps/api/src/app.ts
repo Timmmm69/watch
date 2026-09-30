@@ -22,6 +22,8 @@ import {
   readyResponseSchema,
   storefrontProductsQuerySchema
 } from "@watch/contracts";
+import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
+import { CartError, type CartService } from "./cart/cart.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
@@ -65,10 +67,11 @@ export interface AppDependencies {
   catalog?: { service: CatalogApi };
   inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
+  cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -244,6 +247,43 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         try { return await referral.disable(request.auth!.user.id, id, reason.trim()); }
         catch (error) { referralError(request, reply, error); return reply; }
       });
+    }
+
+    if (cart) {
+      const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {
+        reply.header("Cache-Control", "no-store");
+        try { return cartResponseSchema.parse(await action()); }
+        catch (error) {
+          if (!(error instanceof CartError)) throw error;
+          const status = error.code === "NOT_FOUND" ? 404 : error.code === "VALIDATION_ERROR" ? 400
+            : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409;
+          return reply.code(status).send({ error: { code: error.code, message: error.message, details: {}, requestId: request.id } });
+        }
+      };
+      const variantId = (request: FastifyRequest, reply: FastifyReply) => {
+        const id = (request.params as { variantId?: string }).variantId;
+        if (validUuid(id)) return id.toLowerCase();
+        reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid Variant ID", details: {}, requestId: request.id } });
+        return null;
+      };
+      app.get("/api/v1/cart", { preHandler: requireSession }, (request, reply) =>
+        respond(request, reply, () => cart.read(request.auth!.user.id)));
+      app.put("/api/v1/cart/items/:variantId", { preHandler: [requireSession, requireCsrf] }, (request, reply) => {
+        const id = variantId(request, reply);
+        if (!id) return reply;
+        const parsed = cartItemRequestSchema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ error: {
+          code: "VALIDATION_ERROR", message: "Quantity must be an integer from 1 to 99", details: { field: "quantity" }, requestId: request.id
+        } });
+        return respond(request, reply, () => cart.put(request.auth!.user.id, id, parsed.data.quantity));
+      });
+      app.delete("/api/v1/cart/items/:variantId", { preHandler: [requireSession, requireCsrf] }, (request, reply) => {
+        const id = variantId(request, reply);
+        if (!id) return reply;
+        return respond(request, reply, () => cart.remove(request.auth!.user.id, id));
+      });
+      app.delete("/api/v1/cart", { preHandler: [requireSession, requireCsrf] }, (request, reply) =>
+        respond(request, reply, () => cart.clear(request.auth!.user.id)));
     }
 
     if (catalog) {

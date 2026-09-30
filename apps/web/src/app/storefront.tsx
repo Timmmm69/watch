@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { CartIndicator, ProductCartActions } from "./cart-client";
 
 type Availability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
 type PartnerViewReason = "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | null;
@@ -112,6 +113,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl">
     <header className="mb-8 flex items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Watch</h1>
       <span className="text-sm text-slate-400">Здравствуйте, {name}</span></header>
+    {!detail && <CartIndicator csrfToken={csrfToken} />}
     {partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Партнёрская ссылка">
       <h2 className="text-lg font-semibold">Ваша ссылка на магазин</h2>
       {partner.status === "ACTIVE" && !partnerTermsReacceptRequired
@@ -156,6 +158,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
       </div>}
       <p className="mt-6 text-lg font-medium">От {price(detail.priceFromMinor, detail.currency)}</p>
       <p className="mt-2">{labels[detail.availability]}</p>
+      <ProductCartActions key={detail.id} variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />
     </section> : <>
       <form onSubmit={apply} className="mb-5 flex gap-2"><label className="sr-only" htmlFor="shop-search">Поиск товаров</label>
         <input id="shop-search" value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })}

@@ -11,6 +11,7 @@ import { PartnerService } from "./partner/partner.js";
 import { ReferralService } from "./referral/referral.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
+import { CartService } from "./cart/cart.js";
 import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -50,6 +51,7 @@ const app = createApp({
   partner: partnerService,
   referral: new ReferralService(pool, legalDocuments, runtimeConfig.TELEGRAM_BOT_USERNAME),
   catalog: { service: catalogService },
+  cart: new CartService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }
