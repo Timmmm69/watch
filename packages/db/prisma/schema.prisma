@@ -63,3 +63,24 @@ model TelegramUpdate {
   @@index([receivedAt])
   @@map("telegram_updates")
 }
+
+enum LegalDocumentType {
+  PARTNER_TERMS
+  SALES_TERMS
+  PRIVACY
+}
+
+model LegalDocument {
+  id                   String            @id @default(uuid()) @db.Uuid
+  type                 LegalDocumentType
+  version              String            @db.VarChar(64)
+  sha256               String            @db.Char(64)
+  contentMarkdown      String            @map("content_markdown")
+  requiresReacceptance Boolean           @default(false) @map("requires_reacceptance")
+  effectiveAt          DateTime          @map("effective_at") @db.Timestamptz(6)
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([type, version])
+  @@unique([type, sha256])
+  @@map("legal_documents")
+}

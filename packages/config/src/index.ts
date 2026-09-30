@@ -19,6 +19,8 @@ function parseCsrfSecret(value: string): Buffer {
   return decoded;
 }
 
+const legalVersion = z.string().min(1).max(64);
+
 export const apiRuntimeConfigSchema = z.object({
   APP_BASE_URL: z.url(),
   DATABASE_URL: z.url().refine((value) => {
@@ -32,10 +34,49 @@ export const apiRuntimeConfigSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().regex(/^[A-Za-z0-9_-]{32,256}$/),
   SUPPORT_CONTACT: z.string().min(1),
   ADMIN_TELEGRAM_IDS: z.string().transform(parseAdminIds),
-  CSRF_SECRET: z.string().transform(parseCsrfSecret)
+  CSRF_SECRET: z.string().transform(parseCsrfSecret),
+  LEGAL_PARTNER_TERMS_ID: z.string().uuid(),
+  LEGAL_PARTNER_TERMS_VERSION: legalVersion,
+  LEGAL_SALES_TERMS_ID: z.string().uuid().optional(),
+  LEGAL_SALES_TERMS_VERSION: legalVersion.optional(),
+  LEGAL_PRIVACY_ID: z.string().uuid().optional(),
+  LEGAL_PRIVACY_VERSION: legalVersion.optional()
+}).superRefine((value, ctx) => {
+  for (const [idKey, versionKey] of [
+    ["LEGAL_SALES_TERMS_ID", "LEGAL_SALES_TERMS_VERSION"],
+    ["LEGAL_PRIVACY_ID", "LEGAL_PRIVACY_VERSION"]
+  ] as const) {
+    if ((value[idKey] === undefined) !== (value[versionKey] === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `${idKey} and ${versionKey} must be provided together`,
+        path: [idKey]
+      });
+    }
+  }
 });
 
 export type ApiRuntimeConfig = z.infer<typeof apiRuntimeConfigSchema>;
+
+export type LegalDocumentType = "PARTNER_TERMS" | "SALES_TERMS" | "PRIVACY";
+
+export interface LegalDocumentRef {
+  id: string;
+  version: string;
+}
+
+export function currentLegalDocuments(config: ApiRuntimeConfig): Partial<Record<LegalDocumentType, LegalDocumentRef>> {
+  const current: Partial<Record<LegalDocumentType, LegalDocumentRef>> = {
+    PARTNER_TERMS: { id: config.LEGAL_PARTNER_TERMS_ID, version: config.LEGAL_PARTNER_TERMS_VERSION }
+  };
+  if (config.LEGAL_SALES_TERMS_ID !== undefined && config.LEGAL_SALES_TERMS_VERSION !== undefined) {
+    current.SALES_TERMS = { id: config.LEGAL_SALES_TERMS_ID, version: config.LEGAL_SALES_TERMS_VERSION };
+  }
+  if (config.LEGAL_PRIVACY_ID !== undefined && config.LEGAL_PRIVACY_VERSION !== undefined) {
+    current.PRIVACY = { id: config.LEGAL_PRIVACY_ID, version: config.LEGAL_PRIVACY_VERSION };
+  }
+  return current;
+}
 
 export function loadApiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ApiRuntimeConfig {
   return apiRuntimeConfigSchema.parse(env);

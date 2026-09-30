@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { loadApiRuntimeConfig } from "./index.js";
+import { currentLegalDocuments, loadApiRuntimeConfig } from "./index.js";
+
+const partnerTermsId = "00000000-0000-4000-8000-000000000001";
+const salesTermsId = "00000000-0000-4000-8000-000000000002";
+const privacyId = "00000000-0000-4000-8000-000000000003";
 
 describe("API runtime configuration", () => {
   const valid = {
@@ -10,7 +14,9 @@ describe("API runtime configuration", () => {
     TELEGRAM_WEBHOOK_SECRET: "a".repeat(32),
     SUPPORT_CONTACT: "@support",
     ADMIN_TELEGRAM_IDS: "42, 9007199254740993",
-    CSRF_SECRET: Buffer.alloc(32, 7).toString("base64url")
+    CSRF_SECRET: Buffer.alloc(32, 7).toString("base64url"),
+    LEGAL_PARTNER_TERMS_ID: partnerTermsId,
+    LEGAL_PARTNER_TERMS_VERSION: "2026-09-01"
   };
 
   it("loads the foundation configuration", () => {
@@ -41,5 +47,30 @@ describe("API runtime configuration", () => {
     expect(() => loadApiRuntimeConfig({ ...valid, TELEGRAM_WEBHOOK_SECRET: "short" })).toThrow();
     expect(() => loadApiRuntimeConfig({ ...valid, TELEGRAM_BOT_TOKEN: "" })).toThrow();
     expect(() => loadApiRuntimeConfig({ ...valid, SUPPORT_CONTACT: "" })).toThrow();
+  });
+  it("requires a configured current Partner Terms document", () => {
+    expect(() => loadApiRuntimeConfig({ ...valid, LEGAL_PARTNER_TERMS_ID: undefined })).toThrow();
+    expect(() => loadApiRuntimeConfig({ ...valid, LEGAL_PARTNER_TERMS_ID: "not-a-uuid" })).toThrow();
+    expect(() => loadApiRuntimeConfig({ ...valid, LEGAL_PARTNER_TERMS_VERSION: "" })).toThrow();
+  });
+  it("requires optional Sales/Privacy ID and version together", () => {
+    expect(() => loadApiRuntimeConfig({ ...valid, LEGAL_SALES_TERMS_ID: salesTermsId })).toThrow();
+    expect(() => loadApiRuntimeConfig({ ...valid, LEGAL_PRIVACY_VERSION: "2026-09-01" })).toThrow();
+    expect(loadApiRuntimeConfig({
+      ...valid,
+      LEGAL_SALES_TERMS_ID: salesTermsId,
+      LEGAL_SALES_TERMS_VERSION: "2026-09-01"
+    })).toMatchObject({ LEGAL_SALES_TERMS_ID: salesTermsId });
+  });
+  it("exposes only the configured current legal documents", () => {
+    const config = loadApiRuntimeConfig({
+      ...valid,
+      LEGAL_SALES_TERMS_ID: salesTermsId,
+      LEGAL_SALES_TERMS_VERSION: "2026-09-01"
+    });
+    expect(currentLegalDocuments(config)).toEqual({
+      PARTNER_TERMS: { id: partnerTermsId, version: "2026-09-01" },
+      SALES_TERMS: { id: salesTermsId, version: "2026-09-01" }
+    });
   });
 });

@@ -35,6 +35,74 @@ describe("infrastructure endpoints", () => {
   });
 });
 
+describe("legal document endpoints", () => {
+  const secret = Buffer.alloc(32, 4);
+  const current = {
+    session: { id: "session-1", userId: "user-1", createdAt: new Date(), expiresAt: new Date(), revokedAt: null },
+    user: { id: "user-1", telegramUserId: "42", firstName: "Ada", lastName: null, username: null,
+      languageCode: null, isAdmin: false, isBlocked: false }
+  };
+  const cookie = `${SESSION_COOKIE_NAME}=${"a".repeat(43)}`;
+  const document = {
+    id: "00000000-0000-4000-8000-000000000001", type: "PARTNER_TERMS" as const, version: "v1",
+    sha256: "a".repeat(64), contentMarkdown: "# Terms", effectiveAt: "2026-01-01T00:00:00.000Z", requiresReacceptance: false
+  };
+
+  it("serves the configured current legal document to an authenticated user", async () => {
+    const loadCurrent = vi.fn().mockResolvedValue(current);
+    const getCurrent = vi.fn().mockResolvedValue(document);
+    const app = createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set() },
+      legal: { getCurrent } });
+    const response = await app.inject({ method: "GET", url: "/api/v1/legal/PARTNER_TERMS/current", headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: document.id, type: "PARTNER_TERMS", version: "v1", contentMarkdown: "# Terms" });
+    expect(getCurrent).toHaveBeenCalledWith("PARTNER_TERMS");
+    await app.close();
+  });
+
+  it("returns NOT_FOUND for an unknown type without querying", async () => {
+    const loadCurrent = vi.fn().mockResolvedValue(current);
+    const getCurrent = vi.fn();
+    const app = createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set() },
+      legal: { getCurrent } });
+    const response = await app.inject({ method: "GET", url: "/api/v1/legal/UNKNOWN/current", headers: { cookie } });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("NOT_FOUND");
+    expect(getCurrent).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("returns NOT_FOUND when the type has no configured current document", async () => {
+    const loadCurrent = vi.fn().mockResolvedValue(current);
+    const getCurrent = vi.fn().mockResolvedValue(null);
+    const app = createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set() },
+      legal: { getCurrent } });
+    const response = await app.inject({ method: "GET", url: "/api/v1/legal/SALES_TERMS/current", headers: { cookie } });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("NOT_FOUND");
+    await app.close();
+  });
+
+  it("requires an authenticated session", async () => {
+    const loadCurrent = vi.fn().mockResolvedValue(null);
+    const getCurrent = vi.fn();
+    const app = createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent } as unknown as SessionStore, csrfSecret: secret,
+        appBaseUrl: "https://app.example", adminIds: () => new Set() },
+      legal: { getCurrent } });
+    const response = await app.inject({ method: "GET", url: "/api/v1/legal/PARTNER_TERMS/current" });
+    expect(response.statusCode).toBe(401);
+    expect(getCurrent).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe("session and logout endpoints", () => {
   it("returns current authority and revokes a CSRF-authorized logout", async () => {
     const secret = Buffer.alloc(32, 4);

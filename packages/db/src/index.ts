@@ -3,6 +3,7 @@ import { Pool, type PoolConfig } from "pg";
 const foundationMigration = "20260930000000_repository_foundation";
 const userSessionsMigration = "20260930010000_user_sessions";
 const telegramUpdatesMigration = "20260930020000_telegram_updates";
+const legalDocumentsMigration = "20260930030000_legal_documents";
 
 export function createDatabasePool(connectionString: string): Pool {
   const options: PoolConfig = {
@@ -32,5 +33,8 @@ export async function checkDatabaseReady(pool: Pool): Promise<void> {
   }
   if (!result.rows.some((row) => row.migration_name === telegramUpdatesMigration && row.finished_at !== null)) {
     throw new Error("Telegram Update migration has not been applied");
+  }
+  if (!result.rows.some((row) => row.migration_name === legalDocumentsMigration && row.finished_at !== null)) {
+    throw new Error("Legal Documents migration has not been applied");
   }
 }

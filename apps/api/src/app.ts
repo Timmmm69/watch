@@ -1,9 +1,11 @@
 import Fastify from "fastify";
 import { timingSafeEqual } from "node:crypto";
-import { healthResponseSchema, readyResponseSchema } from "@watch/contracts";
+import { healthResponseSchema, legalDocumentResponseSchema, readyResponseSchema } from "@watch/contracts";
+import type { LegalDocumentType } from "@watch/config";
 import { createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
 import { InvalidTelegramInitData, verifyTelegramInitData } from "./auth/telegram.js";
+import type { LegalDocumentProjection } from "./legal/legal.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 
 export interface AppDependencies {
@@ -16,10 +18,11 @@ export interface AppDependencies {
     adminIds: () => ReadonlySet<string>;
     botToken?: string;
   };
+  legal?: { getCurrent: (type: LegalDocumentType) => Promise<LegalDocumentProjection | null> };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, webhook }: AppDependencies) {
   const app = Fastify({ logger });
 
   app.get("/health", async () => healthResponseSchema.parse({ status: "ok" }));
@@ -101,6 +104,20 @@ export function createApp({ checkReadiness, logger = true, auth, webhook }: AppD
       reply.header("Set-Cookie", `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT${new URL(auth.appBaseUrl).protocol === "https:" ? "; Secure" : ""}`);
       return { ok: true };
     });
+
+    if (legal) {
+      app.get("/api/v1/legal/:type/current", { preHandler: requireSession }, async (request, reply) => {
+        const type = (request.params as { type?: string }).type;
+        if (type !== "PARTNER_TERMS" && type !== "SALES_TERMS" && type !== "PRIVACY") {
+          return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Unknown legal document type", details: {}, requestId: request.id } });
+        }
+        const document = await legal.getCurrent(type);
+        if (!document) {
+          return reply.code(404).send({ error: { code: "NOT_FOUND", message: "No current legal document configured", details: {}, requestId: request.id } });
+        }
+        return legalDocumentResponseSchema.parse(document);
+      });
+    }
   }
 
   if (webhook) app.post("/api/v1/telegram/webhook", { bodyLimit: 1_048_576 }, async (request, reply) => {

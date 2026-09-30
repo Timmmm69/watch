@@ -10,6 +10,7 @@
     "worker": "node dist/telegram/worker.js",
     "worker:dev": "tsx watch src/telegram/worker.ts",
     "telegram:configure": "tsx src/telegram/configure.ts",
+    "legal:publish": "tsx src/legal/publish.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },

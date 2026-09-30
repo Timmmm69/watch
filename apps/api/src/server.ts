@@ -1,9 +1,10 @@
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
-import { loadApiRuntimeConfig } from "@watch/config";
+import { currentLegalDocuments, loadApiRuntimeConfig } from "@watch/config";
 import { checkDatabaseReady, createDatabasePool } from "@watch/db";
 import { createApp } from "./app.js";
 import { SessionStore } from "./auth/session.js";
+import { LegalDocuments } from "./legal/legal.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -11,8 +12,12 @@ config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: 
 const runtimeConfig = loadApiRuntimeConfig();
 const pool = createDatabasePool(runtimeConfig.DATABASE_URL);
 const adminTelegramIds = new Set(runtimeConfig.ADMIN_TELEGRAM_IDS);
+const legalDocuments = new LegalDocuments(pool, currentLegalDocuments(runtimeConfig));
 const app = createApp({
-  checkReadiness: () => checkDatabaseReady(pool),
+  checkReadiness: async () => {
+    await checkDatabaseReady(pool);
+    await legalDocuments.verifyCurrentConfigured();
+  },
   auth: {
     store: new SessionStore(pool, adminTelegramIds),
     csrfSecret: runtimeConfig.CSRF_SECRET,
@@ -20,6 +25,7 @@ const app = createApp({
     adminIds: () => adminTelegramIds,
     botToken: runtimeConfig.TELEGRAM_BOT_TOKEN
   },
+  legal: legalDocuments,
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }
 });
 pool.on("error", (error) => {
