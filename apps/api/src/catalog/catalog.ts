@@ -9,6 +9,7 @@ import {
   databaseAssetChecks
 } from "./invariant.js";
 import { partnerProgramMutationAllowed, type PartnerStatus } from "../partner/partner.js";
+import { DEFAULT_INVENTORY_MAX_AGE_SECONDS, variantAvailabilitySql } from "../inventory/availability.js";
 
 export class CatalogValidationError extends Error {
   constructor(
@@ -329,12 +330,6 @@ interface VariantWithInventoryRow extends VariantRow {
   last_successful_sync_run_id: string | null;
 }
 
-const variantAvailabilitySql = `CASE
-  WHEN i.source_status IS DISTINCT FROM 'OK' OR i.source_quantity IS NULL THEN 'UNKNOWN'
-  WHEN i.last_successful_sync_at IS NULL OR i.last_successful_sync_at < now() - interval '600 seconds' THEN 'STALE'
-  WHEN i.source_quantity > i.safety_buffer THEN 'IN_STOCK'
-  ELSE 'OUT_OF_STOCK' END`;
-
 const RETRY = Symbol("catalog-membership-retry");
 const MAX_RETRIES = 3;
 
@@ -472,7 +467,8 @@ export class CatalogService {
   constructor(
     private readonly pool: Pool,
     private readonly platformCurrency: string,
-    private readonly assetChecks: ProductAssetChecks = databaseAssetChecks
+    private readonly assetChecks: ProductAssetChecks = databaseAssetChecks,
+    private readonly inventoryMaxAgeSeconds: number = DEFAULT_INVENTORY_MAX_AGE_SECONDS
   ) {}
 
   async verifyCurrencyConfigured(): Promise<void> {
@@ -1097,7 +1093,7 @@ export class CatalogService {
              ELSE 'OUT_OF_STOCK' END AS availability
       FROM product_variants v
       LEFT JOIN inventory_items i ON i.variant_id = v.id
-      CROSS JOIN LATERAL (SELECT ${variantAvailabilitySql} AS availability) vs
+      CROSS JOIN LATERAL (SELECT ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability) vs
       WHERE v.product_id = p.id AND v.status = 'ACTIVE'
     ) stock WHERE ${conditions.join(" AND ")}`;
     const total = await this.pool.query<{ count: number }>(
@@ -1185,7 +1181,7 @@ export class CatalogService {
       [product.id]
     );
     const variants = await this.pool.query<VariantRow & { availability: StorefrontAvailability }>(
-      `SELECT v.*, ${variantAvailabilitySql} AS availability FROM product_variants v
+      `SELECT v.*, ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability FROM product_variants v
         LEFT JOIN inventory_items i ON i.variant_id = v.id
         WHERE v.product_id = $1 AND v.status = 'ACTIVE'
         ORDER BY v.created_at, v.id`,

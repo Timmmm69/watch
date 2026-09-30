@@ -168,6 +168,13 @@ enum InventorySourceStatus {
   INVALID
 }
 
+enum InventorySyncRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
 model PlatformSetting {
   singletonId      Int      @id @default(1) @map("singleton_id") @db.SmallInt
   platformCurrency String   @unique @map("platform_currency") @db.VarChar(3)
@@ -288,8 +295,25 @@ model InventoryItem {
   lastSuccessfulSyncRunId  String?               @map("last_successful_sync_run_id") @db.Uuid
   updatedAt                DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
   variant                  ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  lastSuccessfulSyncRun    InventorySyncRun?     @relation(fields: [lastSuccessfulSyncRunId], references: [id], onDelete: Restrict)
 
   @@map("inventory_items")
+}
+
+model InventorySyncRun {
+  id             String                @id @default(uuid()) @db.Uuid
+  providerKey    String                @map("provider_key") @db.VarChar(64)
+  status         InventorySyncRunStatus
+  startedAt      DateTime              @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime?             @map("finished_at") @db.Timestamptz(6)
+  itemsProcessed Int                   @default(0) @map("items_processed")
+  itemsFailed    Int                   @default(0) @map("items_failed")
+  detailsJson    Json?                 @map("details_json") @db.JsonB
+  errorSummary   String?               @map("error_summary")
+  inventoryItems InventoryItem[]
+
+  @@index([startedAt])
+  @@map("inventory_sync_runs")
 }
 
 model AuditLog {

@@ -17,6 +17,7 @@ import {
   MAX_VIDEO_UPLOAD_BYTES,
   healthResponseSchema,
   legalDocumentResponseSchema,
+  pageQuerySchema,
   partnerOnboardingRequestSchema,
   readyResponseSchema,
   storefrontProductsQuerySchema
@@ -34,12 +35,15 @@ import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 import { ReferralError, type ReferralService } from "./referral/referral.js";
+import type { InventoryService } from "./inventory/service.js";
 
 export type CatalogApi = Pick<CatalogService,
   "listCategories" | "createCategory" | "updateCategory"
   | "listProducts" | "getProduct" | "createProduct" | "updateProduct"
   | "createVariant" | "updateVariant"
   | "listStorefrontCategories" | "listStorefrontProducts" | "getStorefrontProduct">;
+
+export type InventoryApi = Pick<InventoryService, "listItems" | "listSyncRuns">;
 
 export interface AppDependencies {
   checkReadiness: () => Promise<void>;
@@ -58,11 +62,12 @@ export interface AppDependencies {
   };
   referral?: ReferralService;
   catalog?: { service: CatalogApi };
+  inventory?: { service: InventoryApi };
   assets?: { service: AssetService };
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, assets, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -508,6 +513,32 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
           } catch (error) { catalogError(request, reply, error); return reply; }
         });
       }
+    }
+
+    if (inventory) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      const parsePage = (request: FastifyRequest, reply: FastifyReply): { page: number; limit: number } | null => {
+        const parsed = pageQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          reply.code(400).send({
+            error: { code: "VALIDATION_ERROR", message: "Invalid pagination query", details: {}, requestId: request.id }
+          });
+          return null;
+        }
+        return parsed.data;
+      };
+
+      app.get("/api/v1/admin/inventory", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const page = parsePage(request, reply);
+        if (!page) return reply;
+        return inventory.service.listItems(page);
+      });
+
+      app.get("/api/v1/admin/inventory/sync-runs", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const page = parsePage(request, reply);
+        if (!page) return reply;
+        return inventory.service.listSyncRuns(page);
+      });
     }
 
     if (legal) {

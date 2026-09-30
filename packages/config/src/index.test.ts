@@ -38,6 +38,19 @@ describe("API runtime configuration", () => {
     expect(loadApiRuntimeConfig({ ...valid, PLATFORM_CURRENCY: "USD" })).toMatchObject({ PLATFORM_CURRENCY: "USD" });
   });
 
+  it("defaults provisional inventory freshness values and validates overrides", () => {
+    expect(loadApiRuntimeConfig(valid)).toMatchObject({
+      INVENTORY_SYNC_INTERVAL_SECONDS: 120,
+      INVENTORY_MAX_AGE_SECONDS: 600
+    });
+    expect(loadApiRuntimeConfig({ ...valid, INVENTORY_SYNC_INTERVAL_SECONDS: "60", INVENTORY_MAX_AGE_SECONDS: "900" }))
+      .toMatchObject({ INVENTORY_SYNC_INTERVAL_SECONDS: 60, INVENTORY_MAX_AGE_SECONDS: 900 });
+    for (const value of ["0", "-1", "1.5", "abc"]) {
+      expect(() => loadApiRuntimeConfig({ ...valid, INVENTORY_SYNC_INTERVAL_SECONDS: value })).toThrow();
+      expect(() => loadApiRuntimeConfig({ ...valid, INVENTORY_MAX_AGE_SECONDS: value })).toThrow();
+    }
+  });
+
   it("rejects duplicate or malformed Admin IDs and invalid CSRF secrets", () => {
     for (const ids of ["42,42", "01", "-1", "1,,2", "9223372036854775808"]) {
       expect(() => loadApiRuntimeConfig({ ...valid, ADMIN_TELEGRAM_IDS: ids })).toThrow();

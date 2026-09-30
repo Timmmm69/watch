@@ -36,6 +36,8 @@ export const apiRuntimeConfigSchema = z.object({
   ADMIN_TELEGRAM_IDS: z.string().transform(parseAdminIds),
   CSRF_SECRET: z.string().transform(parseCsrfSecret),
   PLATFORM_CURRENCY: z.string().regex(/^[A-Z]{3}$/, "PLATFORM_CURRENCY must be a 3-letter ISO 4217 code"),
+  INVENTORY_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
+  INVENTORY_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(86400).default(600),
   LEGAL_PARTNER_TERMS_ID: z.string().uuid(),
   LEGAL_PARTNER_TERMS_VERSION: legalVersion,
   LEGAL_SALES_TERMS_ID: z.string().uuid().optional(),

@@ -48,7 +48,6 @@ afterAll(async () => {
   await pool.query("DELETE FROM audit_logs WHERE actor_user_id = ANY($1::uuid[])", [[ids.buyer, ids.admin, ids.partnerUser]]);
   await pool.query("DELETE FROM referral_links WHERE partner_id = $1", [ids.partner]);
   await pool.query("DELETE FROM partner_terms_acceptances WHERE partner_id = $1", [ids.partner]);
-  await pool.query("DELETE FROM legal_documents WHERE id = $1", [ids.document]);
   await pool.query("DELETE FROM partners WHERE id = $1", [ids.partner]);
   await pool.query("DELETE FROM partners WHERE id = $1", [ids.otherPartner]);
   await pool.query("DELETE FROM products WHERE id = $1", [ids.product]);
