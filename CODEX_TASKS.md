@@ -259,17 +259,29 @@ Implement:
 - fault-injection tests
 
 ### T18 — Real authoritative inventory adapter
-**BLOCKED by U01.**
+**U01 RESOLVED 2026-09-30 — implementation may proceed.**
 
-Only after the real authoritative source is confirmed, implement:
-- actual source technology/access/auth/schema
-- full snapshot semantics
-- SKU mapping
-- source latency behavior
-- explicit reconciliation authority: `SOURCE_PROOF` or `MANUAL`
-- real provider adapter
+Implement the source-specific adapter without redesigning T16/T17:
+- Google Sheets is the authoritative physical-inventory source;
+- backend access uses a dedicated read-only Google service account;
+- preserve the existing InventoryProvider/config abstractions from T16/T17;
+- each fetch reads the entire configured worksheet as a complete snapshot;
+- required source columns: `external_key`, `sku`, `stock_quantity`; extra columns are ignored by this adapter;
+- map `external_key` exactly to `product_variants.inventory_external_key`;
+- require mapped `sku` to match ProductVariant SKU as a safety cross-check;
+- validate `stock_quantity` as integer >=0;
+- duplicate keys/malformed quantity/SKU mismatch follow existing invalid-row rules; unknown keys are reported/ignored; configured mapped variants absent from the complete snapshot become MISSING;
+- capabilities: `completeSnapshot=true`, `reservationReconciliation=NONE`;
+- do not invent or derive SOURCE_PROOF/source-version semantics from Google Sheets;
+- selected reservation reconciliation mode is `MANUAL`; T18 must not automatically CONSUME/RELEASE reservations;
+- technical sync cadence is 120s, max age 600s;
+- Google Sheets is inventory-only: do not import/override price, Product/Variant status, commission, settlement, attributes or media;
+- provider credentials/config are validated and never logged;
+- add source-specific adapter tests while retaining T16/T17 PostgreSQL/concurrency behavior unchanged.
 
-Do not invent a supplier API or proof/version semantics.
+Production/live smoke requires real spreadsheet ID, worksheet name, service-account credentials and Sheet sharing permission. If they are absent, do not invent values; implement/test the adapter with deterministic fixtures/mocked Google API boundary and report live verification as pending.
+
+Product IMAGE/VIDEO storage is separate: Cloudflare R2 is the selected production object-storage target and must not be coupled to the inventory adapter.
 
 ---
 
@@ -543,13 +555,13 @@ Implement:
 
 These are not Codex design tasks. They require real business/external input.
 
-- **U01:** authoritative inventory source. Blocks production-complete S07/T18.
+- **U01 — RESOLVED 2026-09-30:** Google Sheets complete-snapshot inventory source, read-only service account, `external_key` + `sku` + `stock_quantity`, 120s sync / 600s max age, `MANUAL` reservation reconciliation. Live credentials/access are deployment inputs, not design blockers.
 - **U02:** real catalog attribute schema. Blocks domain-specific catalog filters.
 - **U03:** fulfilment process details. Must be resolved/defaulted before S09 production finalization.
 - **U04:** supplier/platform economics. Required for full contribution analytics.
 - **U05:** return/legal policy. Default financial hold is 14 days until changed by explicit amendment.
 - **U06:** payout method/destination model. Blocks S14.
-- **U07:** hosting/domain. Blocks S16 completion.
+- **U07:** hosting/domain. Cloudflare R2 is selected for product-media object storage; hosting provider/budget/domain and backup target remain unresolved and block S16 completion.
 - **U08:** production legal documents + PII retention. Blocks production onboarding/checkout and S16 completion.
 
 # Recommended execution pattern
