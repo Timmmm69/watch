@@ -17,8 +17,11 @@ that run, otherwise FAILED. Only FAILED emits a deduplicated, non-PII Event.
 `runScheduledInventorySync()` calls the same operation, skips contention and logs
 infrastructure failures for recovery on the next execution. It adds no queue.
 The provider is injected; the server does not select a fake production provider.
-Without a configured orchestrator, Admin sync returns 503. Selecting the actual
-provider and enabling scheduled source access remain blocked by U01/T18.
+U01 is now resolved as Google Sheets complete-snapshot inventory with audited
+MANUAL reservation reconciliation. T17 intentionally remains provider-agnostic;
+T18 wires the Google Sheets adapter/config into this existing orchestration.
+Until T18 is configured, Admin sync continues to return 503 rather than inventing
+a production provider or credentials.
 
 Orders/Reservations do not exist yet. Phases D/E and the ACTIVE-reservation guard
 on external-key mutations remain the S09/S10 augmentations explicitly required by
