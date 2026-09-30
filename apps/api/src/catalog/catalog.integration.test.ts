@@ -344,6 +344,95 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     });
   });
 
+  it("blocks external-key mutation while an ACTIVE reservation exists (BR-019B)", async () => {
+    const product = await service.createProduct(actorUserId, { title: unique("reservation product") });
+    productIds.push(product.id);
+    const variant = await service.createVariant(actorUserId, product.id, {
+      sku: unique("SKU"),
+      priceMinor: 30_000,
+      partnerCommissionUnitMinor: 1_000,
+      inventoryExternalKey: unique("key")
+    });
+    variantIds.push(variant.id);
+    await pool!.query(
+      `UPDATE inventory_items
+          SET source_quantity = 9, source_status = 'OK', source_version = 'v9', last_successful_sync_at = now()
+        WHERE variant_id = $1`,
+      [variant.id]
+    );
+
+    const salesTermsDocument = randomUUID();
+    const privacyDocument = randomUUID();
+    for (const [id, type] of [[salesTermsDocument, "SALES_TERMS"], [privacyDocument, "PRIVACY"]] as const) {
+      await pool!.query(
+        `INSERT INTO legal_documents (id, type, version, sha256, content_markdown, effective_at)
+         VALUES ($1, $2, $3, $4, '# order terms', now())`,
+        [id, type, unique("v"), randomBytes(32).toString("hex")]
+      );
+    }
+    const orderId = randomUUID();
+    await pool!.query(
+      `INSERT INTO orders (id, public_number, buyer_user_id, supplier_id, currency, subtotal_minor, total_minor,
+          sales_terms_document_id, privacy_document_id, sales_terms_accepted_at, privacy_acknowledged_at,
+          idempotency_key, request_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, 30000, 30000, $6, $7, now(), now(), $8, $9)`,
+      [orderId, `W-${randomBytes(6).toString("hex").toUpperCase().slice(0, 12)}`, actorUserId, supplierId,
+        platformCurrency, salesTermsDocument, privacyDocument, unique("idem"), randomBytes(32).toString("hex")]
+    );
+    await pool!.query(
+      `INSERT INTO order_items (id, order_id, variant_id, sku_snapshot, title_snapshot, quantity,
+          unit_price_minor, partner_commission_unit_snapshot_minor, line_total_minor)
+       VALUES ($1, $2, $3, $4, 'Reservation watch', 1, 30000, 1000, 30000)`,
+      [randomUUID(), orderId, variant.id, variant.sku]
+    );
+    await pool!.query(
+      "INSERT INTO inventory_reservations (id, order_id, variant_id, quantity) VALUES ($1, $2, $3, 1)",
+      [randomUUID(), orderId, variant.id]
+    );
+
+    const blocked = await service.updateVariant(actorUserId, variant.id, {
+      inventoryExternalKey: unique("blocked-key")
+    }).catch((error: unknown) => error as CatalogValidationError);
+    expect(blocked).toBeInstanceOf(CatalogValidationError);
+    expect((blocked as CatalogValidationError).code).toBe("INVENTORY_EXTERNAL_KEY_IN_USE");
+    const unchanged = (await pool!.query<{
+      inventory_external_key: string; source_status: string; source_version: string | null;
+    }>(
+      `SELECT v.inventory_external_key, i.source_status, i.source_version
+         FROM product_variants v JOIN inventory_items i ON i.variant_id = v.id
+        WHERE v.id = $1`,
+      [variant.id]
+    )).rows[0]!;
+    expect(unchanged.inventory_external_key).toBe(variant.inventoryExternalKey);
+    expect(unchanged).toMatchObject({ source_status: "OK", source_version: "v9" });
+
+    const sameKey = await service.updateVariant(actorUserId, variant.id, {
+      inventoryExternalKey: variant.inventoryExternalKey
+    });
+    expect(sameKey.inventoryExternalKey).toBe(variant.inventoryExternalKey);
+    expect(sameKey.inventory).toMatchObject({ sourceQuantity: 9, sourceStatus: "OK", sourceVersion: "v9" });
+
+    await pool!.query(
+      "UPDATE inventory_reservations SET status = 'RELEASED', released_at = now() WHERE order_id = $1",
+      [orderId]
+    );
+    const releasedKey = unique("released-key");
+    const changed = await service.updateVariant(actorUserId, variant.id, {
+      inventoryExternalKey: releasedKey
+    });
+    expect(changed.inventoryExternalKey).toBe(releasedKey);
+    expect(changed.inventory).toMatchObject({
+      sourceQuantity: null,
+      sourceStatus: "UNINITIALIZED",
+      sourceVersion: null,
+      lastSuccessfulSyncAt: null
+    });
+
+    await pool!.query("DELETE FROM inventory_reservations WHERE order_id = $1", [orderId]);
+    await pool!.query("DELETE FROM order_items WHERE order_id = $1", [orderId]);
+    await pool!.query("DELETE FROM orders WHERE id = $1", [orderId]);
+  });
+
   it("rejects non-platform currency and invalid settlement at DB level", async () => {
     const product = await service.createProduct(actorUserId, { title: unique("db checks") });
     productIds.push(product.id);

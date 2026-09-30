@@ -25,6 +25,9 @@ model User {
   auditLogs        AuditLog[]
   referralLinksDisabled ReferralLink[] @relation("ReferralLinkDisabledBy")
   attributionTouches AttributionTouch[]
+  orders Order[]
+  orderFulfillmentRedactions OrderFulfillmentDetail[] @relation("OrderFulfillmentRedactedBy")
+  reconciledReservations InventoryReservation[] @relation("InventoryReservationReconciledBy")
   cart             Cart?
 
   @@map("users")
@@ -83,8 +86,10 @@ model LegalDocument {
   contentMarkdown      String            @map("content_markdown")
   requiresReacceptance Boolean           @default(false) @map("requires_reacceptance")
   effectiveAt          DateTime          @map("effective_at") @db.Timestamptz(6)
-  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  acceptances          PartnerTermsAcceptance[]
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  acceptances      PartnerTermsAcceptance[]
+  salesTermsOrders Order[]         @relation("OrderSalesTerms")
+  privacyOrders    Order[]         @relation("OrderPrivacy")
 
   @@unique([type, version])
   @@unique([type, sha256])
@@ -108,6 +113,7 @@ model Partner {
   acceptances PartnerTermsAcceptance[]
   referralLinks ReferralLink[]
   attributionTouches AttributionTouch[]
+  attributedOrders Order[]
 
   @@index([status])
   @@map("partners")
@@ -191,6 +197,7 @@ model Supplier {
   createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
   products  Product[]
+  orders    Order[]
 
   @@map("suppliers")
 }
@@ -248,6 +255,8 @@ model ProductVariant {
   inventoryItem                InventoryItem?
   assets                       ProductAsset[]
   cartItems                    CartItem[]
+  orderItems                   OrderItem[]
+  reservations                 InventoryReservation[]
 
   @@unique([id, productId])
   @@index([productId, status])
@@ -338,6 +347,7 @@ model InventorySyncRun {
   detailsJson    Json?                 @map("details_json") @db.JsonB
   errorSummary   String?               @map("error_summary")
   inventoryItems InventoryItem[]
+  reconciliationReservations InventoryReservation[]
 
   @@index([startedAt])
   @@map("inventory_sync_runs")
@@ -390,6 +400,28 @@ enum ReferralLinkStatus {
   DISABLED
 }
 
+enum OrderStatus {
+  PLACED
+  CONFIRMED
+  FULFILLING
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DELIVERY_FAILED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+}
+
+enum ReservationReconciliationMethod {
+  SOURCE_PROOF
+  MANUAL
+}
+
 model ReferralLink {
   id                    String             @id @default(uuid()) @db.Uuid
   token                 String             @unique @db.VarChar(64)
@@ -426,4 +458,112 @@ model AttributionTouch {
   @@index([partnerId, occurredAt])
   @@index([expiresAt])
   @@map("attribution_touches")
+}
+
+model Order {
+  id                        String           @id @default(uuid()) @db.Uuid
+  publicNumber              String           @unique @map("public_number") @db.VarChar(32)
+  buyerUserId               String           @map("buyer_user_id") @db.Uuid
+  supplierId                String           @map("supplier_id") @db.Uuid
+  attributionTouchId        String?          @map("attribution_touch_id") @db.Uuid
+  partnerIdSnapshot         String?          @map("partner_id_snapshot") @db.Uuid
+  commissionEligibleSnapshot Boolean          @default(false) @map("commission_eligible_snapshot")
+  status                    OrderStatus      @default(PLACED)
+  currency                  String           @db.VarChar(3)
+  subtotalMinor             Int              @map("subtotal_minor")
+  totalMinor                Int              @map("total_minor")
+  salesTermsDocumentId      String           @map("sales_terms_document_id") @db.Uuid
+  privacyDocumentId         String           @map("privacy_document_id") @db.Uuid
+  salesTermsAcceptedAt      DateTime         @map("sales_terms_accepted_at") @db.Timestamptz(6)
+  privacyAcknowledgedAt     DateTime         @map("privacy_acknowledged_at") @db.Timestamptz(6)
+  idempotencyKey            String           @map("idempotency_key") @db.VarChar(100)
+  requestFingerprint        String           @map("request_fingerprint") @db.Char(64)
+  completionEligibleAt      DateTime?        @map("completion_eligible_at") @db.Timestamptz(6)
+  confirmedAt               DateTime?        @map("confirmed_at") @db.Timestamptz(6)
+  fulfillingAt              DateTime?        @map("fulfilling_at") @db.Timestamptz(6)
+  shippedAt                 DateTime?        @map("shipped_at") @db.Timestamptz(6)
+  deliveredAt               DateTime?        @map("delivered_at") @db.Timestamptz(6)
+  completedAt               DateTime?        @map("completed_at") @db.Timestamptz(6)
+  cancelledAt               DateTime?        @map("cancelled_at") @db.Timestamptz(6)
+  deliveryFailedAt          DateTime?        @map("delivery_failed_at") @db.Timestamptz(6)
+  createdAt                 DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  buyer                     User             @relation(fields: [buyerUserId], references: [id], onDelete: Restrict)
+  supplier                  Supplier         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  partnerSnapshot           Partner?         @relation(fields: [partnerIdSnapshot], references: [id], onDelete: Restrict)
+  salesTermsDocument        LegalDocument    @relation("OrderSalesTerms", fields: [salesTermsDocumentId], references: [id], onDelete: Restrict)
+  privacyDocument           LegalDocument    @relation("OrderPrivacy", fields: [privacyDocumentId], references: [id], onDelete: Restrict)
+  fulfillmentDetail         OrderFulfillmentDetail?
+  items                     OrderItem[]
+
+  @@unique([buyerUserId, idempotencyKey])
+  @@unique([id, partnerIdSnapshot])
+  @@index([buyerUserId, createdAt])
+  @@index([partnerIdSnapshot, createdAt])
+  @@index([status, createdAt])
+  @@index([attributionTouchId, createdAt])
+  @@map("orders")
+}
+
+model OrderFulfillmentDetail {
+  orderId                String    @id @map("order_id") @db.Uuid
+  recipientName          String?   @map("recipient_name") @db.VarChar(100)
+  phone                  String?   @db.VarChar(32)
+  address                String?
+  comment                String?   @db.VarChar(500)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  redactedAt             DateTime? @map("redacted_at") @db.Timestamptz(6)
+  redactedByAdminUserId  String?   @map("redacted_by_admin_user_id") @db.Uuid
+  order                  Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  redactedByAdmin        User?     @relation("OrderFulfillmentRedactedBy", fields: [redactedByAdminUserId], references: [id], onDelete: Restrict)
+
+  @@map("order_fulfillment_details")
+}
+
+model OrderItem {
+  id                                 String                @id @default(uuid()) @db.Uuid
+  orderId                            String                @map("order_id") @db.Uuid
+  variantId                          String                @map("variant_id") @db.Uuid
+  skuSnapshot                        String                @map("sku_snapshot") @db.VarChar(100)
+  titleSnapshot                      String                @map("title_snapshot") @db.VarChar(200)
+  attributesSnapshot                 Json                  @default("{}") @map("attributes_snapshot") @db.JsonB
+  quantity                           Int
+  unitPriceMinor                     Int                   @map("unit_price_minor")
+  partnerCommissionUnitSnapshotMinor Int                   @map("partner_commission_unit_snapshot_minor")
+  supplierSettlementUnitSnapshotMinor Int?                 @map("supplier_settlement_unit_snapshot_minor")
+  lineTotalMinor                     Int                   @map("line_total_minor")
+  order                              Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  variant                            ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  reservations                       InventoryReservation[]
+
+  @@unique([orderId, variantId])
+  @@unique([id, orderId])
+  @@map("order_items")
+}
+
+model InventoryReservation {
+  id                                 String                              @id @default(uuid()) @db.Uuid
+  orderId                            String                              @map("order_id") @db.Uuid
+  variantId                          String                              @map("variant_id") @db.Uuid
+  quantity                           Int
+  status                             ReservationStatus                   @default(ACTIVE)
+  reconciliationMethod               ReservationReconciliationMethod?    @map("reconciliation_method")
+  reconciliationReference            String?                             @map("reconciliation_reference") @db.VarChar(500)
+  reconciliationSourceVersion        String?                             @map("reconciliation_source_version") @db.VarChar(200)
+  reconciliationInventorySyncRunId   String?                             @map("reconciliation_inventory_sync_run_id") @db.Uuid
+  reconciledByAdminUserId            String?                             @map("reconciled_by_admin_user_id") @db.Uuid
+  reconciledAt                       DateTime?                           @map("reconciled_at") @db.Timestamptz(6)
+  createdAt                          DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
+  releasedAt                         DateTime?                           @map("released_at") @db.Timestamptz(6)
+  consumedAt                         DateTime?                           @map("consumed_at") @db.Timestamptz(6)
+  orderItem                          OrderItem                           @relation(fields: [orderId, variantId], references: [orderId, variantId], onDelete: Restrict)
+  variant                            ProductVariant                      @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  reconciliationInventorySyncRun     InventorySyncRun?                   @relation(fields: [reconciliationInventorySyncRunId], references: [id], onDelete: Restrict)
+  reconciledByAdmin                  User?                               @relation("InventoryReservationReconciledBy", fields: [reconciledByAdminUserId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, variantId])
+  @@index([variantId, status])
+  @@index([status, orderId])
+  @@map("inventory_reservations")
 }

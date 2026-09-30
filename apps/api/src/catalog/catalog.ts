@@ -14,7 +14,8 @@ import { DEFAULT_INVENTORY_MAX_AGE_SECONDS, variantAvailabilitySql } from "../in
 export class CatalogValidationError extends Error {
   constructor(
     message: string,
-    public readonly details: Record<string, unknown> = {}
+    public readonly details: Record<string, unknown> = {},
+    public readonly code: string = "VALIDATION_ERROR"
   ) {
     super(message);
     this.name = "CatalogValidationError";
@@ -954,6 +955,19 @@ export class CatalogService {
       const inventoryInvolved = input.inventoryExternalKey !== undefined || input.safetyBuffer !== undefined;
       if (inventoryInvolved) {
         await this.lockInventoryItem(client, variantId);
+      }
+      if (input.inventoryExternalKey !== undefined && input.inventoryExternalKey !== variant.inventory_external_key) {
+        const activeReservations = await client.query<{ count: number }>(
+          "SELECT COUNT(*)::int AS count FROM inventory_reservations WHERE variant_id = $1 AND status = 'ACTIVE'",
+          [variantId]
+        );
+        if ((activeReservations.rows[0]?.count ?? 0) > 0) {
+          throw new CatalogValidationError(
+            "Inventory external key is in use by an active reservation",
+            { variantId, activeReservations: activeReservations.rows[0]!.count },
+            "INVENTORY_EXTERNAL_KEY_IN_USE"
+          );
+        }
       }
 
       const priceMinor = input.priceMinor ?? variant.price_minor;

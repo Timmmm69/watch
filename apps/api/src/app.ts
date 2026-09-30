@@ -83,7 +83,7 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
   const catalogError = (request: FastifyRequest, reply: FastifyReply, error: unknown): void => {
     if (error instanceof CatalogValidationError) {
       reply.code(400).send({
-        error: { code: "VALIDATION_ERROR", message: error.message, details: error.details, requestId: request.id }
+        error: { code: error.code, message: error.message, details: error.details, requestId: request.id }
       });
       return;
     }
