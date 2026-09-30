@@ -148,7 +148,19 @@ export interface StorefrontProductCard {
   priceFromMinor: number | null;
   priceToMinor: number | null;
   currency: string;
+  availability: StorefrontAvailability;
   gallery: StorefrontAsset[];
+}
+
+export type StorefrontAvailability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
+
+export interface StorefrontProductsQuery extends Page {
+  q?: string | undefined;
+  category?: string | undefined;
+  brand?: string | undefined;
+  minPriceMinor?: number | undefined;
+  maxPriceMinor?: number | undefined;
+  availability?: StorefrontAvailability | undefined;
 }
 
 export interface StorefrontAsset {
@@ -170,6 +182,7 @@ export interface StorefrontVariant {
   attributes: Record<string, unknown>;
   priceMinor: number;
   currency: string;
+  availability: StorefrontAvailability;
 }
 
 export interface StorefrontProduct extends StorefrontProductCard {
@@ -264,6 +277,12 @@ interface VariantWithInventoryRow extends VariantRow {
   last_successful_sync_at: Date | null;
   last_successful_sync_run_id: string | null;
 }
+
+const variantAvailabilitySql = `CASE
+  WHEN i.source_status IS DISTINCT FROM 'OK' OR i.source_quantity IS NULL THEN 'UNKNOWN'
+  WHEN i.last_successful_sync_at IS NULL OR i.last_successful_sync_at < now() - interval '600 seconds' THEN 'STALE'
+  WHEN i.source_quantity > i.safety_buffer THEN 'IN_STOCK'
+  ELSE 'OUT_OF_STOCK' END`;
 
 const RETRY = Symbol("catalog-membership-retry");
 const MAX_RETRIES = 3;
@@ -983,10 +1002,58 @@ export class CatalogService {
     };
   }
 
-  async listStorefrontProducts(query: Page): Promise<Paginated<StorefrontProductCard>> {
+  async listStorefrontProducts(query: StorefrontProductsQuery): Promise<Paginated<StorefrontProductCard>> {
+    const values: unknown[] = [];
+    const conditions = ["p.status = 'ACTIVE'"];
+    if (query.q) {
+      values.push(sanitizeSearch(query.q));
+      const index = values.length;
+      conditions.push(`(p.title ILIKE $${index} ESCAPE '\\' OR p.brand ILIKE $${index} ESCAPE '\\' OR p.description ILIKE $${index} ESCAPE '\\')`);
+    }
+    if (query.category) {
+      values.push(query.category);
+      conditions.push(`EXISTS (SELECT 1 FROM product_categories pc JOIN categories c ON c.id = pc.category_id
+        WHERE pc.product_id = p.id AND c.status = 'ACTIVE' AND c.slug = $${values.length})`);
+    }
+    if (query.brand) {
+      values.push(query.brand);
+      conditions.push(`lower(p.brand) = lower($${values.length})`);
+    }
+    if (query.minPriceMinor !== undefined || query.maxPriceMinor !== undefined) {
+      const priceConditions = ["v.product_id = p.id", "v.status = 'ACTIVE'"];
+      if (query.minPriceMinor !== undefined) {
+        values.push(query.minPriceMinor);
+        priceConditions.push(`v.price_minor >= $${values.length}`);
+      }
+      if (query.maxPriceMinor !== undefined) {
+        values.push(query.maxPriceMinor);
+        priceConditions.push(`v.price_minor <= $${values.length}`);
+      }
+      conditions.push(`EXISTS (SELECT 1 FROM product_variants v WHERE ${priceConditions.join(" AND ")})`);
+    }
+    if (query.availability) {
+      values.push(query.availability);
+      conditions.push(`stock.availability = $${values.length}`);
+    }
+    const from = `FROM products p CROSS JOIN LATERAL (
+      SELECT min(v.price_minor) AS price_from_minor, max(v.price_minor) AS price_to_minor,
+        CASE WHEN bool_or(vs.availability = 'IN_STOCK') THEN 'IN_STOCK'
+             WHEN bool_or(vs.availability = 'UNKNOWN') THEN 'UNKNOWN'
+             WHEN bool_or(vs.availability = 'STALE') THEN 'STALE'
+             ELSE 'OUT_OF_STOCK' END AS availability
+      FROM product_variants v
+      LEFT JOIN inventory_items i ON i.variant_id = v.id
+      CROSS JOIN LATERAL (SELECT ${variantAvailabilitySql} AS availability) vs
+      WHERE v.product_id = p.id AND v.status = 'ACTIVE'
+    ) stock WHERE ${conditions.join(" AND ")}`;
     const total = await this.pool.query<{ count: number }>(
-      "SELECT COUNT(*)::int AS count FROM products WHERE status = 'ACTIVE'"
+      `SELECT COUNT(*)::int AS count ${from}`, values
     );
+    const order = query.q
+      ? `ORDER BY CASE WHEN lower(p.title) = lower($${values.length + 1}) THEN 0
+                       WHEN p.title ILIKE $${values.length + 2} ESCAPE '\\' THEN 1 ELSE 2 END, p.id`
+      : "ORDER BY p.created_at DESC, p.id";
+    const orderValues = query.q ? [query.q, sanitizeSearch(query.q).slice(1)] : [];
     const items = await this.pool.query<{
       id: string;
       title: string;
@@ -995,17 +1062,13 @@ export class CatalogService {
       brand: string | null;
       price_from_minor: number | null;
       price_to_minor: number | null;
+      availability: StorefrontAvailability;
     }>(
       `SELECT p.id, p.title, p.slug, p.description, p.brand,
-              (SELECT min(v.price_minor) FROM product_variants v
-                WHERE v.product_id = p.id AND v.status = 'ACTIVE') AS price_from_minor,
-              (SELECT max(v.price_minor) FROM product_variants v
-                WHERE v.product_id = p.id AND v.status = 'ACTIVE') AS price_to_minor
-         FROM products p
-        WHERE p.status = 'ACTIVE'
-        ORDER BY p.created_at DESC, p.id
-        LIMIT $1 OFFSET $2`,
-      [query.limit, (query.page - 1) * query.limit]
+              stock.price_from_minor, stock.price_to_minor, stock.availability
+         ${from} ${order}
+        LIMIT $${values.length + orderValues.length + 1} OFFSET $${values.length + orderValues.length + 2}`,
+      [...values, ...orderValues, query.limit, (query.page - 1) * query.limit]
     );
     const assets = await this.pool.query<AssetRow>(
       `SELECT * FROM product_assets WHERE product_id = ANY($1::uuid[])
@@ -1017,7 +1080,7 @@ export class CatalogService {
       items: items.rows.map((row) => ({
         id: row.id, title: row.title, slug: row.slug, description: row.description,
         brand: row.brand, priceFromMinor: row.price_from_minor, priceToMinor: row.price_to_minor,
-        currency: this.platformCurrency,
+        currency: this.platformCurrency, availability: row.availability,
         gallery: assets.rows.filter((asset) => asset.product_id === row.id).map(mapAsset)
       })),
       page: query.page,
@@ -1040,10 +1103,11 @@ export class CatalogService {
         ORDER BY c.sort_order, c.id`,
       [product.id]
     );
-    const variants = await this.pool.query<VariantRow>(
-      `SELECT * FROM product_variants
-        WHERE product_id = $1 AND status = 'ACTIVE'
-        ORDER BY created_at, id`,
+    const variants = await this.pool.query<VariantRow & { availability: StorefrontAvailability }>(
+      `SELECT v.*, ${variantAvailabilitySql} AS availability FROM product_variants v
+        LEFT JOIN inventory_items i ON i.variant_id = v.id
+        WHERE v.product_id = $1 AND v.status = 'ACTIVE'
+        ORDER BY v.created_at, v.id`,
       [product.id]
     );
     const assets = await this.pool.query<AssetRow>(
@@ -1051,6 +1115,10 @@ export class CatalogService {
        ORDER BY sort_order, created_at, id`, [product.id]
     );
     const prices = variants.rows.map((row) => row.price_minor);
+    const statuses = variants.rows.map((row) => row.availability);
+    const availability: StorefrontAvailability = statuses.includes("IN_STOCK") ? "IN_STOCK"
+      : statuses.includes("UNKNOWN") ? "UNKNOWN"
+      : statuses.includes("STALE") ? "STALE" : "OUT_OF_STOCK";
     return {
       id: product.id,
       title: product.title,
@@ -1060,13 +1128,14 @@ export class CatalogService {
       priceFromMinor: prices.length > 0 ? Math.min(...prices) : null,
       priceToMinor: prices.length > 0 ? Math.max(...prices) : null,
       currency: this.platformCurrency,
+      availability,
       gallery: assets.rows.map(mapAsset),
       categories: categories.rows.map((row) => ({
         id: row.id, name: row.name, slug: row.slug, sortOrder: row.sort_order
       })),
       variants: variants.rows.map((row) => ({
         id: row.id, sku: row.sku, attributes: row.attributes,
-        priceMinor: row.price_minor, currency: row.currency
+        priceMinor: row.price_minor, currency: row.currency, availability: row.availability
       }))
     };
   }

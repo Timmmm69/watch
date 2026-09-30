@@ -59,7 +59,15 @@ export const pageQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });
 
-export const storefrontProductsQuerySchema = pageQuerySchema;
+export const storefrontProductsQuerySchema = pageQuerySchema.extend({
+  q: z.string().trim().min(1).max(100).optional(),
+  category: z.string().min(1).max(140).optional(),
+  brand: z.string().min(1).max(120).optional(),
+  minPriceMinor: z.coerce.number().int().min(0).max(2_147_483_647).optional(),
+  maxPriceMinor: z.coerce.number().int().min(0).max(2_147_483_647).optional(),
+  availability: z.enum(["IN_STOCK", "OUT_OF_STOCK", "STALE", "UNKNOWN"]).optional()
+}).strict().refine((value) => value.minPriceMinor === undefined || value.maxPriceMinor === undefined ||
+  value.minPriceMinor <= value.maxPriceMinor, "Minimum price exceeds maximum price");
 
 export const adminCategoryListQuerySchema = pageQuerySchema.extend({
   status: categoryStatusSchema.optional()

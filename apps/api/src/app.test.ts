@@ -320,4 +320,22 @@ describe("catalog endpoints", () => {
     expect(anonymous.json().error.code).toBe("AUTH_REQUIRED");
     await app.close();
   });
+
+  it("validates and forwards generic storefront filters", async () => {
+    const listStorefrontProducts = vi.fn().mockResolvedValue({ items: [], page: 2, limit: 10, total: 0 });
+    const app = buildApp({ listStorefrontProducts });
+    const valid = await app.inject({ method: "GET",
+      url: "/api/v1/catalog/products?q=Casio&category=watches&brand=Casio&minPriceMinor=100&maxPriceMinor=500&availability=UNKNOWN&page=2&limit=10",
+      headers: { cookie: buyerCookie } });
+    expect(valid.statusCode).toBe(200);
+    expect(listStorefrontProducts).toHaveBeenCalledWith({ q: "Casio", category: "watches", brand: "Casio",
+      minPriceMinor: 100, maxPriceMinor: 500, availability: "UNKNOWN", page: 2, limit: 10 });
+    for (const suffix of ["availability=AVAILABLE", "minPriceMinor=-1", "minPriceMinor=501&maxPriceMinor=500", "limit=101", "caseDiameter=42"]) {
+      const invalid = await app.inject({ method: "GET", url: `/api/v1/catalog/products?${suffix}`, headers: { cookie: buyerCookie } });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json().error.code).toBe("VALIDATION_ERROR");
+    }
+    expect(listStorefrontProducts).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
 });

@@ -234,6 +234,60 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     expect(reactivated.status).toBe("ACTIVE");
   });
 
+  it("filters the public catalog by search, category, brand, one SKU price range, and availability", async () => {
+    const token = unique("discovery");
+    const firstCategory = await serviceWithAssets.createCategory(actorUserId, { name: unique("first"), sortOrder: 1 });
+    const secondCategory = await serviceWithAssets.createCategory(actorUserId, { name: unique("second"), sortOrder: 2 });
+    categoryIds.push(firstCategory.id, secondCategory.id);
+    const first = await serviceWithAssets.createProduct(actorUserId, {
+      title: `${token} first`, brand: "Casio", categoryIds: [firstCategory.id]
+    });
+    const second = await serviceWithAssets.createProduct(actorUserId, {
+      title: `${token} second`, brand: "Seiko", categoryIds: [secondCategory.id]
+    });
+    productIds.push(first.id, second.id);
+    const makeVariant = async (productId: string, priceMinor: number) => {
+      const variant = await serviceWithAssets.createVariant(actorUserId, productId, {
+        sku: unique("SKU"), priceMinor, partnerCommissionUnitMinor: 0,
+        inventoryExternalKey: unique("key")
+      });
+      variantIds.push(variant.id);
+      await serviceWithAssets.updateVariant(actorUserId, variant.id, { status: "ACTIVE" });
+      return variant.id;
+    };
+    const firstLow = await makeVariant(first.id, 10_000);
+    await makeVariant(first.id, 30_000);
+    const secondVariant = await makeVariant(second.id, 20_000);
+    await serviceWithAssets.updateProduct(actorUserId, first.id, { status: "ACTIVE" });
+    await serviceWithAssets.updateProduct(actorUserId, second.id, { status: "ACTIVE" });
+    await pool!.query("UPDATE inventory_items SET source_quantity = 2, source_status = 'OK', last_successful_sync_at = now() WHERE variant_id = $1", [firstLow]);
+    await pool!.query("UPDATE inventory_items SET source_quantity = 0, source_status = 'OK', last_successful_sync_at = now() WHERE variant_id = $1", [secondVariant]);
+
+    const all = await serviceWithAssets.listStorefrontProducts({ q: token, page: 1, limit: 1 });
+    expect(all.total).toBe(2);
+    expect(all.items).toHaveLength(1);
+    const next = await serviceWithAssets.listStorefrontProducts({ q: token, page: 2, limit: 1 });
+    expect(next.total).toBe(2);
+    expect(next.items[0]?.id).not.toBe(all.items[0]?.id);
+    expect((await serviceWithAssets.listStorefrontProducts({ q: "%", page: 1, limit: 20 })).items).toEqual([]);
+    const priced = await serviceWithAssets.listStorefrontProducts({ q: token, minPriceMinor: 15_000, maxPriceMinor: 25_000, page: 1, limit: 20 });
+    expect(priced.items.map((item) => item.id)).toEqual([second.id]);
+    const category = await serviceWithAssets.listStorefrontProducts({ category: firstCategory.slug, brand: "casio", page: 1, limit: 20 });
+    expect(category.items.map((item) => item.id)).toEqual([first.id]);
+    expect(category.items[0]?.availability).toBe("IN_STOCK");
+    const out = await serviceWithAssets.listStorefrontProducts({ q: token, availability: "OUT_OF_STOCK", page: 1, limit: 20 });
+    expect(out.items.map((item) => item.id)).toEqual([second.id]);
+    await pool!.query("UPDATE inventory_items SET last_successful_sync_at = now() - interval '601 seconds' WHERE variant_id = $1", [secondVariant]);
+    const stale = await serviceWithAssets.getStorefrontProduct(second.slug);
+    expect(stale.availability).toBe("STALE");
+    expect(stale.variants[0]?.availability).toBe("STALE");
+    const staleList = await serviceWithAssets.listStorefrontProducts({ q: token, availability: "STALE", page: 1, limit: 20 });
+    expect(staleList.items.map((item) => item.id)).toEqual([second.id]);
+    await pool!.query("UPDATE inventory_items SET source_status = 'MISSING', source_quantity = NULL WHERE variant_id = $1", [firstLow]);
+    const unknown = await serviceWithAssets.listStorefrontProducts({ q: token, availability: "UNKNOWN", page: 1, limit: 20 });
+    expect(unknown.items.map((item) => item.id)).toEqual([first.id]);
+  });
+
   it("rejects invalid status transitions", async () => {
     const product = await service.createProduct(actorUserId, { title: unique("transitions") });
     productIds.push(product.id);
