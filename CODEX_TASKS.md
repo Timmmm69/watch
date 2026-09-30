@@ -268,11 +268,10 @@ Implement the source-specific adapter without redesigning T16/T17:
 - extend the centralized `@watch/config` layer, not scattered `process.env` reads, with `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_WORKSHEET_NAME`, and secret `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`;
 - decode/validate service-account JSON safely and never include credentials/private-key material in logs, errors, events or API responses;
 - each fetch reads the entire configured worksheet as a complete snapshot;
-- required source columns: `external_key`, `sku`, `stock_quantity`; extra columns are ignored by this adapter;
-- map `external_key` exactly to `product_variants.inventory_external_key`;
-- require mapped `sku` to match ProductVariant SKU as a safety cross-check;
+- required machine columns: `external_key`, `stock_quantity`; allow an optional/informational `sku` column for operator readability without adding SKU to the generic InventoryProvider contract;
+- map `external_key` exactly to `product_variants.inventory_external_key` and keep it as the sole machine identity;
 - validate `stock_quantity` as integer >=0;
-- duplicate keys/malformed quantity/SKU mismatch follow existing invalid-row rules; unknown keys are reported/ignored; configured mapped variants absent from the complete snapshot become MISSING;
+- duplicate keys/malformed quantity follow existing invalid-row rules; unknown keys are reported/ignored; configured mapped variants absent from the complete snapshot become MISSING;
 - capabilities: `completeSnapshot=true`, `reservationReconciliation=NONE`;
 - do not invent or derive SOURCE_PROOF/source-version semantics from Google Sheets;
 - selected reservation reconciliation mode is `MANUAL`; T18 must not automatically CONSUME/RELEASE reservations;
@@ -557,7 +556,7 @@ Implement:
 
 These are not Codex design tasks. They require real business/external input.
 
-- **U01 — RESOLVED 2026-09-30:** Google Sheets complete-snapshot inventory source, read-only service account, `external_key` + `sku` + `stock_quantity`, 120s sync / 600s max age, `MANUAL` reservation reconciliation. Live credentials/access are deployment inputs, not design blockers.
+- **U01 — RESOLVED 2026-09-30:** Google Sheets complete-snapshot inventory source, read-only service account, machine fields `external_key` + `stock_quantity` (`sku` optional/informational), 120s sync / 600s max age, `MANUAL` reservation reconciliation. Live credentials/access are deployment inputs, not design blockers.
 - **U02:** real catalog attribute schema. Blocks domain-specific catalog filters.
 - **U03:** fulfilment process details. Must be resolved/defaulted before S09 production finalization.
 - **U04:** supplier/platform economics. Required for full contribution analytics.
