@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CatalogService, initializePlatformCurrency, seedSupplier } from "../catalog/catalog.js";
 import {
   InventoryService,
-  noInventoryReservationChecks,
+  inventoryReservationChecks,
   type InventoryReservationChecks
 } from "./service.js";
 
@@ -27,7 +27,7 @@ function unique(prefix: string): string {
 
 function checksWith(reservations: Record<string, number>, pending: Record<string, number> = {}): InventoryReservationChecks {
   return {
-    ...noInventoryReservationChecks,
+    ...inventoryReservationChecks,
     async activeReservationsByVariant() {
       return new Map(Object.entries(reservations));
     },

@@ -24,6 +24,8 @@ import {
 } from "@watch/contracts";
 import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
+import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
+import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
@@ -68,10 +70,11 @@ export interface AppDependencies {
   inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
+  checkout?: Pick<CheckoutService, "checkout">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -248,6 +251,24 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         catch (error) { referralError(request, reply, error); return reply; }
       });
     }
+
+    if (checkout) app.post("/api/v1/orders", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      const parsed = checkoutRequestSchema.safeParse(request.body);
+      const key = request.headers["idempotency-key"];
+      if (!parsed.success || typeof key !== "string" || key.length < 1 || key.length > 100 || !key.trim()) {
+        return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid checkout request", details: {}, requestId: request.id } });
+      }
+      try {
+        const result = await checkout.checkout(request.auth!.user.id, key, parsed.data);
+        return reply.code(result.created ? 201 : 200).send(checkoutResponseSchema.parse(result.order));
+      } catch (error) {
+        if (!(error instanceof CheckoutError)) throw error;
+        const status = error.code === "VALIDATION_ERROR" ? 400 : error.code === "USER_BLOCKED" ? 403
+          : error.code === "AUTH_REQUIRED" ? 401 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409;
+        return reply.code(status).send({ error: { code: error.code, message: error.message, details: error.details, requestId: request.id } });
+      }
+    });
 
     if (cart) {
       const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {

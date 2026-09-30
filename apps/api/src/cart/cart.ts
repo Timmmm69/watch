@@ -14,6 +14,7 @@ interface LineRow {
   price_minor: number; currency: string; product_status: string; variant_status: string;
   source_status: InventorySourceStatus | null; source_quantity: number | null;
   last_successful_sync_at: Date | null; safety_buffer: number | null;
+  active_reservations: string;
 }
 
 export class CartService {
@@ -43,15 +44,16 @@ export class CartService {
   private availability(row: LineRow) {
     return computeInventoryAvailability({ sourceStatus: row.source_status, sourceQuantity: row.source_quantity,
       lastSuccessfulSyncAt: row.last_successful_sync_at, safetyBuffer: row.safety_buffer ?? 0,
-      // Reservations are introduced by T20/T21; Cart never creates them.
-      activeReservations: 0, maxAgeSeconds: this.maxAgeSeconds });
+      activeReservations: Number(row.active_reservations), maxAgeSeconds: this.maxAgeSeconds });
   }
 
   private async project(client: PoolClient, id: string): Promise<CartView> {
     const rows = (await client.query<LineRow>(`
       SELECT ci.variant_id, ci.quantity, v.product_id, v.sku, v.price_minor, v.currency,
         p.slug, p.title, p.status AS product_status, v.status AS variant_status,
-        i.source_status, i.source_quantity, i.safety_buffer, i.last_successful_sync_at
+        i.source_status, i.source_quantity, i.safety_buffer, i.last_successful_sync_at,
+        (SELECT COALESCE(SUM(r.quantity), 0)::text FROM inventory_reservations r
+          WHERE r.variant_id = v.id AND r.status = 'ACTIVE') AS active_reservations
       FROM cart_items ci JOIN product_variants v ON v.id = ci.variant_id
       JOIN products p ON p.id = v.product_id LEFT JOIN inventory_items i ON i.variant_id = v.id
       WHERE ci.cart_id = $1 ORDER BY ci.created_at, ci.variant_id`, [id])).rows;
@@ -91,6 +93,8 @@ export class CartService {
       if (variant.currency !== this.currency) throw new CartError("INTERNAL_INVARIANT_VIOLATION");
       const row = (await client.query<LineRow>("SELECT * FROM inventory_items WHERE variant_id = $1 FOR SHARE", [variantId])).rows[0];
       if (!row) throw new CartError("INVENTORY_UNKNOWN");
+      row.active_reservations = (await client.query<{ quantity: string }>(
+        "SELECT COALESCE(SUM(quantity), 0)::text AS quantity FROM inventory_reservations WHERE variant_id = $1 AND status = 'ACTIVE'", [variantId])).rows[0]!.quantity;
       const inventory = this.availability(row);
       if (inventory.availability === "UNKNOWN") throw new CartError("INVENTORY_UNKNOWN");
       if (inventory.availability === "STALE") throw new CartError("INVENTORY_STALE");

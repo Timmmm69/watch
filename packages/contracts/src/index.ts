@@ -74,6 +74,35 @@ export const cartResponseSchema = z.object({
 });
 export type CartView = z.infer<typeof cartResponseSchema>;
 
+export const MAX_ORDER_TOTAL_MINOR = 2_000_000_000;
+const checkoutUuid = z.string().uuid().transform((value) => value.toLowerCase());
+export const checkoutRequestSchema = z.object({
+  items: z.array(z.object({
+    variantId: checkoutUuid,
+    quantity: z.number().int().min(1).max(99),
+    expectedUnitPriceMinor: moneyMinor
+  }).strict()).min(1).max(MAX_CART_LINES)
+    .refine((items) => new Set(items.map((item) => item.variantId)).size === items.length, "Duplicate Variant IDs")
+    .transform((items) => items.sort((a, b) => a.variantId.localeCompare(b.variantId))),
+  recipientName: z.string().trim().min(2).max(100),
+  phone: z.string().trim().regex(/^\+?[\d\s().-]+$/)
+    .transform((value) => value.replace(/\D/g, "")).pipe(z.string().regex(/^\d{8,15}$/)),
+  address: z.string().trim().min(5).max(500),
+  comment: z.string().trim().max(500).default(""),
+  salesTermsDocumentId: checkoutUuid,
+  privacyDocumentId: checkoutUuid,
+  salesTermsAccepted: z.literal(true),
+  privacyAcknowledged: z.literal(true)
+}).strict();
+export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;
+export const checkoutResponseSchema = z.object({
+  id: z.string().uuid(), publicNumber: z.string(), status: z.string(), currency: z.string(),
+  subtotalMinor: moneyMinor, totalMinor: moneyMinor,
+  salesTermsDocumentId: z.string().uuid(), privacyDocumentId: z.string().uuid(),
+  salesTermsAcceptedAt: z.string(), privacyAcknowledgedAt: z.string(), createdAt: z.string()
+});
+export type CheckoutOrder = z.infer<typeof checkoutResponseSchema>;
+
 export const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20)

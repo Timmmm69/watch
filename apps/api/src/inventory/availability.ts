@@ -50,6 +50,7 @@ export function variantAvailabilitySql(maxAgeSeconds: number = DEFAULT_INVENTORY
   return `CASE
   WHEN i.source_status IS DISTINCT FROM 'OK' OR i.source_quantity IS NULL THEN 'UNKNOWN'
   WHEN i.last_successful_sync_at IS NULL OR i.last_successful_sync_at < now() - make_interval(secs => ${maxAge}) THEN 'STALE'
-  WHEN i.source_quantity > i.safety_buffer THEN 'IN_STOCK'
+  WHEN i.source_quantity > i.safety_buffer +
+    (SELECT COALESCE(SUM(r.quantity), 0) FROM inventory_reservations r WHERE r.variant_id = v.id AND r.status = 'ACTIVE') THEN 'IN_STOCK'
   ELSE 'OUT_OF_STOCK' END`;
 }

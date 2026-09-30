@@ -12,9 +12,12 @@ export interface InventoryReservationChecks {
   reconciliationPendingByVariant(client: Queryable, variantIds: string[]): Promise<Map<string, number>>;
 }
 
-export const noInventoryReservationChecks: InventoryReservationChecks = {
-  async activeReservationsByVariant() {
-    return new Map<string, number>();
+export const inventoryReservationChecks: InventoryReservationChecks = {
+  async activeReservationsByVariant(client, variantIds) {
+    const result = await client.query<{ variant_id: string; quantity: string }>(
+      `SELECT variant_id, SUM(quantity)::text AS quantity FROM inventory_reservations
+       WHERE variant_id = ANY($1::uuid[]) AND status = 'ACTIVE' GROUP BY variant_id`, [variantIds]);
+    return new Map(result.rows.map((row) => [row.variant_id, Number(row.quantity)]));
   },
   async reconciliationPendingByVariant() {
     return new Map<string, number>();
@@ -97,7 +100,7 @@ interface SyncRunRow {
 export class InventoryService {
   constructor(
     private readonly pool: Pool,
-    private readonly reservationChecks: InventoryReservationChecks = noInventoryReservationChecks,
+    private readonly reservationChecks: InventoryReservationChecks = inventoryReservationChecks,
     private readonly maxAgeSeconds: number = DEFAULT_INVENTORY_MAX_AGE_SECONDS
   ) {}
 

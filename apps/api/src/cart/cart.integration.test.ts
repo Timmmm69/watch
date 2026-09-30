@@ -17,7 +17,7 @@ beforeAll(async () => {
   if (!pool) return;
   // Isolate the 101-SKU fixture from other integration suites' paginated catalog/inventory reads.
   await pool.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ["users", "platform_settings", "suppliers", "products", "product_variants", "inventory_items"]) {
+  for (const table of ["users", "platform_settings", "suppliers", "products", "product_variants", "inventory_items", "inventory_reservations"]) {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await pool.query(await readFile(new URL("../../../../packages/db/prisma/migrations/20260930100000_cart/migration.sql", import.meta.url), "utf8"));
