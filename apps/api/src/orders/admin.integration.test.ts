@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { allowedAdminOrderTransitions, orderStatusSchema } from "@watch/contracts";
 import { AdminOrderService } from "./admin.js";
 import { CheckoutService } from "./checkout.js";
+import { inventoryReservationChecks } from "../inventory/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const schema = `admin_orders_${randomUUID().replaceAll("-", "")}`;
@@ -14,6 +15,7 @@ const docs = { SALES_TERMS: { id: randomUUID(), version: "t23-sales" }, PRIVACY:
 const currency = process.env.TEST_PLATFORM_CURRENCY ?? "BYN";
 let service: AdminOrderService;
 let id: string;
+let syncRunId: string;
 beforeAll(async () => {
   if (!pool) return;
   await pool.query(`CREATE SCHEMA ${schema}`);
@@ -36,6 +38,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   if (!pool) return;
   await pool.query("TRUNCATE orders,carts,events,audit_logs CASCADE");
+  syncRunId = randomUUID();
+  await pool.query("INSERT INTO inventory_sync_runs (id,provider_key,status,finished_at) VALUES ($1,'google_sheets','SUCCESS',now())", [syncRunId]);
+  await pool.query(`UPDATE inventory_items SET source_quantity=100,source_status='OK',source_version=NULL,
+    last_successful_sync_at=now(),last_successful_sync_run_id=$2 WHERE variant_id=$1`, [variant,syncRunId]);
   const cart = randomUUID();
   await pool.query("INSERT INTO carts (id,buyer_user_id) VALUES ($1,$2)", [cart,buyer]);
   await pool.query("INSERT INTO cart_items (cart_id,variant_id,quantity) VALUES ($1,$2,1)", [cart,variant]);
@@ -54,6 +60,112 @@ async function counts() {
   return (await pool!.query(`SELECT (SELECT count(*)::int FROM events) AS events,(SELECT count(*)::int FROM audit_logs) AS audits`)).rows[0];
 }
 async function reserve() { return (await pool!.query("SELECT * FROM inventory_reservations WHERE order_id=$1", [id])).rows[0]; }
+async function reconcile(target: "CONSUMED" | "RELEASED", expectedInventorySyncRunId = syncRunId) {
+  return service.reconcileReservation((await reserve()).id,buyer, { target,reason: "Physical outcome verified",
+    evidenceReference: "operator-record-24",expectedInventorySyncRunId,confirmSnapshotReflectsOutcome: true },"request-t24");
+}
+
+describe.skipIf(!pool)("T24 snapshot-bound MANUAL reservation reconciliation", () => {
+  it.each(orderStatusSchema.options)("gates both targets in %s and preserves quantity", async (status) => {
+    await pool!.query("UPDATE orders SET status=$2 WHERE id=$1", [id,status]);
+    const original = (await pool!.query("SELECT * FROM inventory_items WHERE variant_id=$1", [variant])).rows[0];
+    const targets: ("CONSUMED" | "RELEASED")[] = status === "DELIVERY_FAILED" ? ["RELEASED"]
+      : ["SHIPPED","DELIVERED","COMPLETED"].includes(status) ? ["CONSUMED"] : [];
+    const pending = targets.length ? 1 : 0;
+    expect((await inventoryReservationChecks.reconciliationPendingByVariant(pool!,[variant])).get(variant) ?? 0).toBe(pending);
+    expect((await service.detail(id)).reservations[0]!.allowedManualTargets).toEqual(targets);
+    for (const target of ["CONSUMED","RELEASED"] as const) {
+      if (targets.includes(target)) {
+        const result = await reconcile(target);
+        expect(result).toMatchObject({ status: target,reconciliation_method: "MANUAL",reconciled_by_admin_user_id: buyer,
+          reconciliation_source_version: null,reconciliation_inventory_sync_run_id: syncRunId,reconciliation_reference: "operator-record-24" });
+        expect(result.reconciled_at).toEqual(result[target === "CONSUMED" ? "consumed_at" : "released_at"]);
+        const first = await counts();
+        // Response replay remains successful even after inventory has advanced.
+        expect(await reconcile(target,randomUUID())).toEqual(result);
+        expect(await counts()).toEqual(first);
+        expect((await pool!.query("SELECT metadata FROM audit_logs WHERE request_id='request-t24'")).rows[0].metadata)
+          .toMatchObject({ target,reason: "Physical outcome verified",inventorySyncRunId: syncRunId,confirmSnapshotReflectsOutcome: true });
+      } else await expect(reconcile(target)).rejects.toMatchObject({ code: "INVALID_ORDER_TRANSITION" });
+    }
+    expect((await pool!.query("SELECT * FROM inventory_items WHERE variant_id=$1", [variant])).rows[0]).toEqual(original);
+    expect((await inventoryReservationChecks.reconciliationPendingByVariant(pool!,[variant])).size).toBe(0);
+  });
+  it("stores optional current source version and serializes duplicate reconciliation once", async () => {
+    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    await pool!.query("UPDATE inventory_items SET source_version='sheet-outcome-24' WHERE variant_id=$1", [variant]);
+    const before = await counts();
+    const results = await Promise.all([reconcile("CONSUMED"),reconcile("CONSUMED")]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0].reconciliation_source_version).toBe("sheet-outcome-24");
+    expect(await counts()).toEqual({ events: before.events,audits: before.audits + 1 });
+    expect((await inventoryReservationChecks.activeReservationsByVariant(pool!,[variant])).size).toBe(0);
+    expect((await service.detail(id)).reservations[0]!.allowedManualTargets).toEqual([]);
+  });
+  it("rejects stale/null snapshots, absent confirmation and unavailable source/mode conservatively", async () => {
+    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    const original = await reserve(), before = await counts();
+    await expect(reconcile("CONSUMED",randomUUID())).rejects.toMatchObject({ code: "INVENTORY_SNAPSHOT_CHANGED" });
+    await expect(service.reconcileReservation(original.id,buyer,{ target: "CONSUMED",reason: "checked",expectedInventorySyncRunId: syncRunId,
+      confirmSnapshotReflectsOutcome: false as unknown as true })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(new AdminOrderService(pool!,14,undefined,"NONE").reconcileReservation(original.id,buyer,
+      { target: "CONSUMED",reason: "checked",expectedInventorySyncRunId: syncRunId,confirmSnapshotReflectsOutcome: true }))
+      .rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+    expect((await new AdminOrderService(pool!,14,undefined,"NONE").detail(id)).reservations[0]!.allowedManualTargets).toEqual([]);
+    await pool!.query("UPDATE inventory_items SET last_successful_sync_run_id=NULL WHERE variant_id=$1", [variant]);
+    await expect(reconcile("CONSUMED")).rejects.toMatchObject({ code: "INVENTORY_SNAPSHOT_CHANGED" });
+    for (const status of ["MISSING","INVALID","UNINITIALIZED"]) {
+      await pool!.query("UPDATE inventory_items SET source_status=$2 WHERE variant_id=$1", [variant,status]);
+      await expect(reconcile("CONSUMED")).rejects.toMatchObject({ code: "INTERNAL_INVARIANT_VIOLATION" });
+    }
+    expect(await reserve()).toEqual(original); expect(await counts()).toEqual(before);
+  });
+  it("rolls back terminal state and evidence if the AuditLog insert fails", async () => {
+    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    const original = await reserve(), before = await counts();
+    await pool!.query(`CREATE FUNCTION fail_t24_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 't24 audit failure'; END $$;
+      CREATE TRIGGER fail_t24_audit BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_t24_audit()`);
+    try {
+      await expect(reconcile("CONSUMED")).rejects.toThrow("t24 audit failure");
+      expect(await reserve()).toEqual(original); expect(await counts()).toEqual(before);
+    } finally { await pool!.query("DROP TRIGGER fail_t24_audit ON audit_logs; DROP FUNCTION fail_t24_audit()"); }
+  });
+  it("checks the snapshot after waiting for a concurrent stock-apply lock", async () => {
+    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    const original = await reserve(), before = await counts();
+    const blocker = await pool!.connect();
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT variant_id FROM inventory_items WHERE variant_id=$1 FOR UPDATE", [variant]);
+    const pid = (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    const pending = reconcile("CONSUMED").catch((error: unknown) => error);
+    let waiting = false;
+    try {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        waiting = (await pool!.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))) AS waiting", [pid])).rows[0].waiting;
+        if (waiting) break;
+        await new Promise((resolve) => setTimeout(resolve,10));
+      }
+      expect(waiting).toBe(true);
+      // While waiting at InventoryItem, both earlier business locks are already held.
+      await expect(pool!.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE NOWAIT", [id])).rejects.toMatchObject({ code: "55P03" });
+      await expect(pool!.query("SELECT id FROM inventory_reservations WHERE id=$1 FOR UPDATE NOWAIT", [original.id])).rejects.toMatchObject({ code: "55P03" });
+      const next = randomUUID();
+      await blocker.query("INSERT INTO inventory_sync_runs (id,provider_key,status) VALUES ($1,'google_sheets','SUCCESS')", [next]);
+      await blocker.query("UPDATE inventory_items SET last_successful_sync_run_id=$2,source_quantity=99 WHERE variant_id=$1", [variant,next]);
+    } finally { await blocker.query("COMMIT"); blocker.release(); }
+    expect(await pending).toMatchObject({ code: "INVENTORY_SNAPSHOT_CHANGED" }); expect(waiting).toBe(true);
+    expect(await reserve()).toEqual(original); expect(await counts()).toEqual(before);
+  });
+  it("serializes cancellation with generic reconciliation without consuming unshipped stock", async () => {
+    await advance("CONFIRMED","FULFILLING");
+    const results = await Promise.allSettled([service.transition(id,buyer,"CANCELLED"),reconcile("CONSUMED")]);
+    expect(results[0].status).toBe("fulfilled");
+    expect(results[1]).toMatchObject({ status: "rejected",reason: { code: "INVALID_ORDER_TRANSITION" } });
+    expect(await reserve()).toMatchObject({ status: "RELEASED",reconciliation_method: null,reconciled_at: null });
+  });
+});
 
 describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
   it.each(orderStatusSchema.options)("checks every target from %s against the exact graph", async (from) => {

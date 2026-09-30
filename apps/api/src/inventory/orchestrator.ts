@@ -184,8 +184,8 @@ export class InventorySyncOrchestrator {
           errors.push("STOCK_APPLY_FAILED");
         }
       }
-      // D/E are intentionally dormant until S09/S10 introduce Orders/Reservations.
-      // Never infer reservation reconciliation from a successful stock sync.
+      // U01 selects MANUAL for Google Sheets: D/E make no proof calls or reservation mutations.
+      // Only the audited Admin action may attest the applied snapshot; sync is never proof.
 
       // F: stock authority has already committed; failure here leaves RUNNING for recovery.
       const status: InventorySyncRunStatus = failed ? applied ? "PARTIAL" : "FAILED" : "SUCCESS";

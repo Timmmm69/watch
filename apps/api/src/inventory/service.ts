@@ -19,8 +19,12 @@ export const inventoryReservationChecks: InventoryReservationChecks = {
        WHERE variant_id = ANY($1::uuid[]) AND status = 'ACTIVE' GROUP BY variant_id`, [variantIds]);
     return new Map(result.rows.map((row) => [row.variant_id, Number(row.quantity)]));
   },
-  async reconciliationPendingByVariant() {
-    return new Map<string, number>();
+  async reconciliationPendingByVariant(client, variantIds) {
+    const result = await client.query<{ variant_id: string; count: string }>(
+      `SELECT r.variant_id,COUNT(*)::text AS count FROM inventory_reservations r JOIN orders o ON o.id=r.order_id
+       WHERE r.variant_id=ANY($1::uuid[]) AND r.status='ACTIVE'
+         AND o.status IN ('SHIPPED','DELIVERED','COMPLETED','DELIVERY_FAILED') GROUP BY r.variant_id`, [variantIds]);
+    return new Map(result.rows.map((row) => [row.variant_id, Number(row.count)]));
   }
 };
 

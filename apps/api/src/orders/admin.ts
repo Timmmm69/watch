@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { allowedAdminOrderTransitions, type AdminOrderListQuery, type OrderStatus } from "@watch/contracts";
+import { allowedAdminOrderTransitions, allowedReservationTargets, reservationReconcileSchema,
+  type ReservationReconcileRequest, type AdminOrderListQuery, type OrderStatus } from "@watch/contracts";
 
 export class OrderTransitionError extends Error {
-  constructor(readonly code: "NOT_FOUND" | "INVALID_ORDER_TRANSITION" | "SYSTEM_TRANSITION_ONLY" | "INTERNAL_INVARIANT_VIOLATION") { super(code); }
+  constructor(readonly code: "NOT_FOUND" | "INVALID_ORDER_TRANSITION" | "SYSTEM_TRANSITION_ONLY" | "INTERNAL_INVARIANT_VIOLATION"
+    | "INVENTORY_SNAPSHOT_CHANGED" | "VALIDATION_ERROR" | "DEPENDENCY_UNAVAILABLE") { super(code); }
 }
 interface OrderRow {
   id: string; public_number: string; status: OrderStatus; currency: string; total_minor: number;
@@ -18,7 +20,8 @@ const timestampColumns = {
 } as const;
 
 export class AdminOrderService {
-  constructor(private readonly pool: Pool, private readonly holdDays = 14, private readonly overdueSeconds?: number) {}
+  constructor(private readonly pool: Pool, private readonly holdDays = 14, private readonly overdueSeconds?: number,
+    private readonly reconciliationMode: "MANUAL" | "NONE" = "MANUAL") {}
 
   private project(row: OrderRow, now = new Date()) {
     const stateAt = row.shipped_at ?? row.fulfilling_at ?? row.confirmed_at ?? row.created_at;
@@ -74,7 +77,51 @@ export class AdminOrderService {
       i.source_status AS "sourceStatus",i.source_version AS "sourceVersion",i.last_successful_sync_at AS "lastSuccessfulSyncAt",
       i.last_successful_sync_run_id AS "lastSuccessfulSyncRunId"
       FROM inventory_reservations r LEFT JOIN inventory_items i ON i.variant_id=r.variant_id WHERE r.order_id=$1 ORDER BY r.id`, [id])).rows;
-    return { ...this.project(row), fulfillment, items, reservations };
+    return { ...this.project(row), fulfillment, items, reservations: reservations.map((reservation) => ({ ...reservation,
+      allowedManualTargets: this.reconciliationMode === "MANUAL" && reservation.status === "ACTIVE"
+        ? allowedReservationTargets[row.status] : [] })) };
+  }
+
+  async reconcileReservation(id: string, actorUserId: string, input: ReservationReconcileRequest, requestId?: string) {
+    if (this.reconciliationMode !== "MANUAL") throw new OrderTransitionError("DEPENDENCY_UNAVAILABLE");
+    const parsed = reservationReconcileSchema.safeParse(input);
+    if (!parsed.success) throw new OrderTransitionError("VALIDATION_ERROR");
+    const data = parsed.data;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Immutable ownership lookup only; business locks are always Order → Reservation → InventoryItem.
+      const owner = (await client.query<{ order_id: string }>("SELECT order_id FROM inventory_reservations WHERE id=$1", [id])).rows[0];
+      if (!owner) throw new OrderTransitionError("NOT_FOUND");
+      const order = (await client.query<{ status: OrderStatus }>("SELECT status FROM orders WHERE id=$1 FOR UPDATE", [owner.order_id])).rows[0];
+      const reservation = (await client.query("SELECT * FROM inventory_reservations WHERE id=$1 FOR UPDATE", [id])).rows[0];
+      if (!order || !reservation) throw new OrderTransitionError("INTERNAL_INVARIANT_VIOLATION");
+      if (!allowedReservationTargets[order.status].includes(data.target)) throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
+      if (reservation.status !== "ACTIVE") {
+        if (reservation.status !== data.target) throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
+        await client.query("COMMIT");
+        return reservation;
+      }
+      const inventory = (await client.query(`SELECT source_status,source_version,last_successful_sync_run_id
+        FROM inventory_items WHERE variant_id=$1 FOR UPDATE`, [reservation.variant_id])).rows[0];
+      if (!inventory || inventory.source_status !== "OK") throw new OrderTransitionError("INTERNAL_INVARIANT_VIOLATION");
+      if (inventory.last_successful_sync_run_id !== data.expectedInventorySyncRunId)
+        throw new OrderTransitionError("INVENTORY_SNAPSHOT_CHANGED");
+      const now = new Date();
+      const updated = (await client.query(`UPDATE inventory_reservations SET status=$2,reconciliation_method='MANUAL',
+        reconciliation_reference=$3,reconciliation_source_version=$4,reconciliation_inventory_sync_run_id=$5,
+        reconciled_by_admin_user_id=$6,reconciled_at=$7,${data.target === "CONSUMED" ? "consumed_at" : "released_at"}=$7
+        WHERE id=$1 RETURNING *`, [id,data.target,data.evidenceReference ?? null,inventory.source_version,
+        inventory.last_successful_sync_run_id,actorUserId,now])).rows[0]!;
+      await client.query(`INSERT INTO audit_logs (id,actor_user_id,action,entity_type,entity_id,request_id,metadata,created_at)
+        VALUES ($1,$2,'admin.inventory.reservation.reconcile','InventoryReservation',$3,$4,$5,$6)`,
+      [randomUUID(),actorUserId,id,requestId ?? null,JSON.stringify({ orderId: owner.order_id,target: data.target,
+        reason: data.reason,evidenceReference: data.evidenceReference ?? null,inventorySyncRunId: inventory.last_successful_sync_run_id,
+        sourceVersion: inventory.source_version,confirmSnapshotReflectsOutcome: true }),now]);
+      await client.query("COMMIT");
+      return updated;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
   }
 
   async transition(id: string, actorUserId: string, target: OrderStatus, requestId?: string) {

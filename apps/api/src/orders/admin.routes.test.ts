@@ -11,7 +11,8 @@ const cookie = `watch_session=${"a".repeat(43)}`;
 const headers = { cookie, origin: "https://app.example", "x-csrf-token": deriveCsrfToken(secret,"session-1") };
 function setup(admin = true, blocked = false) {
   const orders = { list: vi.fn().mockResolvedValue({ items: [],total: 0,page: 1,limit: 20 }),
-    detail: vi.fn().mockResolvedValue({ id,status: "PLACED" }), transition: vi.fn().mockResolvedValue({ id,status: "CONFIRMED" }) };
+    detail: vi.fn().mockResolvedValue({ id,status: "PLACED" }), transition: vi.fn().mockResolvedValue({ id,status: "CONFIRMED" }),
+    reconcileReservation: vi.fn().mockResolvedValue({ id,status: "CONSUMED" }) };
   const current = { session: { id: "session-1",userId: id },user: { id,telegramUserId: "42",isAdmin: admin,isBlocked: blocked } };
   const app = createApp({ logger: false,checkReadiness: async () => undefined,orders,
     auth: { store: { loadCurrent: vi.fn().mockResolvedValue(current) } as unknown as SessionStore,csrfSecret: secret,
@@ -19,6 +20,34 @@ function setup(admin = true, blocked = false) {
   return { app,orders };
 }
 describe("Admin Order API", () => {
+  it("protects and validates manual reconciliation and binds actor/snapshot to the request", async () => {
+    const { app,orders } = setup();
+    const url = `/api/v1/admin/inventory/reservations/${id}/reconcile`;
+    const payload = { target: "CONSUMED",reason: "Shipped stock reflected",expectedInventorySyncRunId: id,confirmSnapshotReflectsOutcome: true };
+    expect((await app.inject({ method: "POST",url,payload })).statusCode).toBe(401);
+    for (const requestHeaders of [{ cookie },{ ...headers,origin: "https://wrong.example" },{ ...headers,"x-csrf-token": "bad" }])
+      expect((await app.inject({ method: "POST",url,headers: requestHeaders,payload })).statusCode).toBe(403);
+    for (const instance of [setup(false),setup(true,true)]) {
+      expect((await instance.app.inject({ method: "POST",url,headers,payload })).statusCode).toBe(403);
+      expect(instance.orders.reconcileReservation).not.toHaveBeenCalled(); await instance.app.close();
+    }
+    for (const invalid of [{ ...payload,confirmSnapshotReflectsOutcome: false },{ ...payload,confirmSnapshotReflectsOutcome: undefined },
+      { ...payload,expectedInventorySyncRunId: undefined },{ ...payload,expectedInventorySyncRunId: "bad" },{ ...payload,target: "ACTIVE" },
+      { ...payload,reason: " " },{ ...payload,reason: "x".repeat(1001) },{ ...payload,evidenceReference: "x".repeat(501) },{ ...payload,actorUserId: id }])
+      expect((await app.inject({ method: "POST",url,headers,payload: invalid })).json().error.code).toBe("VALIDATION_ERROR");
+    expect((await app.inject({ method: "POST",url: url.replace(id,"bad"),headers,payload })).statusCode).toBe(400);
+    expect(orders.reconcileReservation).not.toHaveBeenCalled();
+    const response = await app.inject({ method: "POST",url,headers,payload: { ...payload,reason: "x".repeat(1000),evidenceReference: "x".repeat(500) } });
+    expect(response.statusCode).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
+    expect(orders.reconcileReservation).toHaveBeenCalledWith(id,id,expect.objectContaining({ expectedInventorySyncRunId: id,confirmSnapshotReflectsOutcome: true }),expect.any(String));
+    for (const [code,status] of [["INVENTORY_SNAPSHOT_CHANGED",409],["INVALID_ORDER_TRANSITION",409],["NOT_FOUND",404],
+      ["INTERNAL_INVARIANT_VIOLATION",500],["DEPENDENCY_UNAVAILABLE",503]] as const) {
+      orders.reconcileReservation.mockRejectedValue(new OrderTransitionError(code));
+      const failed = await app.inject({ method: "POST",url,headers,payload });
+      expect(failed.statusCode).toBe(status); expect(failed.json().error.code).toBe(code);
+    }
+    await app.close();
+  });
   it("protects list/detail PII and mutation with Session/Admin/Origin/CSRF", async () => {
     const { app,orders } = setup();
     for (const url of ["/api/v1/admin/orders",`/api/v1/admin/orders/${id}`]) {

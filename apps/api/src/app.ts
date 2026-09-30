@@ -26,7 +26,7 @@ import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
-import { adminOrderListQuerySchema, adminOrderTransitionSchema } from "@watch/contracts";
+import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
 import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
@@ -73,7 +73,7 @@ export interface AppDependencies {
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   checkout?: Pick<CheckoutService, "checkout">;
-  orders?: Pick<AdminOrderService, "list" | "detail" | "transition">;
+  orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
@@ -261,8 +261,17 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         reply.code(status).send({ error: { code, message: code, details: {}, requestId: request.id } });
       const handleError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
         if (!(error instanceof OrderTransitionError)) throw error;
-        return fail(request, reply, error.code, error.code === "NOT_FOUND" ? 404 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409);
+        return fail(request, reply, error.code, error.code === "NOT_FOUND" ? 404 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500
+          : error.code === "VALIDATION_ERROR" ? 400 : error.code === "DEPENDENCY_UNAVAILABLE" ? 503 : 409);
       };
+      app.post("/api/v1/admin/inventory/reservations/:id/reconcile", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        const parsed = reservationReconcileSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await orders.reconcileReservation(id!,request.auth!.user.id,parsed.data,request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
       app.get("/api/v1/admin/orders", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const parsed = adminOrderListQuerySchema.safeParse(request.query ?? {});

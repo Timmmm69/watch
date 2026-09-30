@@ -6,6 +6,8 @@ import { createApp } from "../app.js";
 import { deriveCsrfToken } from "../auth/middleware.js";
 import { SESSION_COOKIE_NAME, type SessionStore } from "../auth/session.js";
 import { CatalogService } from "../catalog/catalog.js";
+import { CheckoutService } from "../orders/checkout.js";
+import { AdminOrderService } from "../orders/admin.js";
 import { FakeInventoryProvider } from "./fake.js";
 import { GoogleAuth } from "google-auth-library";
 import { createConfiguredInventoryOrchestrator } from "./runtime.js";
@@ -68,6 +70,28 @@ afterAll(async () => {
 });
 
 describe.skipIf(!databaseUrl)("safe inventory orchestration against PostgreSQL", () => {
+  it("successful sync after shipment keeps MANUAL reservations ACTIVE against the newly applied snapshot", async () => {
+    const sales = randomUUID(), privacy = randomUUID(), cart = randomUUID();
+    for (const [id,type,hash] of [[sales,"SALES_TERMS","a"],[privacy,"PRIVACY","b"]])
+      await pool!.query(`INSERT INTO legal_documents (id,type,version,sha256,content_markdown,effective_at)
+        VALUES ($1,$2,$1::uuid::text,$3,'Terms',now())`, [id,type,hash!.repeat(64)]);
+    await pool!.query("UPDATE products SET status='ACTIVE' WHERE id=$1", [product]);
+    await pool!.query("UPDATE product_variants SET status='ACTIVE' WHERE id=$1", [variants[0]]);
+    await orchestrator([{ externalKey: "key-0",quantity: 10 },{ externalKey: "key-1",quantity: 10 }]).run();
+    await pool!.query("INSERT INTO carts (id,buyer_user_id) VALUES ($1,$2)", [cart,actor]);
+    await pool!.query("INSERT INTO cart_items (cart_id,variant_id,quantity) VALUES ($1,$2,1)", [cart,variants[0]]);
+    const checkout = new CheckoutService(pool!,"BYN", { SALES_TERMS: { id: sales,version: sales },PRIVACY: { id: privacy,version: privacy } });
+    const result = await checkout.checkout(actor,randomUUID(), { items: [{ variantId: variants[0]!,quantity: 1,expectedUnitPriceMinor: 100 }],
+      recipientName: "Buyer",phone: "375291234567",address: "Address",salesTermsAccepted: true,privacyAcknowledged: true,
+      salesTermsDocumentId: sales,privacyDocumentId: privacy });
+    const orders = new AdminOrderService(pool!);
+    for (const target of ["CONFIRMED","FULFILLING","SHIPPED"] as const) await orders.transition(result.order.id,actor,target);
+    const original = (await pool!.query("SELECT * FROM inventory_reservations WHERE order_id=$1", [result.order.id])).rows[0];
+    const run = await orchestrator([{ externalKey: "key-0",quantity: 9 },{ externalKey: "key-1",quantity: 10 }]).run();
+    expect((await pool!.query("SELECT * FROM inventory_reservations WHERE order_id=$1", [result.order.id])).rows[0]).toEqual(original);
+    expect((await new InventoryService(pool!).listItems({ page: 1,limit: 20 })).items.find((item) => item.variantId === variants[0]))
+      .toMatchObject({ sourceQuantity: 9,activeReservations: 1,sellable: 8,reconciliationPending: 1,lastSuccessfulSyncRunId: run.id });
+  });
   it("wires Google Sheets into Admin sync with real PostgreSQL apply and preserves catalog authority", async () => {
     const token = vi.spyOn(GoogleAuth.prototype, "getAccessToken").mockResolvedValue("test-token");
     const googleFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ values: [

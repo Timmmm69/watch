@@ -129,6 +129,18 @@ export const adminOrderListQuerySchema = pageQuerySchema.extend({
 }).strict().refine((q) => !q.dateFrom || !q.dateTo || Date.parse(q.dateFrom) <= Date.parse(q.dateTo), "Invalid date range");
 export type AdminOrderListQuery = z.infer<typeof adminOrderListQuerySchema>;
 
+export type ReservationTarget = "CONSUMED" | "RELEASED";
+export const allowedReservationTargets: Record<OrderStatus, readonly ReservationTarget[]> = {
+  PLACED: [], CONFIRMED: [], FULFILLING: [], CANCELLED: [],
+  SHIPPED: ["CONSUMED"], DELIVERED: ["CONSUMED"], COMPLETED: ["CONSUMED"], DELIVERY_FAILED: ["RELEASED"]
+};
+export const reservationReconcileSchema = z.object({
+  target: z.enum(["CONSUMED", "RELEASED"]), reason: z.string().trim().min(1).max(1000),
+  evidenceReference: z.string().trim().min(1).max(500).optional(),
+  expectedInventorySyncRunId: z.string().uuid(), confirmSnapshotReflectsOutcome: z.literal(true)
+}).strict();
+export type ReservationReconcileRequest = z.infer<typeof reservationReconcileSchema>;
+
 export const storefrontProductsQuerySchema = pageQuerySchema.extend({
   q: z.string().trim().min(1).max(100).optional(),
   category: z.string().min(1).max(140).optional(),
