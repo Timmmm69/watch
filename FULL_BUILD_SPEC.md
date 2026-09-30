@@ -577,7 +577,7 @@ Buyer Order detail or `/help` → configured support contact → operator verifi
 **BR-053** No automatic stale-order cancellation before U03 defines business SLA; overdue orders are surfaced operationally.  
 **BR-054** Inventory provider network I/O happens outside the DB mutation transaction. Before applying fetched records, sync locks/reloads each InventoryItem/Variant and verifies that the current `inventory_external_key` still equals the fetched mapping; stale mappings are skipped and reported. This serializes safely with Admin external-key changes.  
 **BR-055** Reservation reconciliation is Order-state-gated. PLACED/CONFIRMED/FULFILLING reservations remain ACTIVE; source proof/manual reconciliation may mark CONSUMED only for SHIPPED/DELIVERED/COMPLETED and RELEASED only for DELIVERY_FAILED. Pre-shipment CANCELLED releases its ACTIVE reservation atomically in the cancellation transaction, not through generic reconciliation.  
-**BR-056** U01 must choose `SOURCE_PROOF` or `MANUAL` reconciliation before S07 is considered resolved. `SOURCE_PROOF` applies only a proven provider result bound to the matching current `InventoryItem.source_version` under BR-048/049. `MANUAL` is explicit human authority, not a timestamp heuristic: request contains reservation ID, target CONSUMED|RELEASED, reason, optional evidence reference, `expectedInventorySyncRunId`, and `confirmSnapshotReflectsOutcome=true`. Transaction locks `Order → Reservation → InventoryItem`, re-checks state/target, requires `InventoryItem.source_status=OK` and exact equality of current `last_successful_sync_run_id` to the supplied expected value, then records that snapshot identity (and current source_version if non-null), Admin identity and AuditLog atomically with the terminal reservation state. If the snapshot changed or confirmation is absent, keep reservation ACTIVE/reject; Admin must refresh and reassess. This permits MANUAL mode even when the real source has no stable version while preventing a stale local snapshot from being silently freed.
+**BR-056** U01 is resolved as `MANUAL` reconciliation for the Google Sheets adapter. `SOURCE_PROOF` remains a generic capability only for a future source that can satisfy BR-048/049 and is not enabled for Google Sheets. `MANUAL` is explicit human authority, not a timestamp heuristic: request contains reservation ID, target CONSUMED|RELEASED, reason, optional evidence reference, `expectedInventorySyncRunId`, and `confirmSnapshotReflectsOutcome=true`. Transaction locks `Order → Reservation → InventoryItem`, re-checks state/target, requires `InventoryItem.source_status=OK` and exact equality of current `last_successful_sync_run_id` to the supplied expected value, then records that snapshot identity (and current source_version if non-null), Admin identity and AuditLog atomically with the terminal reservation state. If the snapshot changed or confirmation is absent, keep reservation ACTIVE/reject; Admin must refresh and reassess. This permits MANUAL mode even when the real source has no stable version while preventing a stale local snapshot from being silently freed.
 
 ## Cart / checkout
 
@@ -1427,7 +1427,7 @@ A fatal provider/fetch failure before stock-apply commit skips C–E and finaliz
 InventoryItems are updated/locked in deterministic Variant-ID order when multiple rows are mutated.
 
 ## 14.3 Freshness
-Provisional until U01: sync every 120s, max age 600s.
+For the resolved Google Sheets U01 adapter: sync every 120s, max age 600s.
 - absent/UNINITIALIZED/MISSING/INVALID → UNKNOWN;
 - OK but old → STALE;
 - fresh OK and deficit/sellable=0 → OUT_OF_STOCK;
@@ -1443,18 +1443,27 @@ For normal phase-F finalization, derive status from this run's actually committe
 
 If phase F cannot commit, no terminal status is invented: the SyncRun remains `RUNNING`. Stale `RUNNING` recovery treats the abnormal interruption/finalization failure itself as an orchestration error. Before creating the next run, the new advisory-lock holder checks whether any InventoryItem has `last_successful_sync_run_id = stale_run.id`: if yes, close the stale run as `PARTIAL`; if none, close it as `FAILED`. A legitimately empty zero-error run therefore becomes `SUCCESS` only when normal phase-F finalization commits; if that run becomes stale before finalization, the interruption is itself an error and recovery closes it `FAILED`. Never rewrite InventoryItem quantities/status/timestamps merely to make them match the recovered run status. `INVENTORY_SYNC_FAILED` is emitted only for final/recovered `FAILED`; `PARTIAL` and stale/RUNNING conditions are surfaced through the existing inventory/Admin health projections.
 
-## 14.5 Generic vs U01-specific
-Can implement now: interfaces, fake provider, validation, freshness, deficit, sync-run persistence, Admin health view, advisory-lock orchestration.
+## 14.5 Resolved U01: Google Sheets inventory adapter
+U01 is resolved for MVP without changing the generic inventory architecture:
 
-Cannot mark S07 production-complete until U01 defines:
-- source type/auth/schema;
-- complete snapshot semantics;
-- external key mapping;
-- realistic sync latency/max age;
-- how external sales affect source quantity;
-- choose exact reservation reconciliation mode: `SOURCE_PROOF` with proof semantics for CONSUMED/RELEASED, or `MANUAL` with the audited Admin flow defined here. Generic unresolved wording is not sufficient.
+- source type: Google Sheets, read through the Google Sheets API;
+- access: a dedicated Google service account with read-only access to the configured spreadsheet/worksheet; credentials are deployment secrets and must never be logged;
+- complete snapshot semantics: each fetch reads the entire configured inventory worksheet as one authoritative physical-stock snapshot;
+- required worksheet columns: `external_key`, `sku`, `stock_quantity`; extra columns may exist but are ignored by the inventory adapter;
+- `external_key` is the stable source identity and maps exactly to `product_variants.inventory_external_key`;
+- `sku` is a required operator-readable cross-check and must match the mapped ProductVariant SKU; mismatch is a validation failure for that mapped row;
+- `stock_quantity` must be an integer >=0;
+- duplicate external keys, malformed quantities and mapped SKU mismatches are invalid; unknown external keys are reported/ignored under the existing sync rules;
+- because the worksheet is a complete snapshot, a configured mapped Variant absent from the fetched snapshot becomes MISSING, never implicit zero;
+- adapter capabilities are `completeSnapshot=true` and `reservationReconciliation=NONE`;
+- the Google Sheets adapter does not claim a stable comparable source version for physical-outcome proof; normalized `sourceVersion` may be NULL;
+- reservation reconciliation mode is `MANUAL` using the existing audited sync-run-bound Admin flow. No automatic SOURCE_PROOF reconciliation is permitted for this adapter;
+- technical cadence is 120 seconds with max inventory age 600 seconds;
+- all sales in other channels must update the authoritative Sheet as part of normal sale handling. If that operational discipline cannot be maintained, the source must be changed or the safety-buffer policy explicitly amended before production traffic;
+- Google Sheets is inventory-only authority. It MUST NOT override `product_variants.price_minor`, Product/Variant status, partner commission, supplier settlement, catalog attributes or product media;
+- product IMAGE/VIDEO storage remains the S03 object-storage responsibility; Cloudflare R2 is the selected production object-storage target and is not part of the inventory snapshot.
 
-No fake supplier API/capability.
+Implementation must preserve the existing InventoryProvider abstraction and T16/T17 orchestration. T18 adds only the source-specific adapter/config/readiness/live integration required by this decision. Production/live verification still requires a real spreadsheet ID, worksheet name, service-account credential and sharing permission; these values must be supplied, never invented.
 
 ---
 
@@ -1704,7 +1713,7 @@ Development/test/production. No permanent staging required at near-zero budget. 
 Core includes:
 `APP_BASE_URL`, `DATABASE_URL`, Telegram token/username/webhook secret, `CSRF_SECRET`, `ADMIN_TELEGRAM_IDS`, `PLATFORM_CURRENCY`, legal current document IDs/versions, `SUPPORT_CONTACT`, attribution/hold/min-payout config, inventory provider/sync/max-age, object-storage settings, business timezone, overdue thresholds. There is no `SESSION_SECRET`; opaque session tokens are generated from the process CSPRNG per Session and only their hashes are persisted.
 
-Provider-specific variables only after U01.
+For resolved U01, provider-specific config must include the Google Sheets spreadsheet ID, worksheet name and service-account credentials, using the existing config/secrets convention from T16/T17. Credentials are secret, must never be logged, and readiness must fail when the Google Sheets provider is enabled but required provider config is absent/invalid.
 
 Startup/readiness validation is cumulative with installed slices during development: S00 validates only S00 config/schema; later slices add their own required checks and must not make an earlier slice depend on tables/config not yet introduced. S02 creates/initializes the singleton `platform_settings` row exactly once; from that point every API/worker startup requires configured `PLATFORM_CURRENCY` to equal the persisted value or readiness fails. By final production/S16, startup additionally validates parseable unique `ADMIN_TELEGRAM_IDS` and a correctly encoded `CSRF_SECRET` of at least 32 bytes; the secret-generation procedure requires cryptographically random bytes. It also validates current legal-document IDs/types/version/hash/effective time and exactly one ACTIVE Supplier. Final Catalog/Admin readiness is unhealthy if the currency/legal/Supplier requirements are not satisfied.
 
@@ -1952,7 +1961,7 @@ Partner shell + catalog/product assets and current per-SKU commission display th
 DB referral_links/attribution_touches, including UNIQUE `(referral_links.id,partner_id)` and composite FK `(attribution_touches.referral_link_id,partner_id)→referral_links(id,partner_id)` so cross-Partner link/touch rows are DB-impossible. Must implement ACTIVE-link rotation semantics, canonical replay fingerprint, top-level auth launch rule, exact BR-007 Partner Terms predicate and touch lock path `Buyer→Partner→ReferralLink→Product(if scoped)` with blocked/terms/self/disabled/archive re-checks. Wire P-01 generic referral-link widget. Prepare disable/block/archive/touch-integrity race tests; full referral↔checkout test arrives S09.
 
 ## S07 — Real inventory synchronization
-Requires U01. Generic interfaces/fake tests may exist earlier, but slice is not Done until real adapter is known and U01 explicitly selects `SOURCE_PROOF` or `MANUAL` reconciliation. SOURCE_PROOF must define exact proof semantics **and** a stable comparable source version that can bind a PROVEN terminal result to the InventoryItem snapshot already reflecting that outcome; if the real source cannot provide it, use MANUAL rather than inventing one. S07 implements stock sync, deficit/health/advisory lock/stale run handling, the provider contract and one shared synchronous sync orchestration used directly by both scheduler and Admin sync endpoint. The orchestration follows the explicit Section 14 transaction phases: run-start TX commit → provider fetch outside row-lock TX → stock-apply TX commit → provider proof calls outside row-lock TX → per-reservation reconcile TXs → SyncRun-finalize/Event TX commit. Reservation rows do not exist yet; snapshot-coherent post-shipment apply/manual action is wired in S10 after S09 creates Orders/Reservations.
+U01 is resolved: the real MVP source is Google Sheets with complete-snapshot semantics and audited `MANUAL` reservation reconciliation. Google Sheets has no SOURCE_PROOF authority and must not invent a stable proof version. Generic interfaces/fake tests may exist earlier; S07 production completion requires the real Google Sheets adapter, source-specific config/readiness, schema validation and successful live access to the configured Sheet. S07 implements stock sync, deficit/health/advisory lock/stale run handling, the provider contract and one shared synchronous sync orchestration used directly by both scheduler and Admin sync endpoint. The orchestration follows the explicit Section 14 transaction phases: run-start TX commit → provider fetch outside row-lock TX → stock-apply TX commit → provider proof calls outside row-lock TX → per-reservation reconcile TXs → SyncRun-finalize/Event TX commit. In the selected MANUAL mode there are no provider proof calls that mutate reservations. Reservation rows do not exist yet; snapshot-coherent post-shipment manual action is wired in S10 after S09 creates Orders/Reservations.
 
 ## S08 — Cart
 DB carts/cart_items; every mutation locks Cart; max 100 distinct lines; live inventory/pricing projection.
@@ -1985,10 +1994,14 @@ Requires U07 and production U08. Compose/network/firewall/SSH/trustProxy/non-roo
 
 ---
 
-# 22. Real unresolved blockers
+# 22. External decisions and unresolved blockers
 
-## U01 — Authoritative inventory source — BLOCKS S07 completion
-Need technology/access/schema/auth, full-snapshot semantics, SKU mapping, source latency, competing channels, and an explicit reservation reconciliation mode. **SOURCE_PROOF** additionally requires a real stable comparable source-version identity that can prove which applied InventoryItem snapshot already reflects absorption/release; do not invent one if the source lacks it. Otherwise select **MANUAL** using the audited sync-run-bound flow in this spec. Generic “sync after shipment” is forbidden.
+## U01 — Authoritative inventory source — RESOLVED 2026-09-30
+MVP source is Google Sheets with read-only Google service-account access and complete-snapshot semantics. Required source columns are `external_key`, `sku`, `stock_quantity`. `external_key` maps to `product_variants.inventory_external_key`; `sku` is a required cross-check; `stock_quantity` is the only business value imported from the Sheet. Sync cadence is 120s and max age is 600s. Other sales channels must update this authoritative Sheet as part of normal sale handling.
+
+Reservation reconciliation is **MANUAL** using the audited `last_successful_sync_run_id`-bound flow already defined in this specification. The Google Sheets adapter exposes no SOURCE_PROOF capability and must not fabricate a stable comparable source version. Google Sheets is not authority for price, catalog status, commissions, settlement, attributes or media.
+
+Cloudflare R2 is selected separately for product IMAGE/VIDEO object storage; it is not part of U01 inventory authority. Production/live inventory verification still requires real spreadsheet/worksheet identifiers, service-account credentials and Sheet sharing permission.
 
 ## U02 — Real catalog attribute schema
 Blocks only domain-specific filters/attributes, not generic catalog.
@@ -2005,7 +2018,7 @@ Needed for legal text, retention and final hold value. Generic Return engine can
 Need country/currency compatibility with PLATFORM_CURRENCY, destination fields, method, minimum, fees, tax/legal ops. Do not invent card/bank fields.
 
 ## U07 — Hosting/domain — BLOCKS S16 production
-Need exact provider/budget/domain/object-storage/backup target.
+Cloudflare R2 is selected as the production product-media object-storage target. Exact hosting provider/budget/domain and backup target remain unresolved and still block S16 production completion.
 
 ## U08 — Legal documents + PII retention — BLOCKS production onboarding/checkout
 Need Partner Terms, Sales Terms, Privacy notice, reacceptance requirements, support contact and PII retention/redaction period.
@@ -2023,7 +2036,7 @@ Need Partner Terms, Sales Terms, Privacy notice, reacceptance requirements, supp
 **A-007** Last-click attribution 30 days.  
 **A-008** Financial hold default 14 days after DELIVERED.  
 **A-009** Real inventory source can be adapted into complete snapshot semantics or equivalent adapter materialization.  
-**A-010** If authoritative SOURCE_PROOF with stable comparable source-version identity cannot be obtained, U01 selects audited MANUAL reconciliation. MANUAL binds Admin's explicit physical-outcome attestation to the exact current `last_successful_sync_run_id`; until that state-valid action succeeds, the reservation remains ACTIVE. A later timestamp or generic successful sync is never proof by itself.  
+**A-010** U01 selects audited MANUAL reconciliation for the Google Sheets adapter. MANUAL binds Admin's explicit physical-outcome attestation to the exact current `last_successful_sync_run_id`; until that state-valid action succeeds, the reservation remains ACTIVE. A later timestamp, Google Sheets modification time or generic successful sync is never proof by itself.  
 **A-011** Public product media may be public-read.  
 **A-012** One API instance makes in-memory rate limits acceptable.  
 **A-013** Admin uses Telegram-authenticated Admin surface.  
@@ -2037,7 +2050,7 @@ Need Partner Terms, Sales Terms, Privacy notice, reacceptance requirements, supp
 Before S02 currency initialization: choose exact `PLATFORM_CURRENCY`; S02 persists it once in `platform_settings` and it is immutable thereafter.
 Before production S01: U08 Partner Terms artifact/reacceptance policy.
 Before S04 domain-specific filters: U02.
-Before S07 completion: U01 including explicit `SOURCE_PROOF` or `MANUAL` reconciliation choice; if SOURCE_PROOF, exact proof semantics.
+Before S07 completion: U01 is already resolved as Google Sheets complete snapshot + `MANUAL`; completion now requires the real adapter/config and successful live Sheet access, not another product decision.
 Before S09 production behavior: confirm U03 or accept provisional manual-fulfilment fields/process.
 Before production S12 release timing: confirm U05 hold value or explicitly accept 14d.
 Before S14: U06.
@@ -2056,15 +2069,15 @@ Without inventing supplier/payout data:
 - S04 generic filters;
 - S05;
 - S06;
-- generic InventoryProvider interfaces/fake provider/sync validation and UI skeleton, but **not** production-complete S07.
+- S07 source-specific implementation for the resolved Google Sheets + MANUAL decision; production/live verification requires real Sheet credentials/access.
 
-Do not ask Codex to solve U01/U03/U06/U08 by guessing.
+Do not ask Codex to guess U03/U06/U08 or any deployment credential/value.
 
 ---
 
 # 26. Must not be completed without external data
 
-- production inventory integration/reconciliation without U01;
+- production inventory launch without real configured Google Sheet access, service-account credentials/sharing and successful live verification;
 - source-specific category/watch filters without U02;
 - final checkout/fulfilment semantics if U03 differs from assumption;
 - payout destination/UI or live payout workflow without U06;
