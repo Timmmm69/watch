@@ -1448,6 +1448,7 @@ U01 is resolved for MVP without changing the generic inventory architecture:
 
 - source type: Google Sheets, read through the Google Sheets API;
 - access: a dedicated Google service account with read-only access to the configured spreadsheet/worksheet; credentials are deployment secrets and must never be logged;
+- provider config uses `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_WORKSHEET_NAME` and `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`; the last value is base64-encoded service-account JSON and is a secret, not an encrypted value;
 - complete snapshot semantics: each fetch reads the entire configured inventory worksheet as one authoritative physical-stock snapshot;
 - required worksheet columns: `external_key`, `sku`, `stock_quantity`; extra columns may exist but are ignored by the inventory adapter;
 - `external_key` is the stable source identity and maps exactly to `product_variants.inventory_external_key`;
@@ -1713,7 +1714,7 @@ Development/test/production. No permanent staging required at near-zero budget. 
 Core includes:
 `APP_BASE_URL`, `DATABASE_URL`, Telegram token/username/webhook secret, `CSRF_SECRET`, `ADMIN_TELEGRAM_IDS`, `PLATFORM_CURRENCY`, legal current document IDs/versions, `SUPPORT_CONTACT`, attribution/hold/min-payout config, inventory provider/sync/max-age, object-storage settings, business timezone, overdue thresholds. There is no `SESSION_SECRET`; opaque session tokens are generated from the process CSPRNG per Session and only their hashes are persisted.
 
-For resolved U01, provider-specific config must include the Google Sheets spreadsheet ID, worksheet name and service-account credentials, using the existing config/secrets convention from T16/T17. Credentials are secret, must never be logged, and readiness must fail when the Google Sheets provider is enabled but required provider config is absent/invalid.
+For resolved U01, provider-specific config is `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_WORKSHEET_NAME` and secret `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`. The config layer decodes/validates the service-account JSON without logging it. Readiness must fail when `google_sheets` is enabled but required provider config is absent/invalid. Development/tests may omit the provider or inject FakeInventoryProvider without inventing production credentials.
 
 Startup/readiness validation is cumulative with installed slices during development: S00 validates only S00 config/schema; later slices add their own required checks and must not make an earlier slice depend on tables/config not yet introduced. S02 creates/initializes the singleton `platform_settings` row exactly once; from that point every API/worker startup requires configured `PLATFORM_CURRENCY` to equal the persisted value or readiness fails. By final production/S16, startup additionally validates parseable unique `ADMIN_TELEGRAM_IDS` and a correctly encoded `CSRF_SECRET` of at least 32 bytes; the secret-generation procedure requires cryptographically random bytes. It also validates current legal-document IDs/types/version/hash/effective time and exactly one ACTIVE Supplier. Final Catalog/Admin readiness is unhealthy if the currency/legal/Supplier requirements are not satisfied.
 
