@@ -1450,11 +1450,10 @@ U01 is resolved for MVP without changing the generic inventory architecture:
 - access: a dedicated Google service account with read-only access to the configured spreadsheet/worksheet; credentials are deployment secrets and must never be logged;
 - provider config uses `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_WORKSHEET_NAME` and `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`; the last value is base64-encoded service-account JSON and is a secret, not an encrypted value;
 - complete snapshot semantics: each fetch reads the entire configured inventory worksheet as one authoritative physical-stock snapshot;
-- required worksheet columns: `external_key`, `sku`, `stock_quantity`; extra columns may exist but are ignored by the inventory adapter;
-- `external_key` is the stable source identity and maps exactly to `product_variants.inventory_external_key`;
-- `sku` is a required operator-readable cross-check and must match the mapped ProductVariant SKU; mismatch is a validation failure for that mapped row;
+- required machine columns: `external_key`, `stock_quantity`; a `sku` column is recommended for operator readability but is informational and is not imported as inventory authority;
+- `external_key` is the sole stable machine identity and maps exactly to `product_variants.inventory_external_key`;
 - `stock_quantity` must be an integer >=0;
-- duplicate external keys, malformed quantities and mapped SKU mismatches are invalid; unknown external keys are reported/ignored under the existing sync rules;
+- duplicate external keys and malformed quantities are invalid; unknown external keys are reported/ignored under the existing sync rules;
 - because the worksheet is a complete snapshot, a configured mapped Variant absent from the fetched snapshot becomes MISSING, never implicit zero;
 - adapter capabilities are `completeSnapshot=true` and `reservationReconciliation=NONE`;
 - the Google Sheets adapter does not claim a stable comparable source version for physical-outcome proof; normalized `sourceVersion` may be NULL;
@@ -1998,7 +1997,7 @@ Requires U07 and production U08. Compose/network/firewall/SSH/trustProxy/non-roo
 # 22. External decisions and unresolved blockers
 
 ## U01 — Authoritative inventory source — RESOLVED 2026-09-30
-MVP source is Google Sheets with read-only Google service-account access and complete-snapshot semantics. Required source columns are `external_key`, `sku`, `stock_quantity`. `external_key` maps to `product_variants.inventory_external_key`; `sku` is a required cross-check; `stock_quantity` is the only business value imported from the Sheet. Sync cadence is 120s and max age is 600s. Other sales channels must update this authoritative Sheet as part of normal sale handling.
+MVP source is Google Sheets with read-only Google service-account access and complete-snapshot semantics. Required machine columns are `external_key` and `stock_quantity`; `sku` is recommended only for operator readability. `external_key` maps to `product_variants.inventory_external_key`; `stock_quantity` is the only business value imported from the Sheet. Sync cadence is 120s and max age is 600s. Other sales channels must update this authoritative Sheet as part of normal sale handling.
 
 Reservation reconciliation is **MANUAL** using the audited `last_successful_sync_run_id`-bound flow already defined in this specification. The Google Sheets adapter exposes no SOURCE_PROOF capability and must not fabricate a stable comparable source version. Google Sheets is not authority for price, catalog status, commissions, settlement, attributes or media.
 
