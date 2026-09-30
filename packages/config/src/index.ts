@@ -1,4 +1,32 @@
 import { z } from "zod";
+import { createPrivateKey } from "node:crypto";
+
+export interface GoogleSheetsServiceAccount {
+  type: "service_account";
+  project_id: string;
+  client_email: string;
+  private_key: string;
+}
+
+function parseGoogleServiceAccount(value: string): GoogleSheetsServiceAccount {
+  try {
+    if (value.length > 65536 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error();
+    const decoded = Buffer.from(value, "base64");
+    if (!decoded.length || decoded.toString("base64") !== value) throw new Error();
+    const json: unknown = JSON.parse(decoded.toString("utf8"));
+    const account = z.object({
+      type: z.literal("service_account"),
+      project_id: z.string().min(1),
+      client_email: z.email(),
+      private_key: z.string().min(1)
+    }).parse(json);
+    if (createPrivateKey(account.private_key).asymmetricKeyType !== "rsa") throw new Error();
+    // Only explicit service-account fields enter GoogleAuth; no external URLs or credential types.
+    return account;
+  } catch {
+    throw new Error("GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64 must encode valid service-account JSON with an RSA private key");
+  }
+}
 
 function parseAdminIds(value: string): string[] {
   if (value.trim() === "") return [];
@@ -38,6 +66,10 @@ export const apiRuntimeConfigSchema = z.object({
   PLATFORM_CURRENCY: z.string().regex(/^[A-Z]{3}$/, "PLATFORM_CURRENCY must be a 3-letter ISO 4217 code"),
   INVENTORY_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
   INVENTORY_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(86400).default(600),
+  INVENTORY_PROVIDER: z.literal("google_sheets").optional(),
+  GOOGLE_SHEETS_SPREADSHEET_ID: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+  GOOGLE_SHEETS_WORKSHEET_NAME: z.string().trim().min(1).max(100).optional(),
+  GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: z.string().transform(parseGoogleServiceAccount).optional(),
   LEGAL_PARTNER_TERMS_ID: z.string().uuid(),
   LEGAL_PARTNER_TERMS_VERSION: legalVersion,
   LEGAL_SALES_TERMS_ID: z.string().uuid().optional(),
@@ -45,6 +77,11 @@ export const apiRuntimeConfigSchema = z.object({
   LEGAL_PRIVACY_ID: z.string().uuid().optional(),
   LEGAL_PRIVACY_VERSION: legalVersion.optional()
 }).superRefine((value, ctx) => {
+  if (value.INVENTORY_PROVIDER === "google_sheets") {
+    for (const field of ["GOOGLE_SHEETS_SPREADSHEET_ID", "GOOGLE_SHEETS_WORKSHEET_NAME", "GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64"] as const) {
+      if (value[field] === undefined) ctx.addIssue({ code: "custom", message: `${field} is required for google_sheets`, path: [field] });
+    }
+  }
   for (const [idKey, versionKey] of [
     ["LEGAL_SALES_TERMS_ID", "LEGAL_SALES_TERMS_VERSION"],
     ["LEGAL_PRIVACY_ID", "LEGAL_PRIVACY_VERSION"]

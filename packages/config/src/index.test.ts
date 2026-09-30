@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { currentLegalDocuments, loadApiRuntimeConfig } from "./index.js";
 
 const partnerTermsId = "00000000-0000-4000-8000-000000000001";
@@ -19,6 +20,47 @@ describe("API runtime configuration", () => {
     LEGAL_PARTNER_TERMS_ID: partnerTermsId,
     LEGAL_PARTNER_TERMS_VERSION: "2026-09-01"
   };
+
+  const account = {
+    type: "service_account", project_id: "inventory-project", client_email: "inventory@example.iam.gserviceaccount.com",
+    private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString()
+  };
+  const google = {
+    INVENTORY_PROVIDER: "google_sheets", GOOGLE_SHEETS_SPREADSHEET_ID: "sheet-123",
+    GOOGLE_SHEETS_WORKSHEET_NAME: "Inventory",
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: Buffer.from(JSON.stringify(account)).toString("base64")
+  };
+
+  it("accepts and decodes Google Sheets service-account configuration without requiring it when unset", () => {
+    expect(loadApiRuntimeConfig({ ...valid, ...google }).GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64).toEqual(account);
+    expect(loadApiRuntimeConfig(valid).INVENTORY_PROVIDER).toBeUndefined();
+  });
+
+  it("rejects missing Google fields and invalid provider selection", () => {
+    for (const field of ["GOOGLE_SHEETS_SPREADSHEET_ID", "GOOGLE_SHEETS_WORKSHEET_NAME", "GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64"]) {
+      expect(() => loadApiRuntimeConfig({ ...valid, ...google, [field]: undefined })).toThrow();
+      expect(() => loadApiRuntimeConfig({ ...valid, ...google, [field]: "" })).toThrow();
+    }
+    expect(() => loadApiRuntimeConfig({ ...valid, INVENTORY_PROVIDER: "fake" })).toThrow();
+  });
+
+  it("rejects malformed base64/JSON/accounts/keys without exposing credentials", () => {
+    for (const credentials of ["%%%secret", "e30", Buffer.from("secret-json").toString("base64"),
+      Buffer.from(JSON.stringify({ ...account, type: "external_account" })).toString("base64"),
+      Buffer.from(JSON.stringify({ ...account, client_email: "bad" })).toString("base64"),
+      Buffer.from(JSON.stringify({ ...account, private_key: "secret-invalid-key" })).toString("base64")]) {
+      expect(() => loadApiRuntimeConfig({ ...valid, ...google, GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: credentials }))
+        .toThrow("GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64 must encode valid service-account JSON");
+      try {
+        loadApiRuntimeConfig({ ...valid, ...google, GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: credentials });
+        expect.fail("Invalid credential accepted");
+      } catch (error) {
+        expect(String(error)).not.toContain(credentials);
+        expect(String(error)).not.toContain("secret-invalid-key");
+        expect(String(error)).not.toContain(account.private_key);
+      }
+    }
+  });
 
   it("loads the foundation configuration", () => {
     expect(loadApiRuntimeConfig(valid)).toMatchObject({

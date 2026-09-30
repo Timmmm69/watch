@@ -4,11 +4,18 @@ import { loadApiRuntimeConfig } from "@watch/config";
 import { createDatabasePool } from "@watch/db";
 import { processTelegramUpdate } from "./bot.js";
 import { TelegramInbox } from "./inbox.js";
+import { createConfiguredInventoryOrchestrator, startScheduledInventorySync } from "../inventory/runtime.js";
 
 config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)), quiet: true });
 const runtime = loadApiRuntimeConfig();
 const pool = createDatabasePool(runtime.DATABASE_URL);
 const inbox = new TelegramInbox(pool);
+const inventoryOrchestrator = createConfiguredInventoryOrchestrator(pool, runtime);
+const stopInventorySync = inventoryOrchestrator
+  ? startScheduledInventorySync(inventoryOrchestrator, runtime.INVENTORY_SYNC_INTERVAL_SECONDS, {
+      error: (fields, message) => console.error(message, fields)
+    })
+  : undefined;
 let running = true;
 process.on("SIGINT", () => { running = false; });
 process.on("SIGTERM", () => { running = false; });
@@ -34,5 +41,6 @@ try {
     }
   }
 } finally {
+  await stopInventorySync?.();
   await pool.end();
 }

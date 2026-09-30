@@ -11,6 +11,7 @@ import { PartnerService } from "./partner/partner.js";
 import { ReferralService } from "./referral/referral.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
+import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
 
@@ -21,6 +22,7 @@ const legalDocuments = new LegalDocuments(pool, currentLegalDocuments(runtimeCon
 const partnerService = new PartnerService(pool, legalDocuments);
 const catalogService = new CatalogService(pool, runtimeConfig.PLATFORM_CURRENCY, undefined, runtimeConfig.INVENTORY_MAX_AGE_SECONDS);
 const inventoryService = new InventoryService(pool, undefined, runtimeConfig.INVENTORY_MAX_AGE_SECONDS);
+const inventoryOrchestrator = createConfiguredInventoryOrchestrator(pool, runtimeConfig);
 const storageFields = ["OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_REGION", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY"] as const;
 for (const field of storageFields) {
   if (!process.env[field]) throw new Error(`${field} is required for Product media storage`);
@@ -48,7 +50,7 @@ const app = createApp({
   partner: partnerService,
   referral: new ReferralService(pool, legalDocuments, runtimeConfig.TELEGRAM_BOT_USERNAME),
   catalog: { service: catalogService },
-  inventory: { service: inventoryService },
+  inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }
 });

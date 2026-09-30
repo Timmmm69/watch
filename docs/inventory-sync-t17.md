@@ -22,6 +22,7 @@ MANUAL reservation reconciliation. T17 intentionally remains provider-agnostic;
 T18 wires the Google Sheets adapter/config into this existing orchestration.
 Until T18 is configured, Admin sync continues to return 503 rather than inventing
 a production provider or credentials.
+See `inventory-google-sheets-t18.md` for the implemented adapter and scheduling.
 
 Orders/Reservations do not exist yet. Phases D/E and the ACTIVE-reservation guard
 on external-key mutations remain the S09/S10 augmentations explicitly required by

@@ -7,6 +7,9 @@ import { deriveCsrfToken } from "../auth/middleware.js";
 import { SESSION_COOKIE_NAME, type SessionStore } from "../auth/session.js";
 import { CatalogService } from "../catalog/catalog.js";
 import { FakeInventoryProvider } from "./fake.js";
+import { GoogleAuth } from "google-auth-library";
+import { createConfiguredInventoryOrchestrator } from "./runtime.js";
+import type { ApiRuntimeConfig } from "@watch/config";
 import type { InventoryRecord } from "./provider.js";
 import { InventoryService } from "./service.js";
 import { INVENTORY_SYNC_LOCK, InventorySyncOrchestrator, runScheduledInventorySync } from "./orchestrator.js";
@@ -65,6 +68,46 @@ afterAll(async () => {
 });
 
 describe.skipIf(!databaseUrl)("safe inventory orchestration against PostgreSQL", () => {
+  it("wires Google Sheets into Admin sync with real PostgreSQL apply and preserves catalog authority", async () => {
+    const token = vi.spyOn(GoogleAuth.prototype, "getAccessToken").mockResolvedValue("test-token");
+    const googleFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ values: [
+      ["external_key", "stock_quantity", "sku", "price_minor", "status", "commission"],
+      ["key-0", 9, "ignore", 99999, "ACTIVE", 999], ["unknown", 3]
+    ] })));
+    const runner = createConfiguredInventoryOrchestrator(pool!, {
+      INVENTORY_PROVIDER: "google_sheets", GOOGLE_SHEETS_SPREADSHEET_ID: "test-sheet",
+      GOOGLE_SHEETS_WORKSHEET_NAME: "Stock", GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: {
+        type: "service_account", project_id: "test", client_email: "test@example.com", private_key: "not-used-by-mocked-auth"
+      }
+    } as ApiRuntimeConfig)!;
+    const app = createApp({ logger: false, checkReadiness: async () => undefined,
+      auth: { store: { loadCurrent: async () => ({
+        session: { id: actor }, user: { id: actor, telegramUserId: "42", isAdmin: true, isBlocked: false }
+      }) } as unknown as SessionStore, csrfSecret: Buffer.alloc(32, 8),
+        appBaseUrl: "https://app.example", adminIds: () => new Set(["42"]) },
+      inventory: { service: new InventoryService(pool!), orchestrator: runner }
+    });
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/v1/admin/inventory/sync", headers: {
+        cookie: `${SESSION_COOKIE_NAME}=${"a".repeat(43)}`, origin: "https://app.example",
+        "x-csrf-token": deriveCsrfToken(Buffer.alloc(32, 8), actor)
+      }, payload: {} });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ status: "PARTIAL", providerKey: "google_sheets",
+        details: { unknownExternalKeys: ["unknown"] } });
+      expect((await pool!.query("SELECT source_quantity, source_status, source_version FROM inventory_items WHERE variant_id = $1", [variants[0]])).rows[0])
+        .toEqual({ source_quantity: 9, source_status: "OK", source_version: null });
+      expect((await pool!.query("SELECT source_quantity, source_status FROM inventory_items WHERE variant_id = $1", [variants[1]])).rows[0])
+        .toEqual({ source_quantity: null, source_status: "MISSING" });
+      expect((await pool!.query("SELECT sku, price_minor, partner_commission_unit_minor, status FROM product_variants WHERE id = $1", [variants[0]])).rows[0])
+        .toEqual({ sku: "key-0", price_minor: 100, partner_commission_unit_minor: 0, status: "DRAFT" });
+      expect(googleFetch).toHaveBeenCalledOnce();
+      expect(token).toHaveBeenCalledOnce();
+    } finally {
+      token.mockRestore(); googleFetch.mockRestore(); await app.close();
+    }
+  });
+
   it("holds one physical session across start, provider I/O, apply, finalize and explicit unlock", async () => {
     const acquired: number[] = [];
     const released: number[] = [];
