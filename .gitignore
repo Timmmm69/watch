@@ -1,0 +1,14 @@
+node_modules/
+**/dist/
+**/.next/
+apps/web/next-env.d.ts
+**/playwright-report/
+**/test-results/
+**/coverage/
+packages/db/src/generated/
+.env
+.env.*
+!.env.example
+.serena/
+.local-postgres-test/
+*.tsbuildinfo

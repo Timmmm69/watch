@@ -1,0 +1,20 @@
+{
+  "name": "watch",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "pnpm build:packages && pnpm --parallel --filter @watch/config --filter @watch/contracts --filter @watch/db --filter @watch/api --filter @watch/web dev",
+    "dev:bot": "pnpm --filter @watch/api worker:dev",
+    "build:packages": "pnpm --filter @watch/config --filter @watch/contracts --filter @watch/db build",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "pnpm --filter @watch/web test:e2e",
+    "db:generate": "pnpm --filter @watch/db db:generate",
+    "db:migrate": "pnpm --filter @watch/db db:migrate"
+  }
+}

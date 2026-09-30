@@ -1,0 +1,31 @@
+{
+  "name": "@watch/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "worker": "node dist/telegram/worker.js",
+    "worker:dev": "tsx watch src/telegram/worker.ts",
+    "telegram:configure": "tsx src/telegram/configure.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@watch/config": "workspace:*",
+    "@watch/contracts": "workspace:*",
+    "@watch/db": "workspace:*",
+    "dotenv": "18.0.4",
+    "fastify": "5.12.5",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.2"
+  }
+}
