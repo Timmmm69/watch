@@ -3,15 +3,22 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 type Availability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
+type PartnerViewReason = "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | null;
+type Asset = { id: string; type: string; purpose?: string; mediaUrl: string | null; text: string | null };
+type ProductCardPartnerView = { commissionFromMinor: number; commissionToMinor: number; referralEligible: boolean; readOnlyReason: PartnerViewReason };
 type Product = { id: string; slug: string; title: string; description: string; brand: string | null;
   priceFromMinor: number | null; currency: string; availability: Availability;
-  gallery: { id: string; type: string; mediaUrl: string | null; text: string | null }[] };
-type Detail = Product & { variants: { id: string; sku: string; priceMinor: number; availability: Availability }[] };
+  gallery: Asset[]; partnerView?: ProductCardPartnerView };
+type VariantPartnerView = { id: string; commissionUnitMinor: number; referralEligible: boolean; readOnlyReason: PartnerViewReason };
+type Detail = Product & { variants: { id: string; sku: string; priceMinor: number; availability: Availability }[];
+  partnerView?: { referralEligible: boolean; readOnlyReason: PartnerViewReason; variants: VariantPartnerView[]; assets: Asset[] } };
 type Category = { id: string; slug: string; name: string };
 type Filters = { q: string; category: string; brand: string; minPrice: string; maxPrice: string; availability: string };
 const empty: Filters = { q: "", category: "", brand: "", minPrice: "", maxPrice: "", availability: "" };
 const labels: Record<Availability, string> = { IN_STOCK: "В наличии", OUT_OF_STOCK: "Нет в наличии",
   STALE: "Наличие уточняется", UNKNOWN: "Наличие уточняется" };
+const reasonLabel = (reason: PartnerViewReason) => reason === "PARTNER_BLOCKED" ? "Партнёр заблокирован"
+  : reason === "TERMS_REACCEPT_REQUIRED" ? "Требуется принять новые условия" : null;
 const price = (minor: number | null, currency: string) => minor === null ? "Цена уточняется" :
   new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(minor / 100);
 
@@ -89,6 +96,22 @@ export function Storefront({ name }: { name: string }) {
         ? <img key={asset.id} src={asset.mediaUrl} alt={detail.title} className="w-full rounded-xl bg-slate-900 object-contain" />
         : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-slate-900" />
           : asset.text ? <p key={asset.id} className="rounded-xl bg-slate-900 p-4">{asset.text}</p> : null)}</div>
+      {detail.partnerView && <div className="mt-6 rounded-xl bg-slate-900 p-4">
+        <h3 className="mb-3 text-lg font-semibold">Партнёрская информация</h3>
+        {detail.partnerView.referralEligible
+          ? <p className="mb-3 text-blue-300">Реферальная ссылка: доступна</p>
+          : <p className="mb-3 text-amber-300">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>}
+        <table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия</th></tr></thead><tbody>
+          {detail.partnerView.variants.map((variant) => <tr key={variant.id} className="border-t border-slate-700">
+            <td className="py-2">{detail.variants.find((v) => v.id === variant.id)?.sku ?? variant.id}</td>
+            <td className="py-2 text-emerald-300">{price(variant.commissionUnitMinor, detail.currency)}</td>
+          </tr>)}
+        </tbody></table>
+        {detail.partnerView.assets.length > 0 && <div className="mt-4 grid gap-4 sm:grid-cols-2">{detail.partnerView.assets.map((asset) => asset.type === "IMAGE" && asset.mediaUrl
+          ? <img key={asset.id} src={asset.mediaUrl} alt="Партнёрский материал" className="w-full rounded-xl bg-slate-950 object-contain" />
+          : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-slate-950" />
+            : asset.text ? <p key={asset.id} className="rounded-xl bg-slate-950 p-4">{asset.text}</p> : null)}</div>}
+      </div>}
       <p className="mt-6 text-lg font-medium">От {price(detail.priceFromMinor, detail.currency)}</p>
       <p className="mt-2">{labels[detail.availability]}</p>
     </section> : <>
@@ -135,7 +158,13 @@ export function Storefront({ name }: { name: string }) {
           <div className="p-4"><h2 className="text-lg font-semibold">{product.title}</h2>
             {product.brand && <p className="text-sm text-slate-300">{product.brand}</p>}
             <p className="mt-2 text-sm text-slate-300">От {price(product.priceFromMinor, product.currency)}</p>
-            <p className="mt-2 text-sm">{labels[product.availability]}</p></div></button>;
+            <p className="mt-2 text-sm">{labels[product.availability]}</p>
+            {product.partnerView && <div className="mt-3 border-t border-slate-700 pt-2 text-sm">
+              <p className="text-emerald-300">Комиссия: {price(product.partnerView.commissionFromMinor, product.currency)} – {price(product.partnerView.commissionToMinor, product.currency)}</p>
+              {product.partnerView.referralEligible
+                ? <p className="text-blue-300">Реферальная ссылка: доступна</p>
+                : <p className="text-amber-300">{reasonLabel(product.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>}
+            </div>}</div></button>;
       })}</section>
         <nav aria-label="Страницы каталога" className="mt-7 flex items-center justify-center gap-5">
           <button type="button" disabled={page === 1} className="min-h-11 px-3 disabled:opacity-40" onClick={() => setPage(page - 1)}>Назад</button>

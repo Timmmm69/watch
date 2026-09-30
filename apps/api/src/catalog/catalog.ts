@@ -8,6 +8,7 @@ import {
   type VariantStatus,
   databaseAssetChecks
 } from "./invariant.js";
+import { partnerProgramMutationAllowed, type PartnerStatus } from "../partner/partner.js";
 
 export class CatalogValidationError extends Error {
   constructor(
@@ -139,7 +140,7 @@ export interface StorefrontCategory {
   sortOrder: number;
 }
 
-export interface StorefrontProductCard {
+interface StorefrontProductBase {
   id: string;
   title: string;
   slug: string;
@@ -150,6 +151,10 @@ export interface StorefrontProductCard {
   currency: string;
   availability: StorefrontAvailability;
   gallery: StorefrontAsset[];
+}
+
+export interface StorefrontProductCard extends StorefrontProductBase {
+  partnerView?: StorefrontProductCardPartnerView;
 }
 
 export type StorefrontAvailability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
@@ -185,9 +190,39 @@ export interface StorefrontVariant {
   availability: StorefrontAvailability;
 }
 
-export interface StorefrontProduct extends StorefrontProductCard {
+export interface StorefrontProduct extends StorefrontProductBase {
   categories: StorefrontCategory[];
   variants: StorefrontVariant[];
+  partnerView?: StorefrontProductPartnerView;
+}
+
+export type PartnerViewContext = {
+  partner: { id: string; status: PartnerStatus } | null;
+  userBlocked: boolean;
+  partnerTermsReacceptRequired: boolean;
+};
+
+export type PartnerViewReadOnlyReason = "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | null;
+
+export interface StorefrontProductCardPartnerView {
+  commissionFromMinor: number;
+  commissionToMinor: number;
+  referralEligible: boolean;
+  readOnlyReason: PartnerViewReadOnlyReason;
+}
+
+export interface StorefrontVariantPartnerView {
+  id: string;
+  commissionUnitMinor: number;
+  referralEligible: boolean;
+  readOnlyReason: PartnerViewReadOnlyReason;
+}
+
+export interface StorefrontProductPartnerView {
+  referralEligible: boolean;
+  readOnlyReason: PartnerViewReadOnlyReason;
+  variants: StorefrontVariantPartnerView[];
+  assets: StorefrontAsset[];
 }
 
 export interface Page {
@@ -250,6 +285,22 @@ function mapAsset(row: AssetRow): StorefrontAsset {
     variantId: row.variant_id, sizeBytes: row.size_bytes,
     text: row.text_content, mediaUrl: row.storage_key ? `/api/v1/catalog/assets/${row.id}/media` : null,
     mimeType: row.mime_type, sortOrder: row.sort_order };
+}
+
+function partnerReferralEligible(ctx: PartnerViewContext): boolean {
+  if (!ctx.partner) return false;
+  return partnerProgramMutationAllowed({
+    userBlocked: ctx.userBlocked,
+    partnerStatus: ctx.partner.status,
+    partnerTermsCurrent: !ctx.partnerTermsReacceptRequired
+  });
+}
+
+function partnerReadOnlyReason(ctx: PartnerViewContext): PartnerViewReadOnlyReason {
+  if (!ctx.partner) return null;
+  if (ctx.userBlocked || ctx.partner.status === "BLOCKED") return "PARTNER_BLOCKED";
+  if (ctx.partnerTermsReacceptRequired) return "TERMS_REACCEPT_REQUIRED";
+  return null;
 }
 
 interface InventoryRow {
@@ -1002,7 +1053,10 @@ export class CatalogService {
     };
   }
 
-  async listStorefrontProducts(query: StorefrontProductsQuery): Promise<Paginated<StorefrontProductCard>> {
+  async listStorefrontProducts(
+    query: StorefrontProductsQuery,
+    partnerCtx?: PartnerViewContext
+  ): Promise<Paginated<StorefrontProductCard>> {
     const values: unknown[] = [];
     const conditions = ["p.status = 'ACTIVE'"];
     if (query.q) {
@@ -1076,20 +1130,47 @@ export class CatalogService {
        ORDER BY sort_order, created_at, id`,
       [items.rows.map((row) => row.id)]
     );
+    const commissionRows = partnerCtx?.partner
+      ? await this.pool.query<{ product_id: string; partner_commission_unit_minor: number }>(
+          `SELECT product_id, partner_commission_unit_minor FROM product_variants
+            WHERE product_id = ANY($1::uuid[]) AND status = 'ACTIVE'`,
+          [items.rows.map((row) => row.id)]
+        )
+      : null;
+    const commissionsByProduct = new Map<string, number[]>();
+    commissionRows?.rows.forEach((row) => {
+      const list = commissionsByProduct.get(row.product_id) ?? [];
+      list.push(row.partner_commission_unit_minor);
+      commissionsByProduct.set(row.product_id, list);
+    });
+    const referralEligible = partnerCtx ? partnerReferralEligible(partnerCtx) : false;
+    const readOnlyReason = partnerCtx ? partnerReadOnlyReason(partnerCtx) : null;
     return {
-      items: items.rows.map((row) => ({
-        id: row.id, title: row.title, slug: row.slug, description: row.description,
-        brand: row.brand, priceFromMinor: row.price_from_minor, priceToMinor: row.price_to_minor,
-        currency: this.platformCurrency, availability: row.availability,
-        gallery: assets.rows.filter((asset) => asset.product_id === row.id).map(mapAsset)
-      })),
+      items: items.rows.map((row) => {
+        const commissions = commissionsByProduct.get(row.id) ?? [];
+        const card: StorefrontProductCard = {
+          id: row.id, title: row.title, slug: row.slug, description: row.description,
+          brand: row.brand, priceFromMinor: row.price_from_minor, priceToMinor: row.price_to_minor,
+          currency: this.platformCurrency, availability: row.availability,
+          gallery: assets.rows.filter((asset) => asset.product_id === row.id).map(mapAsset)
+        };
+        if (partnerCtx?.partner) {
+          card.partnerView = {
+            commissionFromMinor: commissions.length > 0 ? Math.min(...commissions) : 0,
+            commissionToMinor: commissions.length > 0 ? Math.max(...commissions) : 0,
+            referralEligible,
+            readOnlyReason
+          };
+        }
+        return card;
+      }),
       page: query.page,
       limit: query.limit,
       total: total.rows[0]?.count ?? 0
     };
   }
 
-  async getStorefrontProduct(slug: string): Promise<StorefrontProduct> {
+  async getStorefrontProduct(slug: string, partnerCtx?: PartnerViewContext): Promise<StorefrontProduct> {
     const productResult = await this.pool.query<ProductRow>(
       "SELECT * FROM products WHERE slug = $1 AND status = 'ACTIVE'",
       [slug]
@@ -1114,12 +1195,20 @@ export class CatalogService {
       `SELECT * FROM product_assets WHERE product_id = $1 AND purpose = 'STOREFRONT' AND status = 'ACTIVE'
        ORDER BY sort_order, created_at, id`, [product.id]
     );
+    const partnerAssets = partnerCtx?.partner
+      ? await this.pool.query<AssetRow>(
+          `SELECT * FROM product_assets WHERE product_id = $1 AND purpose = 'PARTNER_CONTENT' AND status = 'ACTIVE'
+           ORDER BY sort_order, created_at, id`, [product.id]
+        )
+      : null;
     const prices = variants.rows.map((row) => row.price_minor);
     const statuses = variants.rows.map((row) => row.availability);
     const availability: StorefrontAvailability = statuses.includes("IN_STOCK") ? "IN_STOCK"
       : statuses.includes("UNKNOWN") ? "UNKNOWN"
       : statuses.includes("STALE") ? "STALE" : "OUT_OF_STOCK";
-    return {
+    const referralEligible = partnerCtx ? partnerReferralEligible(partnerCtx) : false;
+    const readOnlyReason = partnerCtx ? partnerReadOnlyReason(partnerCtx) : null;
+    const result: StorefrontProduct = {
       id: product.id,
       title: product.title,
       slug: product.slug,
@@ -1138,5 +1227,19 @@ export class CatalogService {
         priceMinor: row.price_minor, currency: row.currency, availability: row.availability
       }))
     };
+    if (partnerCtx?.partner) {
+      result.partnerView = {
+        referralEligible,
+        readOnlyReason,
+        variants: variants.rows.map((row) => ({
+          id: row.id,
+          commissionUnitMinor: row.partner_commission_unit_minor,
+          referralEligible,
+          readOnlyReason
+        })),
+        assets: partnerAssets?.rows.map(mapAsset) ?? []
+      };
+    }
+    return result;
   }
 }

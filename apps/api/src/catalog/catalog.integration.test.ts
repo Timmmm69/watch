@@ -410,6 +410,85 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     await expect(serviceWithAssets.getStorefrontProduct(draftProduct.slug)).rejects.toThrow("Product not found");
   });
 
+  it("adds partnerView for Partner users without leaking Partner-only content to Buyers", async () => {
+    const category = await serviceWithAssets.createCategory(actorUserId, { name: unique("partner cat"), sortOrder: 1 });
+    categoryIds.push(category.id);
+    const product = await serviceWithAssets.createProduct(actorUserId, {
+      title: unique("partner product"),
+      categoryIds: [category.id]
+    });
+    productIds.push(product.id);
+    const variantA = await serviceWithAssets.createVariant(actorUserId, product.id, {
+      sku: unique("SKU"),
+      priceMinor: 50_000,
+      partnerCommissionUnitMinor: 5_000,
+      inventoryExternalKey: unique("key")
+    });
+    const variantB = await serviceWithAssets.createVariant(actorUserId, product.id, {
+      sku: unique("SKU"),
+      priceMinor: 60_000,
+      partnerCommissionUnitMinor: 0,
+      inventoryExternalKey: unique("key")
+    });
+    variantIds.push(variantA.id, variantB.id);
+    await serviceWithAssets.updateVariant(actorUserId, variantA.id, { status: "ACTIVE" });
+    await serviceWithAssets.updateVariant(actorUserId, variantB.id, { status: "ACTIVE" });
+    await serviceWithAssets.updateProduct(actorUserId, product.id, { status: "ACTIVE" });
+
+    await pool!.query(
+      `INSERT INTO product_assets (id, product_id, type, purpose, text_content, status)
+       VALUES ($1, $2, 'TEXT', 'STOREFRONT', $3, 'ACTIVE'),
+              ($4, $2, 'TEXT', 'PARTNER_CONTENT', $5, 'ACTIVE')`,
+      [randomUUID(), product.id, "Storefront text", randomUUID(), "Partner content text"]
+    );
+
+    const buyerCtx = { partner: null as { id: string; status: "ACTIVE" | "BLOCKED" } | null, userBlocked: false, partnerTermsReacceptRequired: false };
+    const buyerList = await serviceWithAssets.listStorefrontProducts({ page: 1, limit: 20 }, buyerCtx);
+    const buyerCard = buyerList.items.find((item) => item.id === product.id)!;
+    expect(buyerCard.partnerView).toBeUndefined();
+    expect(buyerCard.gallery.some((asset) => asset.text === "Partner content text")).toBe(false);
+
+    const buyerDetail = await serviceWithAssets.getStorefrontProduct(product.slug, buyerCtx);
+    expect(buyerDetail.partnerView).toBeUndefined();
+    expect(buyerDetail.gallery.some((asset) => asset.text === "Partner content text")).toBe(false);
+
+    const activePartner = { id: randomUUID(), status: "ACTIVE" as const };
+    const activeCtx = { partner: activePartner, userBlocked: false, partnerTermsReacceptRequired: false };
+    const partnerList = await serviceWithAssets.listStorefrontProducts({ page: 1, limit: 20 }, activeCtx);
+    const partnerCard = partnerList.items.find((item) => item.id === product.id)!;
+    expect(partnerCard.partnerView).toEqual({
+      commissionFromMinor: 0,
+      commissionToMinor: 5_000,
+      referralEligible: true,
+      readOnlyReason: null
+    });
+
+    const partnerDetail = await serviceWithAssets.getStorefrontProduct(product.slug, activeCtx);
+    expect(partnerDetail.partnerView).toMatchObject({ referralEligible: true, readOnlyReason: null });
+    expect(partnerDetail.partnerView!.variants).toHaveLength(2);
+    expect(partnerDetail.partnerView!.variants.find((v) => v.id === variantA.id)).toMatchObject({
+      commissionUnitMinor: 5_000, referralEligible: true, readOnlyReason: null
+    });
+    expect(partnerDetail.partnerView!.variants.find((v) => v.id === variantB.id)).toMatchObject({
+      commissionUnitMinor: 0, referralEligible: true, readOnlyReason: null
+    });
+    expect(partnerDetail.partnerView!.assets.some((asset) => asset.text === "Partner content text")).toBe(true);
+
+    const blockedCtx = { partner: { id: randomUUID(), status: "BLOCKED" as const }, userBlocked: false, partnerTermsReacceptRequired: false };
+    const blockedList = await serviceWithAssets.listStorefrontProducts({ page: 1, limit: 20 }, blockedCtx);
+    expect(blockedList.items.find((item) => item.id === product.id)?.partnerView).toMatchObject({
+      referralEligible: false, readOnlyReason: "PARTNER_BLOCKED"
+    });
+
+    const staleCtx = { partner: { id: randomUUID(), status: "ACTIVE" as const }, userBlocked: false, partnerTermsReacceptRequired: true };
+    const staleList = await serviceWithAssets.listStorefrontProducts({ page: 1, limit: 20 }, staleCtx);
+    expect(staleList.items.find((item) => item.id === product.id)?.partnerView).toMatchObject({
+      referralEligible: false, readOnlyReason: "TERMS_REACCEPT_REQUIRED"
+    });
+
+    await pool!.query("DELETE FROM product_assets WHERE product_id = $1", [product.id]);
+  });
+
   it("serializes category archive against product membership change", async () => {
     const categoryA = await serviceWithAssets.createCategory(actorUserId, { name: unique("raceA"), sortOrder: 1 });
     const categoryB = await serviceWithAssets.createCategory(actorUserId, { name: unique("raceB"), sortOrder: 2 });

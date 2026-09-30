@@ -314,7 +314,7 @@ describe("catalog endpoints", () => {
     const products = await app.inject({ method: "GET", url: "/api/v1/catalog/products?page=1&limit=20", headers: { cookie: buyerCookie } });
     expect(products.statusCode).toBe(200);
     expect(products.json()).toEqual({ items: [], page: 1, limit: 20, total: 0 });
-    expect(listStorefrontProducts).toHaveBeenCalledWith({ page: 1, limit: 20 });
+    expect(listStorefrontProducts).toHaveBeenCalledWith({ page: 1, limit: 20 }, { partner: null, userBlocked: false, partnerTermsReacceptRequired: false });
     const anonymous = await app.inject({ method: "GET", url: "/api/v1/catalog/categories" });
     expect(anonymous.statusCode).toBe(401);
     expect(anonymous.json().error.code).toBe("AUTH_REQUIRED");
@@ -329,7 +329,7 @@ describe("catalog endpoints", () => {
       headers: { cookie: buyerCookie } });
     expect(valid.statusCode).toBe(200);
     expect(listStorefrontProducts).toHaveBeenCalledWith({ q: "Casio", category: "watches", brand: "Casio",
-      minPriceMinor: 100, maxPriceMinor: 500, availability: "UNKNOWN", page: 2, limit: 10 });
+      minPriceMinor: 100, maxPriceMinor: 500, availability: "UNKNOWN", page: 2, limit: 10 }, { partner: null, userBlocked: false, partnerTermsReacceptRequired: false });
     for (const suffix of ["availability=AVAILABLE", "minPriceMinor=-1", "minPriceMinor=501&maxPriceMinor=500", "limit=101", "caseDiameter=42"]) {
       const invalid = await app.inject({ method: "GET", url: `/api/v1/catalog/products?${suffix}`, headers: { cookie: buyerCookie } });
       expect(invalid.statusCode).toBe(400);

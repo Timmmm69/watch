@@ -25,7 +25,7 @@ import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
 import { InvalidTelegramInitData, verifyTelegramInitData } from "./auth/telegram.js";
-import type { CatalogService } from "./catalog/catalog.js";
+import type { CatalogService, PartnerViewContext } from "./catalog/catalog.js";
 import { CatalogNotFoundError, CatalogValidationError } from "./catalog/catalog.js";
 import { ActiveProductInvariantError } from "./catalog/invariant.js";
 import { type AssetService, StorageUnavailableError } from "./catalog/assets.js";
@@ -209,6 +209,16 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         return service.listStorefrontCategories();
       });
 
+      const buildPartnerContext = async (user: { id: string; isBlocked: boolean }): Promise<PartnerViewContext> => {
+        const context: PartnerViewContext = { partner: null, userBlocked: user.isBlocked, partnerTermsReacceptRequired: false };
+        if (partner) {
+          const state = await partner.loadState(user.id);
+          context.partner = state.partner;
+          context.partnerTermsReacceptRequired = state.partnerTermsReacceptRequired;
+        }
+        return context;
+      };
+
       app.get("/api/v1/catalog/products", { preHandler: requireSession }, async (request, reply) => {
         const parsed = storefrontProductsQuerySchema.safeParse(request.query ?? {});
         if (!parsed.success) {
@@ -216,13 +226,15 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
             error: { code: "VALIDATION_ERROR", message: "Invalid catalog query", details: {}, requestId: request.id }
           });
         }
-        return service.listStorefrontProducts(parsed.data);
+        const partnerContext = await buildPartnerContext(request.auth!.user);
+        return service.listStorefrontProducts(parsed.data, partnerContext);
       });
 
       app.get("/api/v1/catalog/products/:slug", { preHandler: requireSession }, async (request, reply) => {
         const slug = (request.params as { slug?: string }).slug ?? "";
         try {
-          return await service.getStorefrontProduct(slug);
+          const partnerContext = await buildPartnerContext(request.auth!.user);
+          return await service.getStorefrontProduct(slug, partnerContext);
         } catch (error) {
           catalogError(request, reply, error);
           return reply;
