@@ -64,6 +64,8 @@ export const apiRuntimeConfigSchema = z.object({
   ADMIN_TELEGRAM_IDS: z.string().transform(parseAdminIds),
   CSRF_SECRET: z.string().transform(parseCsrfSecret),
   PLATFORM_CURRENCY: z.string().regex(/^[A-Z]{3}$/, "PLATFORM_CURRENCY must be a 3-letter ISO 4217 code"),
+  ORDER_HOLD_DAYS: z.coerce.number().int().min(0).max(3650).default(14),
+  ORDER_OVERDUE_SECONDS: z.coerce.number().int().min(1).max(31536000).optional(),
   INVENTORY_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
   INVENTORY_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(86400).default(600),
   INVENTORY_PROVIDER: z.literal("google_sheets").optional(),

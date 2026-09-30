@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { Storefront } from "./storefront";
 import { CartScreen } from "./cart-client";
 import { CheckoutScreen } from "./checkout-client";
+import { AdminOrdersScreen } from "./admin-orders-client";
 
 interface AuthResponse {
   user: { firstName: string };
   partner?: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
   partnerTermsReacceptRequired?: boolean;
   csrfToken: string;
+  isAdmin?: boolean;
   launchTarget?: string;
 }
 
@@ -24,7 +26,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart" | "checkout" }) {
+export function MiniAppBootstrap({ screen = "shop", orderId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders"; orderId?: string }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -54,6 +56,9 @@ export function MiniAppBootstrap({ screen = "shop" }: { screen?: "shop" | "cart"
     }).catch(() => setState({ error: "Не удалось войти. Откройте приложение заново через Telegram." }));
   }, []);
 
+  if (state.auth && screen === "adminOrders") return state.auth.isAdmin
+    ? <AdminOrdersScreen key={orderId ?? "list"} csrfToken={state.auth.csrfToken} orderId={orderId} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к заказам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}

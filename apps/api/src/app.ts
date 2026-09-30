@@ -26,6 +26,8 @@ import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
+import { adminOrderListQuerySchema, adminOrderTransitionSchema } from "@watch/contracts";
+import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
@@ -71,10 +73,11 @@ export interface AppDependencies {
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   checkout?: Pick<CheckoutService, "checkout">;
+  orders?: Pick<AdminOrderService, "list" | "detail" | "transition">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -252,6 +255,36 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
       });
     }
 
+    if (orders) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>
+        reply.code(status).send({ error: { code, message: code, details: {}, requestId: request.id } });
+      const handleError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (!(error instanceof OrderTransitionError)) throw error;
+        return fail(request, reply, error.code, error.code === "NOT_FOUND" ? 404 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409);
+      };
+      app.get("/api/v1/admin/orders", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = adminOrderListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        return orders.list(parsed.data);
+      });
+      app.get("/api/v1/admin/orders/:id", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await orders.detail(id!); } catch (error) { return handleError(request, reply, error); }
+      });
+      app.post("/api/v1/admin/orders/:id/transition", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminOrderTransitionSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        if (parsed.data.toStatus === "COMPLETED") return fail(request, reply, "SYSTEM_TRANSITION_ONLY", 409);
+        try { return await orders.transition(id!, request.auth!.user.id, parsed.data.toStatus, request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
+    }
     if (checkout) app.post("/api/v1/orders", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       const parsed = checkoutRequestSchema.safeParse(request.body);

@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import { createApp } from "../../api/src/app";
 import { CartService } from "../../api/src/cart/cart";
 import { CheckoutService } from "../../api/src/orders/checkout";
+import { AdminOrderService } from "../../api/src/orders/admin";
 import { LegalDocuments } from "../../api/src/legal/legal";
 import { SessionStore, hashSessionToken } from "../../api/src/auth/session";
 
@@ -34,14 +35,14 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema},public` });
     await pool.query(`CREATE SCHEMA ${schema}`);
     for (const table of ["users", "sessions", "partners", "partner_terms_acceptances", "legal_documents", "platform_settings",
-      "suppliers", "products", "product_variants", "inventory_items", "inventory_sync_runs", "attribution_touches", "events"]) {
+      "suppliers", "products", "product_variants", "inventory_items", "inventory_sync_runs", "attribution_touches", "events", "audit_logs"]) {
       await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
     }
     for (const migration of ["20260930100000_cart", "20260930110000_orders"]) {
       await pool.query(await readFile(resolve(__dirname, `../../../packages/db/prisma/migrations/${migration}/migration.sql`), "utf8"));
     }
     await pool.query("INSERT INTO platform_settings (singleton_id,platform_currency) VALUES (1,$1)", [currency]);
-    await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,$2,'Buyer')", [buyer, String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]);
+    await pool.query("INSERT INTO users (id,telegram_user_id,first_name,is_admin) VALUES ($1,$2,'Buyer',true)", [buyer, String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]);
     await pool.query("INSERT INTO sessions (id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,now()+interval '1 hour')", [randomUUID(), buyer, hashSessionToken(token)]);
     await pool.query("INSERT INTO suppliers (id,name) VALUES ($1,'Test supplier')", [supplier]);
     await pool.query("INSERT INTO products (id,supplier_id,title,slug,status) VALUES ($1,$2,'Часы для checkout',$1::uuid::text,'ACTIVE')", [product, supplier]);
@@ -52,13 +53,14 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       (id,type,version,sha256,content_markdown,effective_at) VALUES ($1,$2,$3,$4,$5,now())`,
       [doc.id, type, doc.version, randomBytes(32).toString("hex"), type === "PRIVACY" ? "Тестовая политика конфиденциальности" : "Тестовые условия продажи"]);
     app = createApp({ logger: false, checkReadiness: async () => undefined,
-      auth: { store: new SessionStore(pool, new Set()), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "http://127.0.0.1:3000", adminIds: () => new Set() },
+      auth: { store: new SessionStore(pool, new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))])), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "http://127.0.0.1:3000", adminIds: () => new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]) },
+      orders: new AdminOrderService(pool),
       cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
     await app.listen({ host: "127.0.0.1", port: 3001 });
   });
   test.beforeEach(async ({ page }) => {
     docs.SALES_TERMS = originalSales;
-    await pool.query("TRUNCATE carts,orders,events CASCADE");
+    await pool.query("TRUNCATE carts,orders,events,audit_logs CASCADE");
     await pool.query("UPDATE products SET status='ACTIVE'");
     await pool.query("UPDATE product_variants SET price_minor=1000");
     await new CartService(pool, currency).put(buyer, variant, 1);
@@ -66,6 +68,46 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     await page.context().addCookies([{ name: "watch_session", value: token, domain: "127.0.0.1", path: "/" }]);
   });
   test.afterAll(async () => { await app?.close(); if (pool) { await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await pool.end(); } });
+  for (const outcome of ["delivered","cancelled","failed"] as const) test(`Admin real Session transitions Order to ${outcome}`, async ({ page }) => {
+    const order = (await new CheckoutService(pool,currency,docs).checkout(buyer,randomUUID(), {
+      items: [{ variantId: variant,quantity: 1,expectedUnitPriceMinor: 1000 }],recipientName: "<script>private</script>",phone: "375291234567",address: "Минск",
+      comment: "",salesTermsDocumentId: docs.SALES_TERMS.id,privacyDocumentId: docs.PRIVACY.id,salesTermsAccepted: true,privacyAcknowledged: true
+    })).order;
+    await page.goto("/admin/orders");
+    await page.getByRole("link", { name: order.publicNumber }).click();
+    await expect(page.getByText("<script>private</script>", { exact: true })).toBeVisible();
+    expect(await page.locator("main script").count()).toBe(0);
+    let lost = false;
+    if (outcome === "delivered") await page.route(`**/api/v1/admin/orders/${order.id}/transition`, async (route) => {
+      const response = await route.fetch();
+      if (!lost) { lost = true; expect(response.ok()).toBe(true); await route.abort("failed"); }
+      else await route.fulfill({ response });
+    });
+    const act = async (name: string) => {
+      await page.getByRole("button", { name,exact: true }).click();
+      await page.getByRole("button", { name: "Да, подтвердить",exact: true }).click();
+      await expect(page.getByLabel("Подтверждение действия")).toHaveCount(0);
+      await expect(page.getByLabel("Загрузка заказов")).toHaveCount(0);
+    };
+    if (outcome === "cancelled") await act("Отменить заказ");
+    else {
+      if (outcome === "delivered") {
+        await page.getByRole("button", { name: "Подтвердить заказ",exact: true }).click();
+        await page.getByRole("button", { name: "Да, подтвердить",exact: true }).click();
+        await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
+      }
+      await act("Подтвердить заказ"); await act("Начать сборку"); await act("Подтвердить отправку");
+      await expect(page.getByRole("button", { name: "Отменить заказ",exact: true })).toHaveCount(0);
+      await act(outcome === "delivered" ? "Подтвердить доставку покупателю" : "Зафиксировать недоставку");
+    }
+    const row = (await pool.query("SELECT * FROM orders WHERE id=$1", [order.id])).rows[0];
+    expect(row.status).toBe({ delivered: "DELIVERED",cancelled: "CANCELLED",failed: "DELIVERY_FAILED" }[outcome]);
+    expect((await pool.query("SELECT status FROM inventory_reservations WHERE order_id=$1", [order.id])).rows[0].status).toBe(outcome === "cancelled" ? "RELEASED" : "ACTIVE");
+    await expect(page.getByRole("button", { name: /Завершить/ })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: order.publicNumber })).toBeVisible();
+    expect((await pool.query("SELECT count(*)::int AS count FROM audit_logs")).rows[0].count).toBe(outcome === "cancelled" ? 1 : 4);
+  });
   test("Cart → checkout → lost successful response → same-key replay creates one Order", async ({ page }) => {
     await page.goto("/cart");
     await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();

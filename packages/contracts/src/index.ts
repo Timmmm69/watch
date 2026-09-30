@@ -108,6 +108,27 @@ export const pageQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });
 
+export const orderStatusSchema = z.enum(["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "DELIVERY_FAILED"]);
+export type OrderStatus = z.infer<typeof orderStatusSchema>;
+export const adminOrderTargets = ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"] as const;
+export type AdminOrderTarget = typeof adminOrderTargets[number];
+export const allowedAdminOrderTransitions: Record<OrderStatus, readonly AdminOrderTarget[]> = {
+  PLACED: ["CONFIRMED", "CANCELLED"], CONFIRMED: ["FULFILLING", "CANCELLED"],
+  FULFILLING: ["SHIPPED", "CANCELLED"], SHIPPED: ["DELIVERED", "DELIVERY_FAILED"],
+  DELIVERED: [], COMPLETED: [], CANCELLED: [], DELIVERY_FAILED: []
+};
+// Accept COMPLETED syntactically so the API can return SYSTEM_TRANSITION_ONLY.
+export const adminOrderTransitionSchema = z.object({
+  toStatus: orderStatusSchema, note: z.string().trim().max(500).optional()
+}).strict();
+const queryBoolean = z.enum(["true", "false"]).transform((value) => value === "true").optional();
+export const adminOrderListQuerySchema = pageQuerySchema.extend({
+  status: orderStatusSchema.optional(), number: z.string().trim().min(1).max(32).optional(),
+  partnerId: z.string().uuid().optional(), dateFrom: z.iso.datetime({ offset: true }).optional(),
+  dateTo: z.iso.datetime({ offset: true }).optional(), overdue: queryBoolean, reconciliationPending: queryBoolean
+}).strict().refine((q) => !q.dateFrom || !q.dateTo || Date.parse(q.dateFrom) <= Date.parse(q.dateTo), "Invalid date range");
+export type AdminOrderListQuery = z.infer<typeof adminOrderListQuerySchema>;
+
 export const storefrontProductsQuerySchema = pageQuerySchema.extend({
   q: z.string().trim().min(1).max(100).optional(),
   category: z.string().min(1).max(140).optional(),

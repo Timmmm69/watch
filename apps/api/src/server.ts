@@ -13,6 +13,7 @@ import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
 import { CartService } from "./cart/cart.js";
 import { CheckoutService } from "./orders/checkout.js";
+import { AdminOrderService } from "./orders/admin.js";
 import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -53,6 +54,7 @@ const app = createApp({
   referral: new ReferralService(pool, legalDocuments, runtimeConfig.TELEGRAM_BOT_USERNAME),
   catalog: { service: catalogService },
   cart: new CartService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
+  orders: new AdminOrderService(pool, runtimeConfig.ORDER_HOLD_DAYS, runtimeConfig.ORDER_OVERDUE_SECONDS),
   checkout: new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig), runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },

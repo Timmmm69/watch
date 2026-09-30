@@ -21,6 +21,16 @@ describe("API runtime configuration", () => {
     LEGAL_PARTNER_TERMS_VERSION: "2026-09-01"
   };
 
+  it("validates Order hold and optional overdue configuration", () => {
+    expect(loadApiRuntimeConfig(valid).ORDER_HOLD_DAYS).toBe(14);
+    expect(loadApiRuntimeConfig(valid).ORDER_OVERDUE_SECONDS).toBeUndefined();
+    expect(loadApiRuntimeConfig({ ...valid,ORDER_HOLD_DAYS: "30",ORDER_OVERDUE_SECONDS: "3600" })).toMatchObject({ ORDER_HOLD_DAYS: 30,ORDER_OVERDUE_SECONDS: 3600 });
+    for (const value of ["-1","1.5","3651","bad"])
+      expect(() => loadApiRuntimeConfig({ ...valid,ORDER_HOLD_DAYS: value })).toThrow();
+    for (const value of ["0","1.5","31536001","bad"])
+      expect(() => loadApiRuntimeConfig({ ...valid,ORDER_OVERDUE_SECONDS: value })).toThrow();
+  });
+
   const account = {
     type: "service_account", project_id: "inventory-project", client_email: "inventory@example.iam.gserviceaccount.com",
     private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString()
