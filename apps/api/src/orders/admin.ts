@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { CommissionError, holdOrderCommissions, reverseOrderCommissions } from "../finance/commissions.js";
 import { allowedAdminOrderTransitions, allowedReservationTargets, reservationReconcileSchema,
   type ReservationReconcileRequest, type AdminOrderListQuery, type OrderStatus } from "@watch/contracts";
 
@@ -129,6 +130,12 @@ export class AdminOrderService {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Immutable Partner ownership lookup before the global Partner → Order lock order.
+      if (["DELIVERED","CANCELLED","DELIVERY_FAILED"].includes(target)) {
+        const owner = (await client.query<{ partner_id_snapshot: string | null }>(
+          "SELECT partner_id_snapshot FROM orders WHERE id=$1", [id])).rows[0];
+        if (owner?.partner_id_snapshot) await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [owner.partner_id_snapshot]);
+      }
       const row = (await client.query<OrderRow>("SELECT * FROM orders WHERE id=$1 FOR UPDATE", [id])).rows[0];
       if (!row) throw new OrderTransitionError("NOT_FOUND");
       if (row.status === target && target in timestampColumns) {
@@ -137,6 +144,8 @@ export class AdminOrderService {
       }
       if (!allowedAdminOrderTransitions[row.status].some((allowed) => allowed === target)) throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
       const now = new Date(); // Time is captured after lock acquisition.
+      if (["DELIVERED","CANCELLED","DELIVERY_FAILED"].includes(target))
+        await client.query("SELECT id FROM order_items WHERE order_id=$1 ORDER BY id FOR UPDATE", [id]);
       if (target === "CANCELLED") {
         const reservations = (await client.query<{ status: string }>("SELECT status FROM inventory_reservations WHERE order_id=$1 ORDER BY id FOR UPDATE", [id])).rows;
         if (reservations.some((r) => r.status !== "ACTIVE")) throw new OrderTransitionError("INTERNAL_INVARIANT_VIOLATION");
@@ -147,6 +156,9 @@ export class AdminOrderService {
       const updated = (await client.query<OrderRow>(`UPDATE orders SET status=$2,${column}=$3,updated_at=$3
         ${target === "DELIVERED" ? ",completion_eligible_at=$4" : ""} WHERE id=$1 RETURNING *`,
       [id, target, now, ...(target === "DELIVERED" ? [new Date(now.getTime() + this.holdDays * 86400000)] : [])])).rows[0]!;
+      if (target === "DELIVERED") await holdOrderCommissions(client,id,updated.completion_eligible_at!,now);
+      if (target === "CANCELLED" || target === "DELIVERY_FAILED")
+        await reverseOrderCommissions(client,id,`order:${id}:${target.toLowerCase()}`,now);
       await this.event(client, id, "ORDER_STATUS_CHANGED", `order:${id}:status:${target}`,
         { v: 1, orderId: id, publicNumber: row.public_number, fromStatus: row.status, toStatus: target }, now);
       if (target === "CANCELLED" || target === "DELIVERY_FAILED") await this.event(client, id,
@@ -158,7 +170,11 @@ export class AdminOrderService {
       [randomUUID(), actorUserId, id, requestId ?? null, JSON.stringify({ fromStatus: row.status, toStatus: target }), now]);
       await client.query("COMMIT");
       return this.project(updated);
-    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error instanceof CommissionError) throw new OrderTransitionError(error.code);
+      throw error;
+    }
     finally { client.release(); }
   }
 

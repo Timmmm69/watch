@@ -5,6 +5,7 @@ import { checkoutRequestSchema, MAX_CART_LINES, MAX_ORDER_TOTAL_MINOR, type Chec
 import { computeInventoryAvailability, DEFAULT_INVENTORY_MAX_AGE_SECONDS, type InventorySourceStatus } from "../inventory/availability.js";
 import { partnerProgramMutationAllowed, partnerTermsCurrent, type PartnerStatus } from "../partner/partner.js";
 import { insertWithPublicNumberRetry } from "./order-number.js";
+import { createOrderCommissions } from "../finance/commissions.js";
 
 export class CheckoutError extends Error {
   constructor(public readonly code: "VALIDATION_ERROR" | "USER_BLOCKED" | "AUTH_REQUIRED" | "CART_EMPTY" | "CART_CHANGED"
@@ -176,6 +177,7 @@ export class CheckoutService {
         await client.query("INSERT INTO inventory_reservations (id, order_id, variant_id, quantity, created_at) VALUES ($1,$2,$3,$4,$5)",
           [randomUUID(), id, row.id, lines[index]!.quantity, now]);
       }
+      await createOrderCommissions(client,id,now);
       const payload = { v: 1, orderId: id, publicNumber: order.public_number,
         ...(touch ? { partnerIdSnapshot: touch.partner_id } : {}), commissionEligibleSnapshot: eligible };
       await client.query(`INSERT INTO events (id, type, aggregate_type, aggregate_id, dedupe_key, payload, created_at)

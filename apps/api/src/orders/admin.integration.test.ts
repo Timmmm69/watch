@@ -22,7 +22,7 @@ beforeAll(async () => {
   for (const table of ["users", "platform_settings", "suppliers", "partners", "legal_documents", "products", "product_variants",
     "inventory_items", "inventory_sync_runs", "attribution_touches", "partner_terms_acceptances", "events", "audit_logs"])
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
-  for (const migration of ["20260930100000_cart", "20260930110000_orders"])
+  for (const migration of ["20260930100000_cart", "20260930110000_orders", "20261001000000_commission_ledger"])
     await pool.query(await readFile(new URL(`../../../../packages/db/prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8"));
   await pool.query("INSERT INTO platform_settings (singleton_id,platform_currency) VALUES (1,$1)", [currency]);
   await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,123,'Admin')", [buyer]);
