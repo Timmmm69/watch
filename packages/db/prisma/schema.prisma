@@ -498,6 +498,7 @@ model AttributionTouch {
   @@index([buyerUserId, occurredAt])
   @@index([partnerId, occurredAt])
   @@index([expiresAt])
+  @@index([occurredAt])
   @@map("attribution_touches")
 }
 
@@ -545,6 +546,7 @@ model Order {
   @@index([partnerIdSnapshot, createdAt])
   @@index([status, createdAt])
   @@index([attributionTouchId, createdAt])
+  @@index([createdAt])
   @@map("orders")
 }
 

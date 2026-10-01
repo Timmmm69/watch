@@ -1,6 +1,8 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { timingSafeEqual } from "node:crypto";
+import { analyticsQuerySchema } from "@watch/contracts";
+import type { AnalyticsService } from "./analytics/analytics.js";
 import {
   adminCategoryCreateRequestSchema,
   adminCategoryListQuerySchema,
@@ -62,6 +64,7 @@ export type CatalogApi = Pick<CatalogService,
 export type InventoryApi = Pick<InventoryService, "listItems" | "listSyncRuns">;
 
 export interface AppDependencies {
+  analytics?: Pick<AnalyticsService, "summary" | "dashboard">;
   checkReadiness: () => Promise<void>;
   logger?: boolean;
   auth?: {
@@ -91,7 +94,7 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -226,6 +229,19 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
       return { ok: true };
     });
 
+    if (analytics) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      app.get("/api/v1/admin/dashboard", { preHandler: [requireSession, requireAdmin] }, async (_request, reply) => {
+        reply.header("cache-control", "no-store");
+        return analytics.dashboard();
+      });
+      app.get("/api/v1/admin/analytics/summary", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("cache-control", "no-store");
+        const parsed = analyticsQuerySchema.safeParse(request.query);
+        if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid analytics period", details: {}, requestId: request.id } });
+        return analytics.summary(parsed.data);
+      });
+    }
     if (payouts) {
       const payoutAdmin = createRequireAdmin(auth.adminIds);
       const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>

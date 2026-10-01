@@ -152,6 +152,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={returnId ? "/admin/returns" : "/shop"}>← {returnId ? "Все возвраты" : "Каталог"}</Link>
     <h1 className="text-2xl font-semibold">{returnId ? "Возврат" : "Возвраты администратора"}</h1>
+    <nav className="flex gap-5" aria-label="Администрирование"><Link href="/admin">Обзор</Link><Link href="/admin/analytics">Аналитика</Link></nav>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
     <button className="min-h-11 underline" disabled={!!pending || blocked} onClick={() => void refresh()}>Обновить</button>
     {!returnId && !blocked && <form onSubmit={filter} className="grid gap-3 sm:grid-cols-2">

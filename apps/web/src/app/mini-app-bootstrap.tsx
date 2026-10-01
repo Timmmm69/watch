@@ -7,6 +7,7 @@ import { CartScreen } from "./cart-client";
 import { CheckoutScreen } from "./checkout-client";
 import { AdminOrdersScreen } from "./admin-orders-client";
 import { AdminReturnsScreen } from "./admin-returns-client";
+import { AdminAnalyticsScreen } from "./admin-analytics-client";
 import { EarningsScreen } from "./earnings-client";
 import { AdminPayoutsScreen, PartnerPayoutsScreen } from "./payouts-client";
 
@@ -29,7 +30,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "adminPayouts" | "earnings" | "payouts"; orderId?: string; returnId?: string; payoutId?: string }) {
+export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "adminPayouts" | "adminDashboard" | "adminAnalytics" | "earnings" | "payouts"; orderId?: string; returnId?: string; payoutId?: string }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -59,6 +60,9 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId 
     }).catch(() => setState({ error: "Не удалось войти. Откройте приложение заново через Telegram." }));
   }, []);
 
+  if (state.auth && (screen === "adminDashboard" || screen === "adminAnalytics")) return state.auth.isAdmin
+    ? <AdminAnalyticsScreen dashboard={screen === "adminDashboard"} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "earnings") return state.auth.partner
     ? <EarningsScreen blocked={state.auth.partner.status === "BLOCKED"} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доходы доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;

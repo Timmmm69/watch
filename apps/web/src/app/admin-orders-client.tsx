@@ -40,8 +40,18 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");
   const [attested, setAttested] = useState(false);
-  const [draft, setDraft] = useState({ status: "", number: "", partnerId: "", dateFrom: "", dateTo: "", overdue: false, reconciliationPending: false });
-  const [query, setQuery] = useState("page=1&limit=20");
+  const [draft, setDraft] = useState(() => {
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    return { status: params.get("status") ?? "", number: "", partnerId: "", dateFrom: "", dateTo: "",
+      overdue: params.get("overdue") === "true", reconciliationPending: params.get("reconciliationPending") === "true" };
+  });
+  const [query, setQuery] = useState(() => {
+    const params = new URLSearchParams({ page: "1", limit: "20" });
+    if (draft.status) params.set("status", draft.status);
+    if (draft.overdue) params.set("overdue", "true");
+    if (draft.reconciliationPending) params.set("reconciliationPending", "true");
+    return params.toString();
+  });
   const request = useCallback(async (url: string, payload?: object) => {
     const send = () => fetch(url, { method: payload ? "POST" : "GET", credentials: "same-origin", cache: "no-store",
       headers: payload ? { "content-type": "application/json", "x-csrf-token": token.current } : undefined,
@@ -134,6 +144,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={orderId ? "/admin/orders" : "/shop"}>← {orderId ? "Все заказы" : "Каталог"}</Link>
     <h1 className="text-2xl font-semibold">{orderId ? "Заказ" : "Заказы администратора"}</h1>
+    <nav className="flex gap-5" aria-label="Администрирование"><Link href="/admin">Обзор</Link><Link href="/admin/analytics">Аналитика</Link></nav>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
     <button className="min-h-11 underline" disabled={!!pending || blocked} onClick={() => void refresh()}>Обновить</button>
     {!orderId && !blocked && <form onSubmit={filter} className="grid gap-3 sm:grid-cols-2">

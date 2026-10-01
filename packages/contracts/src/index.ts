@@ -1,5 +1,49 @@
 import { z } from "zod";
 
+export const analyticsQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }),
+  to: z.string().datetime({ offset: true })
+}).strict().refine(({ from, to }) => {
+  const span = Date.parse(to) - Date.parse(from);
+  return span > 0 && span <= 365 * 86400000;
+}, "Period must be positive and no longer than 365 days");
+export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
+const metricCount = z.number().int().nonnegative().safe();
+const metricMoney = z.number().int().safe();
+const metricRatio = z.number().finite().nonnegative().nullable();
+export const analyticsSummarySchema = z.object({
+  from: z.string(), to: z.string(), timezone: z.string(), currency: z.string(),
+  orders: metricCount, gmvMinor: metricMoney, retainedCompletedOrders: metricCount,
+  activeSellingPartners: metricCount, retainedOrdersPerActivePartner: metricRatio,
+  referralTouches: metricCount, convertedTouches: metricCount, referralOrders: metricCount,
+  touchConversionRate: metricRatio, ordersPerTouch: metricRatio,
+  deliveredOrders: metricCount, shippedOrders: metricCount, cancelledOrders: metricCount,
+  deliveryFailedOrders: metricCount, returnedOrders: metricCount,
+  deliveryRate: metricRatio, cancellationRate: metricRatio, deliveryFailureRate: metricRatio, returnRate: metricRatio,
+  netPartnerCommissionMinor: metricMoney,
+  contribution: z.object({
+    retainedUnits: metricCount, coveredUnits: metricCount, coverageRate: metricRatio,
+    coveredSettlementMarginMinor: metricMoney,
+    settlementMarginMinor: metricMoney.nullable(),
+    fullContributionMinor: z.null(), limitation: z.literal("U04_VARIABLE_COSTS_UNRESOLVED")
+  }),
+  firstSale: z.object({ partners: metricCount, averageSeconds: metricRatio }),
+  weeklyRetention: z.array(z.object({ week: z.string(), activePartners: metricCount,
+    retainedPartners: metricCount, rate: metricRatio }))
+});
+export type AnalyticsSummary = z.infer<typeof analyticsSummarySchema>;
+export const adminDashboardSchema = z.object({
+  currency: z.string(), overdueConfigured: z.boolean(),
+  summaries: z.object({ products: metricCount, activeProducts: metricCount, variants: metricCount,
+    partners: metricCount, activePartners: metricCount, blockedPartners: metricCount,
+    orders: metricCount, returns: metricCount, payouts: metricCount }),
+  actionable: z.object({ overdueOrders: metricCount, placedOrders: metricCount, reconciliationPending: metricCount,
+    staleInventory: metricCount, unknownInventory: metricCount, inventoryDeficits: metricCount,
+    failedSyncs: metricCount, openReturns: metricCount, requestedPayouts: metricCount,
+    failedEvents: metricCount, failedTelegramUpdates: metricCount })
+});
+export type AdminDashboard = z.infer<typeof adminDashboardSchema>;
+
 export const healthResponseSchema = z.object({ status: z.literal("ok") });
 export const readyResponseSchema = z.object({ status: z.literal("ready") });
 

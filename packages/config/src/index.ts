@@ -64,6 +64,9 @@ export const apiRuntimeConfigSchema = z.object({
   ADMIN_TELEGRAM_IDS: z.string().transform(parseAdminIds),
   CSRF_SECRET: z.string().transform(parseCsrfSecret),
   PLATFORM_CURRENCY: z.string().regex(/^[A-Z]{3}$/, "PLATFORM_CURRENCY must be a 3-letter ISO 4217 code"),
+  BUSINESS_TIMEZONE: z.string().refine((value) => {
+    try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
+  }, "BUSINESS_TIMEZONE must be an IANA timezone").default("UTC"),
   ORDER_HOLD_DAYS: z.coerce.number().int().min(0).max(3650).default(14),
   MIN_PAYOUT_MINOR: z.coerce.number().int().min(1).max(2147483647).default(5000),
   ORDER_OVERDUE_SECONDS: z.coerce.number().int().min(1).max(31536000).optional(),

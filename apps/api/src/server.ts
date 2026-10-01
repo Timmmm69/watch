@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { currentLegalDocuments, loadApiRuntimeConfig } from "@watch/config";
 import { checkDatabaseReady, createDatabasePool } from "@watch/db";
 import { createApp } from "./app.js";
+import { AnalyticsService } from "./analytics/analytics.js";
 import { SessionStore } from "./auth/session.js";
 import { CatalogService } from "./catalog/catalog.js";
 import { AssetService, S3ObjectStorage } from "./catalog/assets.js";
@@ -46,6 +47,8 @@ const checkReadiness = async () => {
   await catalogService.verifyCurrencyConfigured();
 };
 const app = createApp({
+  analytics: new AnalyticsService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.BUSINESS_TIMEZONE,
+    runtimeConfig.INVENTORY_MAX_AGE_SECONDS, runtimeConfig.ORDER_OVERDUE_SECONDS),
   checkReadiness,
   auth: {
     store: new SessionStore(pool, adminTelegramIds),

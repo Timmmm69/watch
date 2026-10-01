@@ -22,6 +22,9 @@ describe("API runtime configuration", () => {
   };
 
   it("validates Order hold and optional overdue configuration", () => {
+    expect(loadApiRuntimeConfig(valid).BUSINESS_TIMEZONE).toBe("UTC");
+    expect(loadApiRuntimeConfig({ ...valid, BUSINESS_TIMEZONE: "Europe/Minsk" }).BUSINESS_TIMEZONE).toBe("Europe/Minsk");
+    expect(() => loadApiRuntimeConfig({ ...valid, BUSINESS_TIMEZONE: "invalid/timezone" })).toThrow();
     expect(loadApiRuntimeConfig(valid).ORDER_HOLD_DAYS).toBe(14);
     expect(loadApiRuntimeConfig(valid).ORDER_OVERDUE_SECONDS).toBeUndefined();
     expect(loadApiRuntimeConfig({ ...valid,ORDER_HOLD_DAYS: "30",ORDER_OVERDUE_SECONDS: "3600" })).toMatchObject({ ORDER_HOLD_DAYS: 30,ORDER_OVERDUE_SECONDS: 3600 });
