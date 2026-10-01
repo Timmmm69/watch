@@ -41,6 +41,8 @@ import { type AssetService, StorageUnavailableError } from "./catalog/assets.js"
 import { stageMedia } from "./catalog/media-upload.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
+import type { PartnerEarningsService } from "./finance/earnings.js";
+import { partnerEarningsQuerySchema, partnerEarningsResponseSchema } from "@watch/contracts";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 import { ReferralError, type ReferralService } from "./referral/referral.js";
 import type { InventoryService } from "./inventory/service.js";
@@ -77,10 +79,11 @@ export interface AppDependencies {
   checkout?: Pick<CheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
+  earnings?: Pick<PartnerEarningsService, "list">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, orderViews, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, orderViews, earnings, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -214,6 +217,17 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
       reply.header("Set-Cookie", `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT${new URL(auth.appBaseUrl).protocol === "https:" ? "; Secure" : ""}`);
       return { ok: true };
     });
+
+    if (earnings) {
+      app.get("/api/v1/partner/earnings", { preHandler: requireSession }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = partnerEarningsQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid earnings query", details: {}, requestId: request.id } });
+        const state = await partnerState(request.auth!.user.id);
+        if (!state.partner) return reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
+        return partnerEarningsResponseSchema.parse(await earnings.list(state.partner.id, parsed.data));
+      });
+    }
 
     if (partner) {
       app.post("/api/v1/partner/onboarding", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {

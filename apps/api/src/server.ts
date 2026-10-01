@@ -15,6 +15,8 @@ import { CartService } from "./cart/cart.js";
 import { CheckoutService } from "./orders/checkout.js";
 import { AdminOrderService } from "./orders/admin.js";
 import { OrderViewService } from "./orders/views.js";
+import { PartnerEarningsService } from "./finance/earnings.js";
+import { verifyS12FinancialData } from "./finance/gate.js";
 import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
@@ -58,6 +60,7 @@ const app = createApp({
   orders: new AdminOrderService(pool, runtimeConfig.ORDER_HOLD_DAYS, runtimeConfig.ORDER_OVERDUE_SECONDS,
     runtimeConfig.INVENTORY_PROVIDER === "google_sheets" ? "MANUAL" : "NONE"),
   orderViews: new OrderViewService(pool, runtimeConfig.SUPPORT_CONTACT),
+  earnings: new PartnerEarningsService(pool),
   checkout: new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig), runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },
@@ -70,6 +73,7 @@ app.addHook("onClose", async () => pool.end());
 
 try {
   await checkReadiness();
+  await verifyS12FinancialData(pool);
   await app.listen({ host: runtimeConfig.API_HOST, port: runtimeConfig.API_PORT });
 } catch (error) {
   app.log.error(error);

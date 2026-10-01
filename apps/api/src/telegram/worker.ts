@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { loadApiRuntimeConfig } from "@watch/config";
-import { createDatabasePool } from "@watch/db";
+import { checkDatabaseReady, createDatabasePool } from "@watch/db";
 import { processTelegramUpdate } from "./bot.js";
 import { TelegramInbox } from "./inbox.js";
 import { callBot } from "./bot.js";
@@ -9,10 +9,18 @@ import { EventOutbox } from "../notifications/outbox.js";
 import { BlockedError, dispatchEvent } from "../notifications/dispatch.js";
 import { createConfiguredInventoryOrchestrator, startScheduledInventorySync } from "../inventory/runtime.js";
 import { OrderCompletionWorker, startScheduledOrderCompletion } from "../orders/completion.js";
+import { verifyS12FinancialData } from "../finance/gate.js";
 
 config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)), quiet: true });
 const runtime = loadApiRuntimeConfig();
 const pool = createDatabasePool(runtime.DATABASE_URL);
+try {
+  await checkDatabaseReady(pool);
+  await verifyS12FinancialData(pool);
+} catch (error) {
+  await pool.end();
+  throw error;
+}
 const inbox = new TelegramInbox(pool);
 const outbox = new EventOutbox(pool);
 const stopOrderCompletion = startScheduledOrderCompletion(new OrderCompletionWorker(pool), {

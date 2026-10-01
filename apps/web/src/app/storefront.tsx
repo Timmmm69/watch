@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { CartIndicator, ProductCartActions } from "./cart-client";
+import { PartnerEarnings } from "./earnings-client";
 
 type Availability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
 type PartnerViewReason = "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | null;
@@ -114,6 +115,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     <header className="mb-8 flex items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Watch</h1>
       <span className="text-sm text-slate-400">Здравствуйте, {name}</span></header>
     {!detail && <CartIndicator csrfToken={csrfToken} />}
+    {partner && !detail && <PartnerEarnings compact blocked={partner.status === "BLOCKED"} />}
     {partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Партнёрская ссылка">
       <h2 className="text-lg font-semibold">Ваша ссылка на магазин</h2>
       {partner.status === "ACTIVE" && !partnerTermsReacceptRequired

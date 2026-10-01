@@ -13,7 +13,8 @@
     "legal:publish": "tsx src/legal/publish.ts",
     "catalog:bootstrap": "tsx src/catalog/bootstrap.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:financial": "tsx src/finance/acceptance.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1142.0",

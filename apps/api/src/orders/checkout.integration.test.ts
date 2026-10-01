@@ -14,6 +14,8 @@ import { deriveCsrfToken } from "../auth/middleware.js";
 import { AdminOrderService } from "./admin.js";
 import { lockOrderCommissions, releaseCommission, reverseCommission } from "../finance/commissions.js";
 import { OrderCompletionWorker } from "./completion.js";
+import { PartnerEarningsService } from "../finance/earnings.js";
+import { verifyS12FinancialData } from "../finance/gate.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const schema = `checkout_test_${randomUUID().replaceAll("-", "")}`;
@@ -65,6 +67,104 @@ async function assertFinance(orderId: string, state: string, reversed: number, p
   expect(balances.find((row) => row.bucket === "PENDING")?.amount ?? 0).toBe(pending);
   expect(balances.find((row) => row.bucket === "AVAILABLE")?.amount ?? 0).toBe(available);
 }
+
+describe.skipIf(!pool)("T30 earnings and S12 financial data gate", () => {
+  it("projects PENDING/HOLD/EARNED/VOID and exact reversals from committed financial transactions", async () => {
+    const earnings = new PartnerEarningsService(pool!);
+    expect(await earnings.list(partner,{ page: 1,limit: 20 })).toMatchObject({ pendingAmountMinor: 0,availableAmountMinor: 0,items: [],total: 0 });
+    const id = await financialOrder();
+    const load = () => earnings.list(partner,{ page: 1,limit: 20 });
+    expect(await load()).toMatchObject({ pendingAmountMinor: 100,availableAmountMinor: 0,total: 1,items: [{ state: "PENDING",grossAmountMinor: 100,reversedAmountMinor: 0,netEarnedAmountMinor: 0 }] });
+    await verifyS12FinancialData(pool!);
+    const admin = new AdminOrderService(pool!,0);
+    for (const target of ["CONFIRMED","FULFILLING","SHIPPED","DELIVERED"] as const) await admin.transition(id,buyers[0]!,target);
+    expect(await load()).toMatchObject({ pendingAmountMinor: 100,availableAmountMinor: 0,items: [{ state: "HOLD" }] });
+    await verifyS12FinancialData(pool!);
+    await financialTransaction(id,(client,cid) => reverseCommission(client,cid,40,"partial",new Date()));
+    const worker = new OrderCompletionWorker(pool!);
+    await Promise.all([worker.completeOrder(id),worker.completeOrder(id)]);
+    expect(await load()).toMatchObject({ pendingAmountMinor: 0,availableAmountMinor: 60,items: [{ state: "EARNED",reversedAmountMinor: 40,netEarnedAmountMinor: 60 }] });
+    await verifyS12FinancialData(pool!);
+    await financialTransaction(id,(client,cid) => reverseCommission(client,cid,60,"late",new Date()));
+    expect(await load()).toMatchObject({ pendingAmountMinor: 0,availableAmountMinor: 0,items: [{ state: "VOID",reversedAmountMinor: 100,netEarnedAmountMinor: 0 }] });
+    await verifyS12FinancialData(pool!);
+  });
+
+  it("reads signed ledger balances including payout debt, scoped pagination and blocked history", async () => {
+    const id = await financialOrder(true,0);
+    await new OrderCompletionWorker(pool!).completeOrder(id);
+    const payout = randomUUID();
+    await pool!.query(`INSERT INTO payouts (id,partner_id,amount_minor,currency,idempotency_key,request_fingerprint,requested_by_user_id,status)
+      VALUES ($1::uuid,$2,100,$3,$1::text,$4,$5,'PAID')`, [payout,partner,currency,"a".repeat(64),partnerUser]);
+    await pool!.query(`INSERT INTO ledger_entries (id,partner_id,payout_id,bucket,amount_minor,entry_type,transaction_group_id,idempotency_key)
+      VALUES ($1::uuid,$2,$3,'AVAILABLE',-100,'PAYOUT_LOCK',$4,$1::text)`, [randomUUID(),partner,payout,randomUUID()]);
+    await financialTransaction(id,(client,cid) => reverseCommission(client,cid,40,"paid-late",new Date()));
+    await pool!.query("UPDATE partners SET status='BLOCKED'");
+    const earnings = new PartnerEarningsService(pool!);
+    const result = await earnings.list(partner,{ page: 1,limit: 1 });
+    expect(result).toMatchObject({ availableAmountMinor: -40,pendingAmountMinor: 0,total: 1,items: [{ state: "EARNED",netEarnedAmountMinor: 60 }] });
+    expect(JSON.stringify(result)).not.toMatch(/Buyer Name|375|Minsk|Private comment|buyer_user_id/);
+    expect(await earnings.list(partner,{ page: 2,limit: 1 })).toMatchObject({ availableAmountMinor: -40,total: 1,items: [] });
+    expect(await earnings.list(randomUUID(),{ page: 1,limit: 1 })).toMatchObject({ availableAmountMinor: 0,total: 0,items: [] });
+    await verifyS12FinancialData(pool!);
+  });
+
+  it("rejects retained pre-S12 positive earning lines without performing backfill", async () => {
+    await verifyS12FinancialData(pool!);
+    const id = await financialOrder();
+    await pool!.query("TRUNCATE commissions CASCADE");
+    await expect(verifyS12FinancialData(pool!)).rejects.toThrow("S12 financial data gate failed");
+    expect((await pool!.query("SELECT id FROM orders WHERE id=$1",[id])).rowCount).toBe(1);
+    expect((await pool!.query("SELECT id FROM commissions")).rowCount).toBe(0);
+  });
+
+  it("paginates tied Commission changes deterministically with full unpaginated balances", async () => {
+    await addTouch();
+    const cart = (await pool!.query("SELECT id FROM carts WHERE buyer_user_id=$1",[buyers[0]])).rows[0].id;
+    await pool!.query("INSERT INTO cart_items (cart_id,variant_id,quantity) VALUES ($1,$2,1)",[cart,variants[1]]);
+    await service.checkout(buyers[0]!,"two-commissions",request(variants.map((variantId) => ({ variantId,quantity: 1,expectedUnitPriceMinor: 1000 }))));
+    await pool!.query("UPDATE commissions SET updated_at='2026-10-01T09:00:00Z'");
+    const ids = (await pool!.query("SELECT id FROM commissions ORDER BY id DESC")).rows.map((row) => row.id);
+    const earnings = new PartnerEarningsService(pool!);
+    const first = await earnings.list(partner,{ page: 1,limit: 1 });
+    const second = await earnings.list(partner,{ page: 2,limit: 1 });
+    expect(first).toMatchObject({ total: 2,pendingAmountMinor: 200,items: [{ id: ids[0] }] });
+    expect(second).toMatchObject({ total: 2,pendingAmountMinor: 200,items: [{ id: ids[1] }] });
+    await verifyS12FinancialData(pool!);
+  });
+
+  it("keeps balances and history in one snapshot when completion commits between their reads", async () => {
+    const id = await financialOrder(true,0);
+    const client = await pool!.connect();
+    const query = client.query.bind(client);
+    // Complete through a different real connection after the balance SELECT.
+    const interleaved = { connect: async () => ({
+      query: async (sql: string, values?: unknown[]) => {
+        const result = await query(sql,values);
+        if (sql.includes("platform_currency AS currency")) await new OrderCompletionWorker(pool!).completeOrder(id);
+        return result;
+      },
+      release: () => client.release()
+    }) } as unknown as Pool;
+    expect(await new PartnerEarningsService(interleaved).list(partner,{ page: 1,limit: 20 }))
+      .toMatchObject({ pendingAmountMinor: 100,availableAmountMinor: 0,items: [{ state: "HOLD",netEarnedAmountMinor: 0 }] });
+    expect(await new PartnerEarningsService(pool!).list(partner,{ page: 1,limit: 20 }))
+      .toMatchObject({ pendingAmountMinor: 0,availableAmountMinor: 100,items: [{ state: "EARNED",netEarnedAmountMinor: 100 }] });
+    await verifyS12FinancialData(pool!);
+  });
+
+  it("rejects missing initial credit and a divergent reversal projection", async () => {
+    const id = await financialOrder();
+    await pool!.query("TRUNCATE ledger_entries");
+    await expect(verifyS12FinancialData(pool!)).rejects.toThrow("S12 financial data gate failed");
+    const cid = (await pool!.query("SELECT id FROM commissions WHERE order_id=$1",[id])).rows[0].id;
+    await pool!.query(`INSERT INTO ledger_entries (id,partner_id,commission_id,bucket,amount_minor,entry_type,transaction_group_id,idempotency_key)
+      VALUES ($1::uuid,$2,$3,'PENDING',100,'COMMISSION_CREATE',$4,$1::text)`, [randomUUID(),partner,cid,randomUUID()]);
+    await verifyS12FinancialData(pool!);
+    await pool!.query("UPDATE commissions SET reversed_amount_minor=1 WHERE id=$1",[cid]);
+    await expect(verifyS12FinancialData(pool!)).rejects.toThrow("S12 financial data gate failed");
+  });
+});
 
 describe.skipIf(!pool)("T29 System completion worker", () => {
   it("releases the exact remainder and completes once across concurrent scans and retries", async () => {

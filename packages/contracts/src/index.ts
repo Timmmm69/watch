@@ -108,6 +108,24 @@ export const pageQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });
 
+export const partnerEarningsQuerySchema = pageQuerySchema;
+const ledgerBalanceMinor = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
+export const partnerCommissionSchema = z.object({
+  id: z.string().uuid(), orderPublicNumber: z.string(),
+  state: z.enum(["PENDING", "HOLD", "EARNED", "VOID"]),
+  grossAmountMinor: moneyMinor, reversedAmountMinor: moneyMinor,
+  netEarnedAmountMinor: ledgerBalanceMinor,
+  createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
+  eligibleAt: z.string().datetime().nullable(), availableAt: z.string().datetime().nullable()
+});
+export const partnerEarningsResponseSchema = z.object({
+  currency: z.string().length(3), pendingAmountMinor: ledgerBalanceMinor,
+  availableAmountMinor: ledgerBalanceMinor, items: z.array(partnerCommissionSchema),
+  total: z.number().int().nonnegative(), page: z.number().int().positive(), limit: z.number().int().positive()
+});
+export type PartnerEarningsQuery = z.infer<typeof partnerEarningsQuerySchema>;
+export type PartnerEarningsResponse = z.infer<typeof partnerEarningsResponseSchema>;
+
 export const orderStatusSchema = z.enum(["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "DELIVERY_FAILED"]);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 export const adminOrderTargets = ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"] as const;
