@@ -13,6 +13,7 @@ import { SessionStore, hashSessionToken } from "../auth/session.js";
 import { deriveCsrfToken } from "../auth/middleware.js";
 import { AdminOrderService } from "./admin.js";
 import { lockOrderCommissions, releaseCommission, reverseCommission } from "../finance/commissions.js";
+import { OrderCompletionWorker } from "./completion.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const schema = `checkout_test_${randomUUID().replaceAll("-", "")}`;
@@ -43,11 +44,11 @@ async function financialTransaction<T>(orderId: string, work: (client: PoolClien
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 }
-async function financialOrder(delivered = false) {
+async function financialOrder(delivered = false, holdDays = 14) {
   await addTouch();
   const order = (await service.checkout(buyers[0]!,"financial",request())).order;
   if (delivered) {
-    const admin = new AdminOrderService(pool!,14);
+    const admin = new AdminOrderService(pool!,holdDays);
     for (const target of ["CONFIRMED","FULFILLING","SHIPPED","DELIVERED"] as const)
       await admin.transition(order.id,buyers[0]!,target);
   }
@@ -64,6 +65,173 @@ async function assertFinance(orderId: string, state: string, reversed: number, p
   expect(balances.find((row) => row.bucket === "PENDING")?.amount ?? 0).toBe(pending);
   expect(balances.find((row) => row.bucket === "AVAILABLE")?.amount ?? 0).toBe(available);
 }
+
+describe.skipIf(!pool)("T29 System completion worker", () => {
+  it("releases the exact remainder and completes once across concurrent scans and retries", async () => {
+    const id = await financialOrder(true, 0);
+    await financialTransaction(id, (client, cid) => reverseCommission(client, cid, 40, "partial", new Date()));
+    const eligibleAt = (await pool!.query("SELECT completion_eligible_at FROM orders WHERE id=$1", [id])).rows[0].completion_eligible_at;
+    // Later hold configuration and Partner blocking do not change historical earnings.
+    await new AdminOrderService(pool!, 30).transition(id, buyers[0]!, "DELIVERED");
+    await pool!.query("UPDATE partners SET status='BLOCKED'");
+    const worker = new OrderCompletionWorker(pool!);
+    const logger = { error: () => { throw new Error("unexpected completion failure"); } };
+    await Promise.all(Array.from({ length: 4 }, () => worker.run(logger)));
+    expect(await worker.completeOrder(id)).toBe(false);
+    await assertFinance(id, "EARNED", 40, 0, 60);
+    const order = (await pool!.query("SELECT * FROM orders WHERE id=$1", [id])).rows[0];
+    const commission = (await pool!.query("SELECT * FROM commissions WHERE order_id=$1", [id])).rows[0];
+    expect(order.status).toBe("COMPLETED");
+    expect(order.completion_eligible_at).toEqual(eligibleAt);
+    expect(commission.eligible_at).toEqual(eligibleAt);
+    expect(commission.available_at).toEqual(order.completed_at);
+    expect(commission.available_at.getTime()).toBeGreaterThanOrEqual(eligibleAt.getTime());
+    const entries = (await pool!.query("SELECT * FROM ledger_entries WHERE entry_type='COMMISSION_RELEASE'")).rows;
+    expect(entries).toHaveLength(2);
+    expect(entries[0].transaction_group_id).toBe(entries[1].transaction_group_id);
+    const earned = (await pool!.query("SELECT payload FROM events WHERE type='COMMISSION_EARNED'")).rows;
+    expect(earned).toHaveLength(1);
+    expect(earned[0].payload.amountMinor).toBe(60);
+    expect((await pool!.query("SELECT payload FROM events WHERE dedupe_key=$1", [`order:${id}:status:COMPLETED`])).rows)
+      .toEqual([{ payload: { v: 1, orderId: id, publicNumber: order.public_number, fromStatus: "DELIVERED", toStatus: "COMPLETED" } }]);
+  });
+
+  it.each(["organic", "zero", "void"])("completes %s Orders without releasing money", async (kind) => {
+    if (kind !== "organic") await addTouch();
+    if (kind === "zero") await pool!.query("UPDATE product_variants SET partner_commission_unit_minor=0");
+    const id = (await service.checkout(buyers[0]!, "completion", request())).order.id;
+    const admin = new AdminOrderService(pool!, 0);
+    for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED"] as const)
+      await admin.transition(id, buyers[0]!, target);
+    if (kind === "void") await financialTransaction(id, (client, cid) => reverseCommission(client, cid, 100, "full", new Date()));
+    expect(await new OrderCompletionWorker(pool!).completeOrder(id)).toBe(true);
+    expect((await pool!.query("SELECT status FROM orders WHERE id=$1", [id])).rows[0].status).toBe("COMPLETED");
+    expect((await pool!.query("SELECT id FROM events WHERE type='COMMISSION_EARNED'")).rows).toEqual([]);
+    expect((await pool!.query("SELECT id FROM ledger_entries WHERE entry_type='COMMISSION_RELEASE'")).rows).toEqual([]);
+    if (kind === "void") await assertFinance(id, "VOID", 100, 0, 0);
+    else expect((await pool!.query("SELECT id FROM commissions")).rows).toEqual([]);
+  });
+
+  it("skips future holds, missing dates, non-delivered Orders and missing Orders", async () => {
+    const id = await financialOrder(true);
+    const worker = new OrderCompletionWorker(pool!);
+    expect(await worker.completeOrder(id)).toBe(false);
+    await assertFinance(id, "HOLD", 0, 100, 0);
+    await pool!.query("UPDATE orders SET completion_eligible_at=NULL WHERE id=$1", [id]);
+    expect(await worker.completeOrder(id)).toBe(false);
+    await pool!.query("UPDATE orders SET status='SHIPPED',completion_eligible_at=now()-interval '1 day' WHERE id=$1", [id]);
+    expect(await worker.completeOrder(id)).toBe(false);
+    expect(await worker.completeOrder(randomUUID())).toBe(false);
+  });
+
+  it.each(["CANCELLED", "COMPLETED"])("OPEN Return blocks completion until it becomes %s", async (status) => {
+    const id = await financialOrder(true, 0);
+    await pool!.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [randomUUID(), id, buyers[0]]);
+    const worker = new OrderCompletionWorker(pool!);
+    await worker.run({ error: () => { throw new Error("unexpected failure"); } });
+    expect(await worker.completeOrder(id)).toBe(false);
+    await assertFinance(id, "HOLD", 0, 100, 0);
+    await pool!.query("UPDATE returns SET status=$1 WHERE order_id=$2", [status, id]);
+    expect(await worker.completeOrder(id)).toBe(true);
+  });
+
+  it("rechecks OPEN Returns committed while waiting on the Order lock", async () => {
+    const id = (await service.checkout(buyers[0]!, "organic", request())).order.id;
+    const admin = new AdminOrderService(pool!, 0);
+    for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED"] as const) await admin.transition(id, buyers[0]!, target);
+    const writer = await pool!.connect();
+    let pending: Promise<boolean> | undefined;
+    try {
+      await writer.query("BEGIN");
+      const pid = (await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      await writer.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE", [id]);
+      pending = new OrderCompletionWorker(pool!).completeOrder(id);
+      await waitForBlocker(pid);
+      await writer.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [randomUUID(), id, buyers[0]]);
+      await writer.query("COMMIT");
+      expect(await pending).toBe(false);
+    } finally { await writer.query("ROLLBACK"); writer.release(); await pending; }
+  });
+
+  it("serializes on Partner before Order and sees a concurrent reversal", async () => {
+    const id = await financialOrder(true, 0);
+    const writer = await pool!.connect();
+    let pending: Promise<boolean> | undefined;
+    try {
+      await writer.query("BEGIN");
+      const pid = (await writer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      await writer.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [partner]);
+      pending = new OrderCompletionWorker(pool!).completeOrder(id);
+      await waitForBlocker(pid);
+      // NOWAIT proves completion did not take Order first while waiting for Partner.
+      await writer.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE NOWAIT", [id]);
+      const commissions = await lockOrderCommissions(writer, id);
+      await reverseCommission(writer, commissions[0]!.id, 40, "concurrent", new Date());
+      await writer.query("COMMIT");
+      expect(await pending).toBe(true);
+      await assertFinance(id, "EARNED", 40, 0, 60);
+    } finally { await writer.query("ROLLBACK"); writer.release(); await pending; }
+  });
+
+  it.each(["COMMISSION_EARNED", "ORDER_STATUS_CHANGED"])("rolls back all effects on %s insert failure and retries", async (type) => {
+    const id = await financialOrder(true, 0);
+    await pool!.query(`CREATE FUNCTION completion_fault() RETURNS trigger AS $$ BEGIN
+      IF NEW.type='${type}' THEN RAISE EXCEPTION 'completion fault'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`);
+    await pool!.query("CREATE TRIGGER completion_fault BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION completion_fault()");
+    const worker = new OrderCompletionWorker(pool!);
+    try {
+      await expect(worker.completeOrder(id)).rejects.toThrow("completion fault");
+      await assertFinance(id, "HOLD", 0, 100, 0);
+      expect((await pool!.query("SELECT status,completed_at FROM orders WHERE id=$1", [id])).rows[0]).toEqual({ status: "DELIVERED", completed_at: null });
+      expect((await pool!.query("SELECT id FROM ledger_entries WHERE entry_type='COMMISSION_RELEASE'")).rows).toEqual([]);
+      expect((await pool!.query("SELECT id FROM events WHERE type='COMMISSION_EARNED' OR dedupe_key=$1", [`order:${id}:status:COMPLETED`])).rows).toEqual([]);
+    } finally {
+      await pool!.query("DROP TRIGGER completion_fault ON events");
+      await pool!.query("DROP FUNCTION completion_fault()");
+    }
+    expect(await worker.completeOrder(id)).toBe(true);
+    await assertFinance(id, "EARNED", 0, 0, 100);
+  });
+
+  it("rolls back earlier releases when a later Commission fails", async () => {
+    await addTouch();
+    await pool!.query("INSERT INTO cart_items (cart_id,variant_id,quantity) SELECT id,$2,1 FROM carts WHERE buyer_user_id=$1", [buyers[0], variants[1]]);
+    const id = (await service.checkout(buyers[0]!, "multi", request(variants.map((variantId) => ({ variantId, quantity: 1, expectedUnitPriceMinor: 1000 }))))).order.id;
+    const admin = new AdminOrderService(pool!, 0);
+    for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED"] as const) await admin.transition(id, buyers[0]!, target);
+    const commissions = (await pool!.query("SELECT id FROM commissions WHERE order_id=$1 ORDER BY id", [id])).rows;
+    await pool!.query(`CREATE FUNCTION later_release_fault() RETURNS trigger AS $$ BEGIN
+      IF NEW.aggregate_id='${commissions[1].id}' AND NEW.type='COMMISSION_EARNED' THEN RAISE EXCEPTION 'later release fault'; END IF;
+      RETURN NEW; END; $$ LANGUAGE plpgsql`);
+    await pool!.query("CREATE TRIGGER later_release_fault BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION later_release_fault()");
+    const worker = new OrderCompletionWorker(pool!);
+    try {
+      await expect(worker.completeOrder(id)).rejects.toThrow("later release fault");
+      expect((await pool!.query("SELECT state,available_at FROM commissions WHERE order_id=$1", [id])).rows)
+        .toEqual([{ state: "HOLD", available_at: null }, { state: "HOLD", available_at: null }]);
+      expect((await pool!.query("SELECT id FROM ledger_entries WHERE entry_type='COMMISSION_RELEASE'")).rows).toEqual([]);
+      expect((await pool!.query("SELECT status FROM orders WHERE id=$1", [id])).rows[0].status).toBe("DELIVERED");
+    } finally {
+      await pool!.query("DROP TRIGGER later_release_fault ON events");
+      await pool!.query("DROP FUNCTION later_release_fault()");
+    }
+    expect(await worker.completeOrder(id)).toBe(true);
+    expect((await pool!.query("SELECT id FROM events WHERE type='COMMISSION_EARNED'")).rows).toHaveLength(2);
+  });
+
+  it("isolates a failed Order and completes later due Orders in the same scan", async () => {
+    const bad = await financialOrder(true, 0);
+    await pool!.query("UPDATE commissions SET state='PENDING' WHERE order_id=$1", [bad]);
+    const good = (await service.checkout(buyers[1]!, "good", request())).order.id;
+    const admin = new AdminOrderService(pool!, 0);
+    for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED"] as const) await admin.transition(good, buyers[0]!, target);
+    const failures: object[] = [];
+    await new OrderCompletionWorker(pool!).run({ error: (fields) => { failures.push(fields); } });
+    expect(failures).toEqual([{ orderId: bad, errorName: "Error" }]);
+    expect((await pool!.query("SELECT status FROM orders WHERE id=$1", [bad])).rows[0].status).toBe("DELIVERED");
+    expect((await pool!.query("SELECT status FROM orders WHERE id=$1", [good])).rows[0].status).toBe("COMPLETED");
+  });
+});
 
 describe.skipIf(!pool)("T28 Commission creation and financial transitions", () => {
   it("creates one exact Commission/credit per positive eligible snapshot and replays checkout once", async () => {

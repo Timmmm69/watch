@@ -8,12 +8,16 @@ import { callBot } from "./bot.js";
 import { EventOutbox } from "../notifications/outbox.js";
 import { BlockedError, dispatchEvent } from "../notifications/dispatch.js";
 import { createConfiguredInventoryOrchestrator, startScheduledInventorySync } from "../inventory/runtime.js";
+import { OrderCompletionWorker, startScheduledOrderCompletion } from "../orders/completion.js";
 
 config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)), quiet: true });
 const runtime = loadApiRuntimeConfig();
 const pool = createDatabasePool(runtime.DATABASE_URL);
 const inbox = new TelegramInbox(pool);
 const outbox = new EventOutbox(pool);
+const stopOrderCompletion = startScheduledOrderCompletion(new OrderCompletionWorker(pool), {
+  error: (fields, message) => console.error(message, fields)
+});
 const inventoryOrchestrator = createConfiguredInventoryOrchestrator(pool, runtime);
 const stopInventorySync = inventoryOrchestrator
   ? startScheduledInventorySync(inventoryOrchestrator, runtime.INVENTORY_SYNC_INTERVAL_SECONDS, {
@@ -86,6 +90,7 @@ async function runOutboxLoop(): Promise<void> {
 try {
   await Promise.all([runInboxLoop(), runOutboxLoop()]);
 } finally {
+  await stopOrderCompletion();
   await stopInventorySync?.();
   await pool.end();
 }
