@@ -10,6 +10,12 @@ import { AdminReturnsScreen } from "./admin-returns-client";
 import { AdminAnalyticsScreen } from "./admin-analytics-client";
 import { EarningsScreen } from "./earnings-client";
 import { AdminPayoutsScreen, PartnerPayoutsScreen } from "./payouts-client";
+import { PartnerDashboard, PartnerOnboarding } from "./partner-client";
+import { OrdersScreen } from "./orders-client";
+import { AdminInventoryScreen } from "./admin-inventory-client";
+import { AdminPartnersScreen } from "./admin-partners-client";
+import { AdminCatalogScreen } from "./admin-catalog-client";
+import { AdminProductScreen } from "./admin-product-client";
 
 interface AuthResponse {
   user: { firstName: string };
@@ -30,7 +36,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "adminPayouts" | "adminDashboard" | "adminAnalytics" | "earnings" | "payouts"; orderId?: string; returnId?: string; payoutId?: string }) {
+export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId, publicNumber, partnerId, productId }: { screen?: "shop" | "partner" | "onboarding" | "cart" | "checkout" | "orders" | "partnerOrders" | "adminCatalog" | "adminProduct" | "adminPartners" | "adminInventory" | "adminOrders" | "adminReturns" | "adminPayouts" | "adminDashboard" | "adminAnalytics" | "earnings" | "payouts"; orderId?: string; returnId?: string; payoutId?: string; publicNumber?: string; partnerId?: string; productId?: string }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -41,7 +47,8 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId 
     const webApp = window.Telegram?.WebApp;
     webApp?.ready();
     webApp?.expand();
-    const initData = webApp?.initData;
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    const initData = !launchNavigationHandled && navigation?.type !== "reload" ? webApp?.initData : undefined;
     const endpoint = initData ? "/api/v1/auth/telegram" : "/api/v1/auth/session";
     void fetch(endpoint, {
       method: initData ? "POST" : "GET", credentials: "same-origin",
@@ -51,14 +58,40 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId 
       if (!response.ok) throw new Error("Authentication failed");
       return response.json() as Promise<AuthResponse>;
     }).then((result) => {
-      if (!launchNavigationHandled && result.launchTarget && (window.location.pathname === "/" || result.launchTarget.includes("?product="))) {
-        if (screen !== "shop") router.replace(result.launchTarget);
-        else window.history.replaceState(null, "", result.launchTarget);
+      const target = result.launchTarget?.includes("?product=") ? result.launchTarget : result.partner ? "/partner" : "/shop";
+      if ((!launchNavigationHandled && target.includes("?product=")) || window.location.pathname === "/") {
+        launchNavigationHandled = true;
+        if (target.startsWith("/shop") && screen === "shop") window.history.replaceState(null, "", target);
+        else { router.replace(target); return; }
       }
       launchNavigationHandled = true;
       setState({ auth: result });
     }).catch(() => setState({ error: "Не удалось войти. Откройте приложение заново через Telegram." }));
   }, []);
+
+  const accepted = (auth: AuthResponse) => {
+    setState({ auth });
+    if (screen === "onboarding") {
+      const requested = new URLSearchParams(window.location.search).get("returnTo");
+      const destination = requested && /^\/(?:shop|partner)(?:[/?#]|$)/.test(requested) && !requested.startsWith("/partner/onboarding") ? requested : "/partner";
+      router.replace(destination);
+    } else if (!state.auth?.partner) router.replace("/partner");
+  };
+  if (state.auth && screen === "partner") return <PartnerDashboard auth={state.auth} onAccepted={accepted} />;
+  if (state.auth && screen === "onboarding") return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-3xl"><PartnerOnboarding auth={state.auth} onAccepted={accepted} /></div></main>;
+  if (state.auth && screen === "orders") return <OrdersScreen key={publicNumber ?? "list"} publicNumber={publicNumber} />;
+  if (state.auth && screen === "partnerOrders") return state.auth.partner
+    ? <OrdersScreen key={publicNumber ?? "list"} partner blocked={state.auth.partner.status === "BLOCKED"} publicNumber={publicNumber} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Заказы доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && screen === "adminPartners") return state.auth.isAdmin
+    ? <AdminPartnersScreen key={partnerId ?? "list"} csrfToken={state.auth.csrfToken} partnerId={partnerId} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && screen === "adminInventory") return state.auth.isAdmin
+    ? <AdminInventoryScreen csrfToken={state.auth.csrfToken} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && (screen === "adminCatalog" || screen === "adminProduct")) return state.auth.isAdmin
+    ? screen === "adminProduct" && productId ? <AdminProductScreen key={productId} csrfToken={state.auth.csrfToken} productId={productId} /> : <AdminCatalogScreen csrfToken={state.auth.csrfToken} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
 
   if (state.auth && (screen === "adminDashboard" || screen === "adminAnalytics")) return state.auth.isAdmin
     ? <AdminAnalyticsScreen dashboard={screen === "adminDashboard"} />
@@ -76,7 +109,7 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId 
     ? <AdminReturnsScreen key={returnId ?? "list"} csrfToken={state.auth.csrfToken} returnId={returnId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к возвратам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminPayouts") return state.auth.isAdmin
-    ? <AdminPayoutsScreen key={payoutId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} />
+    ? <AdminPayoutsScreen key={payoutId ?? partnerId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} partnerId={partnerId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к выплатам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;

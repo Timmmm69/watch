@@ -8,6 +8,7 @@ import { deriveCsrfToken } from "../auth/middleware.js";
 import { SESSION_COOKIE_NAME, type SessionStore } from "../auth/session.js";
 import type { AssetService } from "./assets.js";
 import { sniffMedia, stageMedia } from "./media-upload.js";
+import { CatalogNotFoundError } from "./catalog.js";
 
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 const mp4 = Buffer.from([0, 0, 0, 16, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
@@ -46,6 +47,32 @@ describe("media validation", () => {
 });
 
 describe("Admin media upload route", () => {
+  it("allows unpublished media preview only with current runtime and database Admin authority", async () => {
+    const userId = "00000000-0000-4000-8000-000000000010";
+    const assetId = "00000000-0000-4000-8000-000000000011";
+    let mirror = true, blocked = false;
+    let ids = new Set(["42"]);
+    const media = vi.fn(async (_id: string, _partner: boolean, admin: boolean) => {
+      if (!admin) throw new CatalogNotFoundError("Asset not found");
+      return { stream: Readable.from([Buffer.from("media")]), mimeType: "image/jpeg", sizeBytes: 5 };
+    });
+    const app = createApp({ checkReadiness: async () => undefined, logger: false,
+      auth: { store: { loadCurrent: async () => ({
+        session: { id: "session-1", userId, createdAt: new Date(), expiresAt: new Date(), revokedAt: null },
+        user: { id: userId, telegramUserId: "42", firstName: "Ada", lastName: null, username: null, languageCode: null, isAdmin: mirror, isBlocked: blocked }
+      }) } as unknown as SessionStore, csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "https://app.example", adminIds: () => ids },
+      catalog: { service: {} as CatalogApi }, assets: { service: { media } as unknown as AssetService }
+    });
+    const url = `/api/v1/catalog/assets/${assetId}/media`;
+    const headers = { cookie: `${SESSION_COOKIE_NAME}=${"a".repeat(43)}` };
+    expect((await app.inject({ url })).statusCode).toBe(401);
+    expect((await app.inject({ url, headers })).statusCode).toBe(200);
+    expect(media).toHaveBeenLastCalledWith(assetId, false, true);
+    ids = new Set(); expect((await app.inject({ url, headers })).statusCode).toBe(404);
+    ids = new Set(["42"]); mirror = false; expect((await app.inject({ url, headers })).statusCode).toBe(404);
+    mirror = true; blocked = true; expect((await app.inject({ url, headers })).statusCode).toBe(403);
+    await app.close();
+  });
   it("streams a MIME-valid multipart upload to the asset service", async () => {
     const secret = Buffer.alloc(32, 3);
     const userId = "00000000-0000-4000-8000-000000000010";

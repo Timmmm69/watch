@@ -64,6 +64,8 @@ describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
       mimeType: "image/jpeg", sizeBytes: 4
     });
     assetId = image.id;
+    await expect(assets.media(image.id, true)).rejects.toThrow();
+    expect((await assets.media(image.id, false, true)).mimeType).toBe("image/jpeg");
     await catalog.updateProduct(actorId, productId, { status: "ACTIVE" });
     const partnerText = await assets.createText(actorId, productId, {
       text: "Partner briefing", purpose: "PARTNER_CONTENT"
@@ -79,6 +81,9 @@ describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
     expect(detail.gallery.some((asset) => asset.id === partnerVideo.id)).toBe(false);
     await expect(assets.media(partnerVideo.id, false)).rejects.toThrow();
     expect((await assets.media(partnerVideo.id, true)).mimeType).toBe("video/mp4");
+    await assets.update(actorId, partnerVideo.id, { status: "ARCHIVED" });
+    await expect(assets.media(partnerVideo.id, true)).rejects.toThrow();
+    expect((await assets.media(partnerVideo.id, false, true)).mimeType).toBe("video/mp4");
     await expect(assets.createText(actorId, productId, {
       text: "Wrong variant", purpose: "STOREFRONT", variantId: randomUUID()
     })).rejects.toThrow(/Variant/);

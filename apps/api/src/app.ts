@@ -46,6 +46,9 @@ import { type AssetService, StorageUnavailableError } from "./catalog/assets.js"
 import { stageMedia } from "./catalog/media-upload.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
+import { AdminPartnerError, type AdminPartnerService } from "./partner/admin.js";
+import { adminPartnerListQuerySchema, adminPartnerPageQuerySchema, adminPartnerMutationSchema,
+  adminPartnerListResponseSchema, adminPartnerDetailSchema, adminPartnerStateSchema } from "@watch/contracts";
 import type { PartnerEarningsService } from "./finance/earnings.js";
 import { PayoutError, type PayoutService } from "./finance/payouts.js";
 import { payoutRequestSchema, payoutResponseSchema, payoutListQuerySchema, adminPayoutListQuerySchema,
@@ -65,6 +68,7 @@ export type CatalogApi = Pick<CatalogService,
 export type InventoryApi = Pick<InventoryService, "listItems" | "listSyncRuns">;
 
 export interface AppDependencies {
+  adminPartners?: Pick<AdminPartnerService, "list" | "detail" | "setStatus">;
   analytics?: Pick<AnalyticsService, "summary" | "dashboard">;
   checkReadiness: () => Promise<void>;
   logger?: boolean;
@@ -96,7 +100,7 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners }: AppDependencies) {
   const app = Fastify({
     logger: logger ? { redact: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "req.headers['x-telegram-bot-api-secret-token']", "res.headers['set-cookie']"] } : false,
     trustProxy: trustedProxyIp ? [trustedProxyIp] : false,
@@ -198,7 +202,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
           partner: state.partner, isAdmin: isAdmin(current, auth.adminIds()),
           partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
           csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id),
-          launchTarget: current.launchTarget ?? "/shop"
+          launchTarget: current.launchTarget?.includes("?product=") ? current.launchTarget : state.partner ? "/partner" : "/shop"
         };
       } catch (error) {
         if (error instanceof InvalidTelegramInitData || error instanceof BlockedUserError) {
@@ -322,6 +326,42 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
         return partnerEarningsResponseSchema.parse({ ...await earnings.list(state.partner.id, parsed.data),
           ...(payouts?.configuration ?? {}) });
       });
+    }
+
+    if (adminPartners) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      const fail = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (!(error instanceof AdminPartnerError)) throw error;
+        return reply.code(error.code === "NOT_FOUND" ? 404 : 400).send({ error: {
+          code: error.code, message: error.code === "NOT_FOUND" ? "Partner not found" : "Invalid partner request", details: {}, requestId: request.id
+        } });
+      };
+      app.get("/api/v1/admin/partners", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const query = adminPartnerListQuerySchema.safeParse(request.query ?? {});
+        if (!query.success) return fail(request, reply, new AdminPartnerError("VALIDATION_ERROR"));
+        return adminPartnerListResponseSchema.parse(await adminPartners.list(query.data));
+      });
+      app.get("/api/v1/admin/partners/:id", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id: string }).id;
+        const query = adminPartnerPageQuerySchema.safeParse(request.query ?? {});
+        if (!validUuid(id) || !query.success) return fail(request, reply, new AdminPartnerError("VALIDATION_ERROR"));
+        try { return adminPartnerDetailSchema.parse({ ...await adminPartners.detail(id, query.data),
+          payoutConfigurationResolved: payouts?.configuration?.payoutConfigurationResolved ?? false,
+          minimumPayoutMinor: payouts?.configuration?.minimumPayoutMinor ?? 0 }); }
+        catch (error) { return fail(request, reply, error); }
+      });
+      for (const [action, target] of [["block", "BLOCKED"], ["unblock", "ACTIVE"]] as const) {
+        app.post(`/api/v1/admin/partners/:id/${action}`, { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+          reply.header("Cache-Control", "no-store");
+          const id = (request.params as { id: string }).id;
+          const body = adminPartnerMutationSchema.safeParse(request.body);
+          if (!validUuid(id) || !body.success) return fail(request, reply, new AdminPartnerError("VALIDATION_ERROR"));
+          try { return adminPartnerStateSchema.parse(await adminPartners.setStatus(request.auth!.user.id, id, target, body.data.reason, request.id)); }
+          catch (error) { return fail(request, reply, error); }
+        });
+      }
     }
 
     if (partner) {
@@ -814,7 +854,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
           if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Asset not found", details: {}, requestId: request.id } });
           try {
             const partnerAccess = partner ? (await partner.loadState(request.auth!.user.id)).partner !== null : false;
-            const media = await assetService.media(id, partnerAccess);
+            const media = await assetService.media(id, partnerAccess, isAdmin(request.auth!, auth.adminIds()));
             return reply.header("Content-Type", media.mimeType)
               .header("Content-Length", media.sizeBytes)
               .header("Cache-Control", "private, no-store")

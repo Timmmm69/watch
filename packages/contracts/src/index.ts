@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./admin-partners.js";
 
 export const analyticsQuerySchema = z.object({
   from: z.string().datetime({ offset: true }),

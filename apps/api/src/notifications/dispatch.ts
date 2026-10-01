@@ -28,10 +28,10 @@ function formatMoney(amountMinor: number, currency: string): string {
   return `${major} ${currency}`;
 }
 
-function orderUrl(appBaseUrl: string, publicNumber: string, role: "buyer" | "partner" | "admin"): string {
-  const path = role === "admin" ? `/admin/orders/${publicNumber}`
-    : role === "partner" ? `/partner/orders/${publicNumber}`
-    : `/orders/${publicNumber}`;
+function orderUrl(appBaseUrl: string, identity: string, role: "buyer" | "partner" | "admin"): string {
+  const path = role === "admin" ? `/admin/orders/${encodeURIComponent(identity)}`
+    : role === "partner" ? `/partner/orders/${encodeURIComponent(identity)}`
+    : `/orders/${encodeURIComponent(identity)}`;
   return `${appBaseUrl}${path}`;
 }
 
@@ -175,7 +175,7 @@ async function dispatchOrderCreated(
   }
   const admins = await loadAdminRecipients(pool);
   if (admins.length) {
-    const text = `Новый заказ ${publicNumber} (${formatMoney(summary.totalMinor, summary.currency)}). ${product}. ${orderUrl(config.appBaseUrl, publicNumber, "admin")}`;
+    const text = `Новый заказ ${publicNumber} (${formatMoney(summary.totalMinor, summary.currency)}). ${product}. ${orderUrl(config.appBaseUrl, orderId, "admin")}`;
     errors.push(...await sendAll(pool, admins, text, send));
   }
   return errors;
@@ -192,7 +192,8 @@ async function dispatchOrderStatusChanged(
   if (!orderId || !toStatus || !BUYER_NOTIFICATION_STATUSES.has(toStatus)) return [];
   const recipient = await loadBuyerRecipient(pool, orderId);
   if (!recipient) return [];
-  const publicNumber = typeof payload.publicNumber === "string" ? payload.publicNumber : (await loadOrderSummary(pool, orderId))?.publicNumber ?? orderId;
+  const publicNumber = typeof payload.publicNumber === "string" ? payload.publicNumber : (await loadOrderSummary(pool, orderId))?.publicNumber;
+  if (!publicNumber) return [];
   const text = `Заказ ${publicNumber}: ${statusLabel(toStatus)}. Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, "buyer")}`;
   return sendAll(pool, [recipient], text, send);
 }
@@ -245,8 +246,9 @@ async function dispatchCommissionEarned(
   const recipient = await loadPartnerRecipient(pool, partnerId);
   if (!recipient) return [];
   const summary = await loadOrderSummary(pool, orderId);
+  if (!summary) return [];
   const currency = summary?.currency ?? "";
-  const publicNumber = summary?.publicNumber ?? orderId;
+  const publicNumber = summary.publicNumber;
   const text = `Комиссия ${formatMoney(amountMinor, currency)} по заказу ${publicNumber} доступна к выплате. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
   return sendAll(pool, [recipient], text, send);
 }
@@ -262,8 +264,9 @@ async function dispatchReturnCompleted(
   const recipient = await loadPartnerRecipient(pool, partnerId);
   if (!recipient) return [];
   const summary = await loadOrderSummary(pool, orderId);
+  if (!summary) return [];
   const currency = summary?.currency ?? "";
-  const publicNumber = summary?.publicNumber ?? orderId;
+  const publicNumber = summary.publicNumber;
   const text = `По заказу ${publicNumber} оформлен возврат. Удержано из комиссии: ${formatMoney(reversal, currency)}. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
   return sendAll(pool, [recipient], text, send);
 }

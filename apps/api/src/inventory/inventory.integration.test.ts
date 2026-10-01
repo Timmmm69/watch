@@ -206,8 +206,9 @@ describe.skipIf(!databaseUrl)("Inventory foundation against PostgreSQL", () => {
       "SELECT last_successful_sync_run_id FROM inventory_items WHERE variant_id = $1",
       [variantId]
     );
+    // PostgreSQL 18 distinguishes RESTRICT (23001) from other FK violations (23503).
     await expect(
       pool!.query("DELETE FROM inventory_sync_runs WHERE id = $1", [referenced.rows[0]?.last_successful_sync_run_id])
-    ).rejects.toMatchObject({ code: "23503" });
+    ).rejects.toMatchObject({ code: expect.stringMatching(/^(23503|23001)$/) });
   });
 });

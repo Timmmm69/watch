@@ -88,8 +88,8 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
   }
   return <main className="min-h-screen space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5">
-      <Link href="/admin">Обзор</Link><Link href="/admin/orders">Заказы</Link><Link href="/admin/returns">Возвраты</Link>
-      <Link href="/admin/payouts">Выплаты</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/shop">Каталог</Link>
+      <Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/orders">Заказы</Link><Link href="/admin/returns">Возвраты</Link>
+      <Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Инвентарь</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/admin/catalog">Каталог</Link><Link href="/shop">Магазин</Link>
     </nav>
     <h1 className="text-2xl font-semibold">{dashboard ? "Обзор администратора" : "Аналитика"}</h1>
     {!dashboard && !blocked && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">

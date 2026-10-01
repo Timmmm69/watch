@@ -166,6 +166,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
     <h1 className="my-5 text-2xl font-semibold">{order ? "Заказ оформлен" : "Оформление заказа"}</h1>
     {order ? <section aria-live="polite"><p className="text-xl">Заказ {order.publicNumber}</p><p>Статус: {order.status}</p>
       <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Оператор подтвердит заказ.</p>
+      <Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="mr-4 inline-flex min-h-11 items-center underline">Посмотреть заказ</Link>
       <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link></section> : <>
       {error && <p role="alert" className="my-4 text-amber-300">{error}</p>}
       <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить оформление</button>

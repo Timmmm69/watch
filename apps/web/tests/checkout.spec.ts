@@ -7,6 +7,7 @@ import { createApp } from "../../api/src/app";
 import { CartService } from "../../api/src/cart/cart";
 import { CheckoutService } from "../../api/src/orders/checkout";
 import { AdminOrderService } from "../../api/src/orders/admin";
+import { OrderViewService } from "../../api/src/orders/views";
 import { LegalDocuments } from "../../api/src/legal/legal";
 import { SessionStore, hashSessionToken } from "../../api/src/auth/session";
 
@@ -55,6 +56,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     app = createApp({ logger: false, checkReadiness: async () => undefined,
       auth: { store: new SessionStore(pool, new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))])), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "http://127.0.0.1:3000", adminIds: () => new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]) },
       orders: new AdminOrderService(pool),
+      orderViews: new OrderViewService(pool, "@support"),
       cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
     await app.listen({ host: "127.0.0.1", port: 3001 });
   });
@@ -137,6 +139,9 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     await expect(page.getByText(`Заказ ${order.public_number}`, { exact: true })).toBeVisible();
     expect(order.sales_terms_accepted_at.getTime()).toBe(order.created_at.getTime());
     expect(order.privacy_acknowledged_at.getTime()).toBe(order.created_at.getTime());
+    await page.getByRole("link", { name: "Посмотреть заказ" }).click();
+    await expect(page.getByRole("heading", { name: `Заказ ${order.public_number}` })).toBeVisible();
+    await expect(page.getByText("Минск, адрес доставки", { exact: true })).toBeVisible();
   });
   test("real price change requires reconfirmation; new legal artifact clears only its control", async ({ page }) => {
     await page.goto("/checkout"); await fill(page);
@@ -180,6 +185,19 @@ async function mockCheckout(page: Page) {
   await page.route("**/api/v1/legal/*/current", (route) => route.fulfill({ json: { id: route.request().url().includes("SALES_TERMS")
     ? "00000000-0000-4000-8000-000000000002" : "00000000-0000-4000-8000-000000000003", version: "v1", contentMarkdown: "Тестовый документ" } }));
 }
+
+test("checkout success CTA opens Buyer order by public number", async ({ page }) => {
+  await mockCheckout(page);
+  const order = { publicNumber: "W-T40", status: "PLACED", totalMinor: 1000, currency: "BYN" };
+  await page.route("**/api/v1/orders", (route) => route.fulfill({ status: 201, json: order }));
+  await page.route("**/api/v1/orders/W-T40", (route) => route.fulfill({ json: { ...order, id: "order", createdAt: "2026-10-01T09:00:00Z",
+    timeline: [{ status: "PLACED", at: "2026-10-01T09:00:00Z" }], items: [], fulfillment: null, supportContact: "@support" } }));
+  await page.goto("/checkout"); await fill(page);
+  await page.getByRole("button", { name: "Подтвердить заказ" }).click();
+  await page.getByRole("link", { name: "Посмотреть заказ" }).click();
+  await expect(page).toHaveURL(/\/orders\/W-T40$/);
+  await expect(page.getByRole("heading", { name: "Заказ W-T40" })).toBeVisible();
+});
 test("validation focuses first invalid field; canonical retry keeps key and edits rotate it", async ({ page }) => {
   await mockCheckout(page);
   const submissions: { key: string; body: Record<string, unknown> }[] = [];

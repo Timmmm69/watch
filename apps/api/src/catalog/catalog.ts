@@ -116,6 +116,12 @@ export interface AdminProduct extends ProductSummary {
   assets: StorefrontAsset[];
 }
 
+export interface AdminProductListItem extends ProductSummary {
+  categories: Pick<Category, "id" | "name" | "status">[];
+  variants: Pick<Variant, "id" | "sku" | "status" | "priceMinor" | "currency">[];
+  availability: StorefrontAvailability;
+}
+
 export interface VariantCreateInput {
   sku: string;
   attributes?: Record<string, unknown> | undefined;
@@ -712,7 +718,7 @@ export class CatalogService {
     });
   }
 
-  async listProducts(query: Page & { q?: string | undefined; status?: ProductStatus | undefined }): Promise<Paginated<ProductSummary>> {
+  async listProducts(query: Page & { q?: string | undefined; status?: ProductStatus | undefined }): Promise<Paginated<AdminProductListItem>> {
     const values: unknown[] = [];
     const conditions: string[] = [];
     if (query.status) {
@@ -735,8 +741,32 @@ export class CatalogService {
       `SELECT * FROM products ${where} ORDER BY updated_at DESC, id LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, query.limit, (query.page - 1) * query.limit]
     );
+    const ids = items.rows.map((row) => row.id);
+    const [categories, variants] = await Promise.all([
+      this.pool.query<{ product_id: string; id: string; name: string; status: CategoryStatus }>(
+        `SELECT pc.product_id, c.id, c.name, c.status FROM product_categories pc
+         JOIN categories c ON c.id = pc.category_id WHERE pc.product_id = ANY($1::uuid[])
+         ORDER BY c.sort_order, c.id`, [ids]),
+      this.pool.query<{ product_id: string; id: string; sku: string; status: VariantStatus;
+        price_minor: number; currency: string; availability: StorefrontAvailability }>(
+        `SELECT v.product_id, v.id, v.sku, v.status, v.price_minor, v.currency,
+         ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability
+         FROM product_variants v LEFT JOIN inventory_items i ON i.variant_id = v.id
+         WHERE v.product_id = ANY($1::uuid[]) ORDER BY v.created_at, v.id`, [ids])
+    ]);
     return {
-      items: items.rows.map(mapProduct),
+      items: items.rows.map((row) => {
+        const productVariants = variants.rows.filter((variant) => variant.product_id === row.id);
+        const available = productVariants.filter((variant) => variant.status === "ACTIVE").map((variant) => variant.availability);
+        return { ...mapProduct(row),
+          categories: categories.rows.filter((category) => category.product_id === row.id)
+            .map(({ id, name, status }) => ({ id, name, status })),
+          variants: productVariants.map((variant) => ({ id: variant.id, sku: variant.sku, status: variant.status,
+            priceMinor: variant.price_minor, currency: variant.currency })),
+          availability: available.includes("IN_STOCK") ? "IN_STOCK" : available.includes("UNKNOWN") ? "UNKNOWN"
+            : available.includes("STALE") ? "STALE" : "OUT_OF_STOCK"
+        };
+      }),
       page: query.page,
       limit: query.limit,
       total: total.rows[0]?.count ?? 0

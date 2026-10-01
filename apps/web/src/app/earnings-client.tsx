@@ -64,7 +64,7 @@ export function PartnerEarnings({ compact = false, blocked = false }: { compact?
 
 export function EarningsScreen({ blocked }: { blocked: boolean }) {
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl">
-    <div className="flex gap-4"><a className="inline-block min-h-11 underline" href="/shop">В каталог</a><a className="inline-block min-h-11 underline" href="/partner/payouts">Выплаты</a></div>
+    <div className="flex gap-4"><a className="inline-block min-h-11 underline" href="/partner">Партнёрский кабинет</a><a className="inline-block min-h-11 underline" href="/shop">В каталог</a><a className="inline-block min-h-11 underline" href="/partner/payouts">Выплаты</a></div>
     <h1 className="mb-6 text-2xl font-semibold">Партнёрские доходы</h1>
     <PartnerEarnings blocked={blocked} />
   </div></main>;

@@ -61,10 +61,10 @@ export class PartnerService {
     try {
       await client.query("BEGIN");
       const inserted = await client.query<PartnerRow>(`
-        INSERT INTO partners (user_id) VALUES ($1)
+        INSERT INTO partners (user_id, id) VALUES ($1, $2)
         ON CONFLICT (user_id) DO NOTHING
         RETURNING id, status
-      `, [userId]);
+      `, [userId, randomUUID()]);
       let partner = inserted.rows[0];
       if (!partner) {
         const locked = await client.query<PartnerRow>(

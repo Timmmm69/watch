@@ -9,6 +9,7 @@ import { CatalogService } from "./catalog/catalog.js";
 import { AssetService, S3ObjectStorage } from "./catalog/assets.js";
 import { LegalDocuments } from "./legal/legal.js";
 import { PartnerService } from "./partner/partner.js";
+import { AdminPartnerService } from "./partner/admin.js";
 import { ReferralService } from "./referral/referral.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
@@ -59,6 +60,7 @@ const app = createApp({
   },
   legal: legalDocuments,
   partner: partnerService,
+  adminPartners: new AdminPartnerService(pool, legalDocuments),
   referral: new ReferralService(pool, legalDocuments, runtimeConfig.TELEGRAM_BOT_USERNAME),
   catalog: { service: catalogService },
   cart: new CartService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.INVENTORY_MAX_AGE_SECONDS),

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { dispatchEvent, BlockedError } from "./dispatch.js";
 import type { OutboxEvent } from "./outbox.js";
+import { existsSync, readFileSync } from "node:fs";
 
 class MockPool {
   queries: { sql: string; params: unknown[] }[] = [];
@@ -34,6 +35,58 @@ function event(type: string, payload: Record<string, unknown>): OutboxEvent {
 }
 
 describe("dispatchEvent", () => {
+  it("every generated notification path has a web flow; order identities match API expectations", async () => {
+    const orderId = "00000000-0000-4000-8000-000000000040";
+    const pool = { query: async (sql: string) => ({ rows: sql.includes("FROM order_items")
+      ? [{ title_snapshot: "Watch", quantity: 1, partner_commission_unit_snapshot_minor: 100 }]
+      : sql.includes("SELECT public_number") ? [{ public_number: "W-T40", total_minor: 1000, currency: "BYN" }]
+      : sql.includes("SELECT currency") ? [{ currency: "BYN" }]
+      : [{ id: "admin", user_id: "user", telegram_user_id: "111" }] }) } as unknown as Pool;
+    const send = vi.fn().mockResolvedValue(undefined);
+    for (const type of ["PARTNER_ACTIVATED", "ORDER_CREATED", "ORDER_STATUS_CHANGED", "ORDER_CANCELLED", "ORDER_DELIVERY_FAILED", "COMMISSION_EARNED", "RETURN_COMPLETED", "INVENTORY_SYNC_FAILED", "PAYOUT_REQUESTED", "PAYOUT_PAID", "PAYOUT_REJECTED"]) {
+      await dispatchEvent(pool, event(type, { orderId, publicNumber: "W-T40", partnerId: "partner", partnerIdSnapshot: "partner", toStatus: "SHIPPED", runId: "run", payoutId: "payout", amountMinor: 100, commissionReversalMinor: 100, status: type === "PAYOUT_PAID" ? "PAID" : type === "PAYOUT_REJECTED" ? "REJECTED" : "REQUESTED" }), config, send);
+    }
+    const paths = new Set(send.mock.calls.flatMap(([, message]) => (String(message).match(/https:\/\/app\.example[^\s]+/g) ?? []).map((url) => new URL(url).pathname)));
+    const expected: Record<string, [string, string]> = {
+      "/orders/W-T40": ["orders/[publicNumber]/page.tsx", 'screen="orders" publicNumber={publicNumber}'],
+      "/partner/orders/W-T40": ["partner/orders/[publicNumber]/page.tsx", 'screen="partnerOrders" publicNumber={publicNumber}'],
+      [`/admin/orders/${orderId}`]: ["admin/orders/[id]/page.tsx", 'orderId={id}'],
+      "/partner": ["partner/page.tsx", 'screen="partner"'],
+      "/partner/payouts": ["partner/payouts/page.tsx", 'screen="payouts"'],
+      "/admin/payouts": ["admin/payouts/page.tsx", 'screen="adminPayouts"'],
+      "/admin/inventory": ["admin/inventory/page.tsx", 'screen="adminInventory"']
+    };
+    expect([...paths].sort()).toEqual(Object.keys(expected).sort());
+    for (const path of paths) {
+      const [file, binding] = expected[path]!;
+      const url = new URL(`../../../web/src/app/${file}`, import.meta.url);
+      expect(existsSync(url), path).toBe(true);
+      expect(readFileSync(url, "utf8"), path).toContain(binding);
+    }
+    const adminClient = readFileSync(new URL("../../../web/src/app/admin-orders-client.tsx", import.meta.url), "utf8");
+    expect(adminClient).toContain("/api/v1/admin/orders/${encodeURIComponent(orderId)}");
+    const api = readFileSync(new URL("../app.ts", import.meta.url), "utf8");
+    expect(api).toContain('app.get("/api/v1/admin/orders/:id"');
+    expect(api).toContain('app.get("/api/v1/orders/:publicNumber"');
+    expect(api).toContain('app.get("/api/v1/partner/orders/:publicNumber"');
+    const bootstrap = readFileSync(new URL("../../../web/src/app/mini-app-bootstrap.tsx", import.meta.url), "utf8");
+    expect(bootstrap).toContain('screen === "orders"');
+    expect(bootstrap).toContain('screen === "partnerOrders"');
+    expect(bootstrap).toContain('publicNumber={publicNumber}');
+    const ordersClient = readFileSync(new URL("../../../web/src/app/orders-client.tsx", import.meta.url), "utf8");
+    expect(ordersClient).toContain('partner ? "/partner/orders" : "/orders"');
+    expect(ordersClient).toContain('${base}/${encodeURIComponent(publicNumber)}');
+    expect(ordersClient).toContain('fetch(`/api/v1${path}`');
+    for (const [file, endpoint] of [
+      ["payouts-client.tsx", "/api/v1/partner/payouts"],
+      ["payouts-client.tsx", "/api/v1/admin/payouts"],
+      ["admin-inventory-client.tsx", "/api/v1/admin/inventory"],
+      ["partner-client.tsx", "/api/v1/partner/orders"],
+      ["earnings-client.tsx", "/api/v1/partner/earnings"]
+    ]) {
+      expect(readFileSync(new URL(`../../../web/src/app/${file}`, import.meta.url), "utf8")).toContain(endpoint);
+    }
+  });
   it.each([["PAID","выплачена"],["REJECTED","отклонена"]])("notifies Partner of terminal payout %s without sending another Admin request", async (status,label) => {
     const pool = new MockPool();
     pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);

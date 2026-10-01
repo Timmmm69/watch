@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generatePublicOrderNumber, insertWithPublicNumberRetry } from "./order-number.js";
+import { OrderViewService } from "./views.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const schema = `orders_test_${randomUUID().replaceAll("-", "")}`;
@@ -219,6 +220,29 @@ afterAll(async () => {
 });
 
 describe.skipIf(!databaseUrl)("Order persistence against real PostgreSQL", () => {
+  it("isolates Buyer/Partner histories, retains blocked Partner reads and redacts fulfillment", async () => {
+    const service = new OrderViewService(pool!, "@support");
+    const attributed = await insertOrder();
+    const organic = await insertOrder({ buyerUserId: otherBuyer, attributionTouchId: null, partnerIdSnapshot: null, commissionEligibleSnapshot: false });
+    await insertOrderItem(attributed.id, variants[0]!);
+    await pool!.query("INSERT INTO order_fulfillment_details (order_id, recipient_name, phone, address, comment) VALUES ($1,'Private Name','Private Phone','Private Address','Private Comment')", [attributed.id]);
+    expect((await service.listBuyerOrders(buyer, { page: 1, limit: 100 })).items.some((item) => item.id === organic.id)).toBe(false);
+    expect((await service.listPartnerOrders(partnerA, { page: 1, limit: 100 })).items.some((item) => item.id === attributed.id)).toBe(true);
+    expect((await service.listPartnerOrders(partnerB, { page: 1, limit: 100 })).items.some((item) => item.id === attributed.id)).toBe(false);
+    await expect(service.getBuyerOrder(otherBuyer, attributed.public_number)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.getPartnerOrder(partnerB, attributed.public_number)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.getPartnerOrder(partnerA, organic.public_number)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect((await service.getBuyerOrder(buyer, attributed.public_number)).fulfillment?.phone).toBe("Private Phone");
+    const partnerDetail = await service.getPartnerOrder(partnerA, attributed.public_number);
+    expect(partnerDetail).not.toHaveProperty("fulfillment");
+    expect(JSON.stringify(partnerDetail)).not.toContain("Private");
+    expect(partnerDetail.items[0]?.partnerCommissionUnitSnapshotMinor).toBe(3000);
+    await pool!.query("UPDATE partners SET status='BLOCKED' WHERE id=$1", [partnerA]);
+    expect((await service.getPartnerOrder(partnerA, attributed.public_number)).id).toBe(attributed.id);
+    await pool!.query("UPDATE partners SET status='ACTIVE' WHERE id=$1", [partnerA]);
+    await pool!.query("UPDATE order_fulfillment_details SET recipient_name=NULL,phone=NULL,address=NULL,comment=NULL,redacted_at=now(),redacted_by_admin_user_id=$2 WHERE order_id=$1", [attributed.id, admin]);
+    expect((await service.getBuyerOrder(buyer, attributed.public_number)).fulfillment).toBeNull();
+  });
   it("stores an attributed Order with immutable snapshots, fulfillment details and ACTIVE reservations", async () => {
     const order = await insertOrder();
     await pool!.query(

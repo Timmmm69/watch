@@ -185,14 +185,14 @@ export class AssetService {
     });
   }
 
-  async media(assetId: string, partnerAccess: boolean): Promise<{ stream: Readable; mimeType: string; sizeBytes: number }> {
+  async media(assetId: string, partnerAccess: boolean, adminAccess = false): Promise<{ stream: Readable; mimeType: string; sizeBytes: number }> {
     const result = await this.pool.query<AssetRow & { product_status: string }>(
       `SELECT a.*, p.status AS product_status FROM product_assets a
        JOIN products p ON p.id = a.product_id WHERE a.id = $1`, [assetId]
     );
     const asset = result.rows[0];
-    if (!asset || !asset.storage_key || asset.status !== "ACTIVE" || asset.product_status !== "ACTIVE" ||
-        (asset.purpose === "PARTNER_CONTENT" && !partnerAccess)) {
+    if (!asset || !asset.storage_key || (!adminAccess && (asset.status !== "ACTIVE" || asset.product_status !== "ACTIVE" ||
+        (asset.purpose === "PARTNER_CONTENT" && !partnerAccess)))) {
       throw new CatalogNotFoundError("Asset not found");
     }
     try {

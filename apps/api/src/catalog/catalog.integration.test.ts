@@ -121,6 +121,7 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     const listing = await service.listProducts({ q: searchToken, page: 1, limit: 20 });
     expect(listing.total).toBe(1);
     expect(listing.items[0]?.id).toBe(product.id);
+    expect(listing.items[0]).toMatchObject({ categories: [{ id: category.id, name: category.name, status: "ACTIVE" }], variants: [], availability: "OUT_OF_STOCK" });
 
     const variant = await service.createVariant(actorUserId, product.id, {
       sku: unique("SKU"),
@@ -132,6 +133,8 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     });
     variantIds.push(variant.id);
     expect(variant).toMatchObject({ status: "DRAFT", currency: platformCurrency, priceMinor: 100_000 });
+    const withDraftVariant = await service.listProducts({ q: searchToken, page: 1, limit: 20 });
+    expect(withDraftVariant.items[0]).toMatchObject({ variants: [{ id: variant.id, sku: variant.sku, status: "DRAFT", priceMinor: 100_000, currency: platformCurrency }], availability: "OUT_OF_STOCK" });
     expect(variant.inventory).toMatchObject({
       sourceQuantity: null,
       safetyBuffer: 0,
@@ -182,6 +185,8 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     });
     variantIds.push(variant.id);
     await service.updateVariant(actorUserId, variant.id, { status: "ACTIVE" });
+    const unpublished = await service.listProducts({ q: product.title, page: 1, limit: 20 });
+    expect(unpublished.items.find(item => item.id === product.id)).toMatchObject({ status: "DRAFT", availability: "UNKNOWN" });
 
     try {
       await service.updateProduct(actorUserId, product.id, { status: "ACTIVE" });

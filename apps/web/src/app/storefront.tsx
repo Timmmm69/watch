@@ -3,6 +3,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CartIndicator, ProductCartActions } from "./cart-client";
 import { PartnerEarnings } from "./earnings-client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { partnerReacceptUrl } from "./partner-client";
 
 type Availability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
 type PartnerViewReason = "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | null;
@@ -28,6 +31,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   name: string; csrfToken: string; partner: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
   partnerTermsReacceptRequired: boolean;
 }) {
+  const router = useRouter();
   const [items, setItems] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -103,8 +107,9 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
         body: JSON.stringify({ productId })
       });
+      const result = await response.json() as { url: string; error?: { code: string } };
+      if (result.error?.code === "TERMS_REACCEPT_REQUIRED") { router.push(partnerReacceptUrl()); return; }
       if (!response.ok) throw new Error();
-      const result = await response.json() as { url: string };
       setLink(result.url);
       await navigator.clipboard.writeText(result.url);
     } catch { setLinkError("Не удалось скопировать ссылку. Повторите попытку."); }
@@ -114,6 +119,12 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl">
     <header className="mb-8 flex items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Watch</h1>
       <span className="text-sm text-slate-400">Здравствуйте, {name}</span></header>
+    <nav className="mb-5 flex gap-4">
+      <Link className="min-h-11 underline" href="/orders">Мои заказы</Link>
+      {partner ? <Link className="min-h-11 underline" href="/partner">Партнёрский кабинет</Link>
+        : <Link className="min-h-11 underline" href="/partner/onboarding">Стать партнёром</Link>}
+      {partnerTermsReacceptRequired && <Link className="min-h-11 underline" href="/partner/onboarding">Принять новые условия</Link>}
+    </nav>
     {!detail && <CartIndicator csrfToken={csrfToken} />}
     {partner && !detail && <PartnerEarnings compact blocked={partner.status === "BLOCKED"} />}
     {partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Партнёрская ссылка">

@@ -67,7 +67,7 @@ describe("Order view routes", () => {
     await server.close();
   });
 
-  it("lists partner orders and excludes fulfillment", async () => {
+  it.each(["ACTIVE", "BLOCKED"] as const)("lists %s partner orders and excludes fulfillment", async (status) => {
     const orderViews = {
       listPartnerOrders: async () => ({
         items: [{
@@ -84,7 +84,7 @@ describe("Order view routes", () => {
         supportContact: "@support", createdAt: now
       })
     };
-    const partner = { loadState: async () => ({ partner: { id: "p1", status: "ACTIVE" as const }, partnerTermsReacceptRequired: false }) };
+    const partner = { loadState: async () => ({ partner: { id: "p1", status }, partnerTermsReacceptRequired: false }) };
     const server = await app({ orderViews, partner });
     const list = await server.inject({ method: "GET", url: "/api/v1/partner/orders", headers: { cookie: "watch_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } });
     expect(list.statusCode).toBe(200);
