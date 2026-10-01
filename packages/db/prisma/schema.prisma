@@ -29,6 +29,9 @@ model User {
   orderFulfillmentRedactions OrderFulfillmentDetail[] @relation("OrderFulfillmentRedactedBy")
   reconciledReservations InventoryReservation[] @relation("InventoryReservationReconciledBy")
   cart             Cart?
+  requestedPayouts Payout[] @relation("PayoutRequestedBy")
+  processedPayouts Payout[] @relation("PayoutProcessedBy")
+  createdReturns Return[]
 
   @@map("users")
 }
@@ -114,6 +117,9 @@ model Partner {
   referralLinks ReferralLink[]
   attributionTouches AttributionTouch[]
   attributedOrders Order[]
+  commissions Commission[]
+  ledgerEntries LedgerEntry[]
+  payouts Payout[]
 
   @@index([status])
   @@map("partners")
@@ -417,6 +423,40 @@ enum ReservationStatus {
   CONSUMED
 }
 
+enum CommissionState {
+  PENDING
+  HOLD
+  EARNED
+  VOID
+}
+
+enum LedgerBucket {
+  PENDING
+  AVAILABLE
+  PAYOUT_LOCKED
+}
+
+enum LedgerEntryType {
+  COMMISSION_CREATE
+  COMMISSION_RELEASE
+  COMMISSION_REVERSAL
+  PAYOUT_LOCK
+  PAYOUT_PAID
+  PAYOUT_REJECT
+}
+
+enum PayoutStatus {
+  REQUESTED
+  PAID
+  REJECTED
+}
+
+enum ReturnStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
 enum ReservationReconciliationMethod {
   SOURCE_PROOF
   MANUAL
@@ -495,6 +535,8 @@ model Order {
   privacyDocument           LegalDocument    @relation("OrderPrivacy", fields: [privacyDocumentId], references: [id], onDelete: Restrict)
   fulfillmentDetail         OrderFulfillmentDetail?
   items                     OrderItem[]
+  commissions               Commission[]
+  returns                   Return[]
 
   @@unique([buyerUserId, idempotencyKey])
   @@unique([id, partnerIdSnapshot])
@@ -536,6 +578,7 @@ model OrderItem {
   order                              Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
   variant                            ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
   reservations                       InventoryReservation[]
+  commissions                        Commission[]
 
   @@unique([orderId, variantId])
   @@unique([id, orderId])
@@ -566,4 +609,99 @@ model InventoryReservation {
   @@index([variantId, status])
   @@index([status, orderId])
   @@map("inventory_reservations")
+}
+
+// CHECKs, snapshot/append-only triggers and partial indexes live in the SQL migration.
+model Commission {
+  id                  String          @id @default(uuid()) @db.Uuid
+  partnerId           String          @map("partner_id") @db.Uuid
+  orderId             String          @map("order_id") @db.Uuid
+  orderItemId         String          @unique @map("order_item_id") @db.Uuid
+  quantity            Int
+  unitAmountMinor     Int             @map("unit_amount_minor")
+  grossAmountMinor    Int             @map("gross_amount_minor")
+  reversedAmountMinor Int             @default(0) @map("reversed_amount_minor")
+  state               CommissionState @default(PENDING)
+  eligibleAt          DateTime?       @map("eligible_at") @db.Timestamptz(6)
+  availableAt         DateTime?       @map("available_at") @db.Timestamptz(6)
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  partner             Partner         @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  order               Order           @relation(fields: [orderId, partnerId], references: [id, partnerIdSnapshot], onDelete: Restrict)
+  orderItem           OrderItem       @relation(fields: [orderItemId, orderId], references: [id, orderId], onDelete: Restrict)
+  ledgerEntries       LedgerEntry[]
+
+  @@unique([id, partnerId])
+  @@index([partnerId, state, createdAt])
+  @@index([orderId])
+  @@map("commissions")
+}
+
+// Foundation for LedgerEntry's composite FK; payout operations/allocations are S14.
+model Payout {
+  id                     String       @id @default(uuid()) @db.Uuid
+  partnerId              String       @map("partner_id") @db.Uuid
+  amountMinor            Int          @map("amount_minor")
+  currency               String       @db.VarChar(3)
+  status                 PayoutStatus @default(REQUESTED)
+  idempotencyKey         String       @map("idempotency_key") @db.VarChar(100)
+  requestFingerprint     String       @map("request_fingerprint") @db.Char(64)
+  destinationSnapshot    Json?        @map("destination_snapshot") @db.JsonB
+  requestedByUserId      String       @map("requested_by_user_id") @db.Uuid
+  processedByAdminUserId String?      @map("processed_by_admin_user_id") @db.Uuid
+  externalReference      String?      @map("external_reference") @db.VarChar(200)
+  requestedAt            DateTime     @default(now()) @map("requested_at") @db.Timestamptz(6)
+  processedAt            DateTime?    @map("processed_at") @db.Timestamptz(6)
+  note                   String?
+  partner                Partner      @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  requestedBy            User         @relation("PayoutRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  processedBy            User?        @relation("PayoutProcessedBy", fields: [processedByAdminUserId], references: [id], onDelete: Restrict)
+  ledgerEntries          LedgerEntry[]
+
+  @@unique([id, partnerId])
+  @@unique([partnerId, idempotencyKey])
+  @@index([status, requestedAt])
+  @@index([partnerId, requestedAt])
+  @@map("payouts")
+}
+
+model LedgerEntry {
+  id                 String          @id @default(uuid()) @db.Uuid
+  partnerId          String          @map("partner_id") @db.Uuid
+  commissionId       String?         @map("commission_id") @db.Uuid
+  payoutId           String?         @map("payout_id") @db.Uuid
+  bucket             LedgerBucket
+  amountMinor        Int             @map("amount_minor")
+  entryType          LedgerEntryType @map("entry_type")
+  transactionGroupId String          @map("transaction_group_id") @db.Uuid
+  idempotencyKey     String          @unique @map("idempotency_key") @db.VarChar(200)
+  metadata           Json?           @db.JsonB
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  partner            Partner         @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  commission         Commission?     @relation(fields: [commissionId, partnerId], references: [id, partnerId], onDelete: Restrict, onUpdate: Restrict)
+  payout             Payout?         @relation(fields: [payoutId, partnerId], references: [id, partnerId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([partnerId, bucket, createdAt])
+  @@index([commissionId, createdAt])
+  @@index([payoutId, createdAt])
+  @@index([transactionGroupId])
+  @@map("ledger_entries")
+}
+
+// S12 completion foundation. Return items and Admin queue index are S13.
+model Return {
+  id                   String       @id @default(uuid()) @db.Uuid
+  orderId              String       @map("order_id") @db.Uuid
+  status               ReturnStatus @default(OPEN)
+  reason               String
+  createdByAdminUserId String       @map("created_by_admin_user_id") @db.Uuid
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  note                 String?
+  order                Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdBy            User         @relation(fields: [createdByAdminUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, orderId])
+  @@index([orderId, status])
+  @@map("returns")
 }
