@@ -8,6 +8,7 @@ import { CheckoutScreen } from "./checkout-client";
 import { AdminOrdersScreen } from "./admin-orders-client";
 import { AdminReturnsScreen } from "./admin-returns-client";
 import { EarningsScreen } from "./earnings-client";
+import { AdminPayoutsScreen, PartnerPayoutsScreen } from "./payouts-client";
 
 interface AuthResponse {
   user: { firstName: string };
@@ -28,7 +29,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop", orderId, returnId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "earnings"; orderId?: string; returnId?: string }) {
+export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "adminPayouts" | "earnings" | "payouts"; orderId?: string; returnId?: string; payoutId?: string }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -61,12 +62,18 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId }: { scree
   if (state.auth && screen === "earnings") return state.auth.partner
     ? <EarningsScreen blocked={state.auth.partner.status === "BLOCKED"} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доходы доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && screen === "payouts") return state.auth.partner
+    ? <PartnerPayoutsScreen csrfToken={state.auth.csrfToken} blocked={state.auth.partner.status === "BLOCKED"} termsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Выплаты доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminOrders") return state.auth.isAdmin
     ? <AdminOrdersScreen key={orderId ?? "list"} csrfToken={state.auth.csrfToken} orderId={orderId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к заказам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminReturns") return state.auth.isAdmin
     ? <AdminReturnsScreen key={returnId ?? "list"} csrfToken={state.auth.csrfToken} returnId={returnId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к возвратам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && screen === "adminPayouts") return state.auth.isAdmin
+    ? <AdminPayoutsScreen key={payoutId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к выплатам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}

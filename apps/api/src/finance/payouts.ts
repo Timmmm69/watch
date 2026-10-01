@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { LegalDocumentRef } from "@watch/config";
-import { payoutRequestSchema, payoutResponseSchema } from "@watch/contracts";
+import { payoutRequestSchema, payoutResponseSchema, payoutTransitionSchema, type PayoutListQuery } from "@watch/contracts";
 import { partnerProgramMutationAllowed, partnerTermsCurrent, type PartnerStatus } from "../partner/partner.js";
 
 export class PayoutError extends Error {
@@ -11,6 +11,7 @@ interface StoredPayout {
   id: string; partner_id: string; amount_minor: number; currency: string;
   status: "REQUESTED" | "PAID" | "REJECTED"; request_fingerprint: string;
   requested_by_user_id: string; requested_at: Date;
+  processed_by_admin_user_id: string | null; processed_at: Date | null; external_reference: string | null; note: string | null;
 }
 
 export class PayoutService {
@@ -19,6 +20,89 @@ export class PayoutService {
 
   async request(userId: string, key: unknown, input: unknown = {}) {
     return this.create(userId, null, key, input);
+  }
+
+  get configuration() {
+    return { minimumPayoutMinor: this.minimumMinor, payoutConfigurationResolved: this.currency === "BYN" };
+  }
+
+  async listOwn(userId: string, query: PayoutListQuery) {
+    const partner = (await this.pool.query<{ id: string }>("SELECT id FROM partners WHERE user_id=$1", [userId])).rows[0];
+    if (!partner) throw new PayoutError("PARTNER_REQUIRED");
+    return this.listAdmin({ ...query, partnerId: partner.id });
+  }
+
+  async listAdmin(query: PayoutListQuery) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const values: unknown[] = [], predicates: string[] = [];
+      if (query.partnerId) { values.push(query.partnerId); predicates.push(`partner_id=$${values.length}`); }
+      if (query.status) { values.push(query.status); predicates.push(`status=$${values.length}`); }
+      const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
+      const total = Number((await client.query<{ total: string }>(`SELECT count(*)::text AS total FROM payouts ${where}`, values)).rows[0]!.total);
+      const rows = (await client.query<StoredPayout>(`SELECT * FROM payouts ${where} ORDER BY requested_at DESC,id
+        LIMIT $${values.length+1} OFFSET $${values.length+2}`, [...values,query.limit,(query.page-1)*query.limit])).rows;
+      const items = [];
+      for (const row of rows) items.push(await this.project(client,row));
+      await client.query("COMMIT");
+      return { items,total,page: query.page,limit: query.limit };
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+
+  async detail(id: string) {
+    const client = await this.pool.connect();
+    try {
+      const row = (await client.query<StoredPayout>("SELECT * FROM payouts WHERE id=$1", [id])).rows[0];
+      if (!row) throw new PayoutError("NOT_FOUND");
+      return await this.project(client,row);
+    } finally { client.release(); }
+  }
+
+  async transition(adminId: string, id: string, input: unknown, requestId?: string) {
+    const parsed = payoutTransitionSchema.safeParse(input);
+    if (!parsed.success) throw new PayoutError("VALIDATION_ERROR");
+    const { target,externalReference,note } = parsed.data;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Payout identity never changes; serialize all Partner money before locking the Payout.
+      const identity = (await client.query<{ partner_id: string }>("SELECT partner_id FROM payouts WHERE id=$1", [id])).rows[0];
+      if (!identity) throw new PayoutError("NOT_FOUND");
+      await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [identity.partner_id]);
+      const row = (await client.query<StoredPayout>("SELECT * FROM payouts WHERE id=$1 FOR UPDATE", [id])).rows[0]!;
+      if (row.status === target) {
+        const result = await this.project(client,row);
+        await client.query("COMMIT");
+        return result;
+      }
+      if (row.status !== "REQUESTED") throw new PayoutError("PAYOUT_ALREADY_FINALIZED");
+      const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
+      const group = randomUUID(), action = target === "PAID" ? "paid" : "reject";
+      const entries: [string,number][] = [["PAYOUT_LOCKED",-row.amount_minor]];
+      if (target === "REJECTED") entries.push(["AVAILABLE",row.amount_minor]);
+      for (const [bucket,amount] of entries) await client.query(`INSERT INTO ledger_entries
+        (id,partner_id,payout_id,bucket,amount_minor,entry_type,transaction_group_id,idempotency_key,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [randomUUID(),row.partner_id,id,bucket,amount,
+        target === "PAID" ? "PAYOUT_PAID" : "PAYOUT_REJECT",group,
+        `payout:${id}:${action}${bucket === "AVAILABLE" ? ":available" : ""}`,now]);
+      const updated = (await client.query<StoredPayout>(`UPDATE payouts SET status=$2,processed_by_admin_user_id=$3,
+        processed_at=$4,external_reference=$5,note=$6 WHERE id=$1 RETURNING *`,
+      [id,target,adminId,now,externalReference ?? null,note ?? null])).rows[0]!;
+      const payload = { v: 1,payoutId: id,partnerId: row.partner_id,amountMinor: row.amount_minor,status: target };
+      await client.query(`INSERT INTO events (id,type,aggregate_type,aggregate_id,dedupe_key,payload,created_at)
+        VALUES ($1,$2,'Payout',$3,$4,$5,$6)`, [randomUUID(),`PAYOUT_${target}`,id,
+        `payout:${id}:${target.toLowerCase()}`,JSON.stringify(payload),now]);
+      // Free-text reference/note live only on the authorized payout; never copy them to transport or logs.
+      await client.query(`INSERT INTO audit_logs (id,actor_user_id,action,entity_type,entity_id,request_id,metadata,created_at)
+        VALUES ($1,$2,$3,'Payout',$4,$5,$6,$7)`, [randomUUID(),adminId,`admin.payout.${action}`,id,
+        requestId ?? null,JSON.stringify({ partnerId: row.partner_id,amountMinor: row.amount_minor,fromStatus: "REQUESTED",toStatus: target }),now]);
+      const result = await this.project(client,updated);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
   }
 
   // Admin authorization belongs to the route; settlements bypass BR-007, not the financial rules.
@@ -32,7 +116,9 @@ export class PayoutService {
     return payoutResponseSchema.parse({ id: row.id, partnerId: row.partner_id, amountMinor: row.amount_minor,
       currency: row.currency, status: row.status, requestedByUserId: row.requested_by_user_id,
       requestedAt: row.requested_at.toISOString(), allocations: allocations.map((a) => ({
-        id: a.id, commissionId: a.commission_id, amountMinor: a.amount_minor })) });
+        id: a.id, commissionId: a.commission_id, amountMinor: a.amount_minor })),
+      processedByAdminUserId: row.processed_by_admin_user_id, processedAt: row.processed_at?.toISOString() ?? null,
+      externalReference: row.external_reference, note: row.note });
   }
 
   private async create(actorId: string, settlementPartnerId: string | null, key: unknown, input: unknown, requestId?: string) {

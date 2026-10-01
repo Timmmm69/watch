@@ -45,7 +45,8 @@ import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import type { PartnerEarningsService } from "./finance/earnings.js";
 import { PayoutError, type PayoutService } from "./finance/payouts.js";
-import { payoutRequestSchema, payoutResponseSchema } from "@watch/contracts";
+import { payoutRequestSchema, payoutResponseSchema, payoutListQuerySchema, adminPayoutListQuerySchema,
+  payoutListResponseSchema, payoutTransitionSchema } from "@watch/contracts";
 import { partnerEarningsQuerySchema, partnerEarningsResponseSchema } from "@watch/contracts";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 import { ReferralError, type ReferralService } from "./referral/referral.js";
@@ -85,7 +86,8 @@ export interface AppDependencies {
   returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete">;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   earnings?: Pick<PartnerEarningsService, "list">;
-  payouts?: Pick<PayoutService, "request" | "requestSettlement">;
+  payouts?: Pick<PayoutService, "request" | "requestSettlement"> & Partial<Pick<PayoutService,
+    "listOwn" | "listAdmin" | "detail" | "transition" | "configuration">>;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
@@ -225,6 +227,7 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
     });
 
     if (payouts) {
+      const payoutAdmin = createRequireAdmin(auth.adminIds);
       const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>
         reply.code(status).send({ error: { code, message: code, details: {}, requestId: request.id } });
       const handleError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
@@ -233,6 +236,34 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
           : ["PARTNER_REQUIRED","PARTNER_BLOCKED","USER_BLOCKED","TERMS_REACCEPT_REQUIRED"].includes(error.code) ? 403
           : error.code === "RATE_LIMITED" ? 429 : error.code === "NOT_FOUND" ? 404 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409);
       };
+      if (payouts.listOwn) app.get("/api/v1/partner/payouts", { preHandler: requireSession }, async (request,reply) => {
+        reply.header("Cache-Control","no-store");
+        const parsed = payoutListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) return fail(request,reply,"VALIDATION_ERROR");
+        try { return payoutListResponseSchema.parse(await payouts.listOwn!(request.auth!.user.id,parsed.data)); }
+        catch (error) { return handleError(request,reply,error); }
+      });
+      if (payouts.listAdmin) app.get("/api/v1/admin/payouts", { preHandler: [requireSession,payoutAdmin] }, async (request,reply) => {
+        reply.header("Cache-Control","no-store");
+        const parsed = adminPayoutListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) return fail(request,reply,"VALIDATION_ERROR");
+        try { return payoutListResponseSchema.parse(await payouts.listAdmin!(parsed.data)); }
+        catch (error) { return handleError(request,reply,error); }
+      });
+      if (payouts.detail) app.get("/api/v1/admin/payouts/:id", { preHandler: [requireSession,payoutAdmin] }, async (request,reply) => {
+        reply.header("Cache-Control","no-store");
+        const id = (request.params as { id: string }).id;
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return fail(request,reply,"VALIDATION_ERROR");
+        try { return payoutResponseSchema.parse(await payouts.detail!(id)); }
+        catch (error) { return handleError(request,reply,error); }
+      });
+      if (payouts.transition) app.post("/api/v1/admin/payouts/:id/transition", { preHandler: [requireSession,requireCsrf,payoutAdmin] }, async (request,reply) => {
+        reply.header("Cache-Control","no-store");
+        const id = (request.params as { id: string }).id, parsed = payoutTransitionSchema.safeParse(request.body);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) || !parsed.success) return fail(request,reply,"VALIDATION_ERROR");
+        try { return payoutResponseSchema.parse(await payouts.transition!(request.auth!.user.id,id,parsed.data,request.id)); }
+        catch (error) { return handleError(request,reply,error); }
+      });
       app.post("/api/v1/partner/payouts", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const parsed = payoutRequestSchema.safeParse(request.body === undefined ? {} : request.body);
@@ -265,7 +296,8 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid earnings query", details: {}, requestId: request.id } });
         const state = await partnerState(request.auth!.user.id);
         if (!state.partner) return reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
-        return partnerEarningsResponseSchema.parse(await earnings.list(state.partner.id, parsed.data));
+        return partnerEarningsResponseSchema.parse({ ...await earnings.list(state.partner.id, parsed.data),
+          ...(payouts?.configuration ?? {}) });
       });
     }
 

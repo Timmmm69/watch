@@ -11,16 +11,21 @@ const session: AuthenticatedSession = {
   user: { id: actor,telegramUserId: "1",firstName: "Partner",lastName: null,username: null,languageCode: null,isAdmin: false,isBlocked: false }
 };
 const payout = { id: randomUUID(),partnerId,amountMinor: 5000,currency: "BYN",status: "REQUESTED",
+  processedByAdminUserId: null, processedAt: null, externalReference: null, note: null,
   requestedByUserId: actor,requestedAt: new Date().toISOString(),allocations: [{ id: randomUUID(),commissionId: randomUUID(),amountMinor: 5000 }] };
 const headers = { cookie: "watch_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",origin: "https://app.example",
   "x-csrf-token": deriveCsrfToken(csrfSecret,"session"),"idempotency-key": "key" };
 function setup(admin = false, blocked = false) {
   const request = vi.fn().mockResolvedValue({ payout: { ...payout,destination: "private" },created: true });
   const requestSettlement = vi.fn().mockResolvedValue({ payout,created: true });
+  const listOwn = vi.fn().mockResolvedValue({ items: [payout],total: 1,page: 1,limit: 20 });
+  const listAdmin = vi.fn().mockResolvedValue({ items: [payout],total: 1,page: 1,limit: 20 });
+  const detail = vi.fn().mockResolvedValue(payout);
+  const transition = vi.fn().mockResolvedValue({ ...payout,status: "PAID",externalReference: "transfer-1" });
   const app = createApp({ logger: false,checkReadiness: async () => {},
     auth: { store: { loadCurrent: async () => ({ ...session,user: { ...session.user,isAdmin: admin,isBlocked: blocked } }) } as never,
-      csrfSecret,appBaseUrl: "https://app.example",adminIds: () => new Set(["1"]) }, payouts: { request,requestSettlement } });
-  return { app,request,requestSettlement };
+      csrfSecret,appBaseUrl: "https://app.example",adminIds: () => new Set(["1"]) }, payouts: { request,requestSettlement,listOwn,listAdmin,detail,transition } });
+  return { app,request,requestSettlement,listOwn,listAdmin,detail,transition };
 }
 describe("T33 payout routes", () => {
   it("returns 201 for creation, 200 for retry; server-scoped actor and safe response", async () => {
@@ -75,8 +80,49 @@ describe("T33 payout routes", () => {
       expect(result.statusCode).toBe(201);
       expect(requestSettlement).toHaveBeenCalledExactlyOnceWith(actor,partnerId,"key",{},expect.any(String));
       expect((await app.inject({ method: "POST",url: "/api/v1/admin/partners/bad/payouts",headers,payload: {} })).statusCode).toBe(400);
-      // T34 terminal processing/history/UI is deliberately absent.
+      // Only the specified transition endpoint is exposed.
       expect((await app.inject({ method: "POST",url: `/api/v1/admin/payouts/${payout.id}/process`,headers,payload: { status: "PAID" } })).statusCode).toBe(404);
+    } finally { await app.close(); }
+  });
+});
+
+describe("T34 payout routes", () => {
+  it("scopes Partner history to authenticated user and rejects injected ownership/filter inputs", async () => {
+    const { app,listOwn } = setup();
+    try {
+      const result = await app.inject({ url: "/api/v1/partner/payouts?status=PAID&page=2&limit=3",headers });
+      expect(result.statusCode).toBe(200);
+      expect(result.headers["cache-control"]).toBe("no-store");
+      expect(listOwn).toHaveBeenCalledExactlyOnceWith(actor,{ status: "PAID",page: 2,limit: 3 });
+      for (const query of [`partnerId=${partnerId}`,"status=unknown","limit=101","page=0"])
+        expect((await app.inject({ url: `/api/v1/partner/payouts?${query}`,headers })).statusCode).toBe(400);
+      expect((await app.inject({ url: "/api/v1/partner/payouts" })).statusCode).toBe(401);
+    } finally { await app.close(); }
+  });
+  it("protects Admin reads/processing and requires CSRF and a completed-transfer reference", async () => {
+    const url = `/api/v1/admin/payouts/${payout.id}`;
+    const ordinary = setup();
+    try {
+      for (const path of ["/api/v1/admin/payouts",url]) expect((await ordinary.app.inject({ url: path,headers })).statusCode).toBe(403);
+      expect((await ordinary.app.inject({ method: "POST",url: `${url}/transition`,headers,payload: { target: "REJECTED" } })).statusCode).toBe(403);
+      expect(ordinary.transition).not.toHaveBeenCalled();
+    } finally { await ordinary.app.close(); }
+    const { app,listAdmin,detail,transition } = setup(true);
+    try {
+      expect((await app.inject({ url: `/api/v1/admin/payouts?partnerId=${partnerId}&status=REQUESTED`,headers })).statusCode).toBe(200);
+      expect(listAdmin).toHaveBeenCalledExactlyOnceWith({ partnerId,status: "REQUESTED",page: 1,limit: 20 });
+      expect((await app.inject({ url,headers })).statusCode).toBe(200);
+      expect(detail).toHaveBeenCalledExactlyOnceWith(payout.id);
+      for (const payload of [{ target: "PAID" },{ target: "PAID",externalReference: " " },{ target: "REQUESTED" },{ target: "REJECTED",amountMinor: 1 }])
+        expect((await app.inject({ method: "POST",url: `${url}/transition`,headers,payload })).statusCode).toBe(400);
+      expect((await app.inject({ method: "POST",url: `${url}/transition`,headers: { ...headers,"x-csrf-token": "bad" },payload: { target: "REJECTED" } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST",url: `${url}/transition`,headers,payload: { target: "PAID",externalReference: " transfer-1 " } })).statusCode).toBe(200);
+      expect(transition).toHaveBeenCalledExactlyOnceWith(actor,payout.id,{ target: "PAID",externalReference: "transfer-1" },expect.any(String));
+      transition.mockRejectedValue(new PayoutError("PAYOUT_ALREADY_FINALIZED"));
+      expect((await app.inject({ method: "POST",url: `${url}/transition`,headers,payload: { target: "REJECTED" } })).statusCode).toBe(409);
+      detail.mockRejectedValue(new PayoutError("NOT_FOUND"));
+      expect((await app.inject({ url,headers })).statusCode).toBe(404);
+      expect((await app.inject({ url: "/api/v1/admin/payouts/bad",headers })).statusCode).toBe(400);
     } finally { await app.close(); }
   });
 });

@@ -34,6 +34,16 @@ function event(type: string, payload: Record<string, unknown>): OutboxEvent {
 }
 
 describe("dispatchEvent", () => {
+  it.each([["PAID","выплачена"],["REJECTED","отклонена"]])("notifies Partner of terminal payout %s without sending another Admin request", async (status,label) => {
+    const pool = new MockPool();
+    pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);
+    pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1",telegram_user_id: "111" }]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    await dispatchEvent(pool as unknown as Pool,event(`PAYOUT_${status}`,{ v: 1,payoutId: "payout",partnerId: "partner",amountMinor: 5000,status }),config,send);
+    expect(send).toHaveBeenCalledExactlyOnceWith("111",expect.stringContaining(`50.00 BYN ${label}`));
+    expect(send).toHaveBeenCalledWith("111",expect.stringContaining("/partner/payouts"));
+    expect(pool.queries.some((query) => query.sql.includes("is_admin = true"))).toBe(false);
+  });
   it("formats PAYOUT_REQUESTED using the payout currency rather than loading an Order", async () => {
     const pool = new MockPool();
     pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);

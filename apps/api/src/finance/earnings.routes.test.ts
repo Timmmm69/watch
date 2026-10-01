@@ -17,7 +17,8 @@ describe("Partner earnings route", () => {
     const app = createApp({ logger: false, checkReadiness: async () => {},
       auth: { store: { loadCurrent: async () => session } as never, csrfSecret: Buffer.alloc(32), appBaseUrl: "https://app.example", adminIds: () => new Set() },
       partner: { loadState: async () => ({ partner: { id: partnerId, status }, partnerTermsReacceptRequired: true }) } as never,
-      earnings: { list } });
+      earnings: { list }, payouts: { request: vi.fn(),requestSettlement: vi.fn(),
+        configuration: { minimumPayoutMinor: 7500,payoutConfigurationResolved: true } } });
     try {
       const response = await app.inject({ method: "GET", url: `/api/v1/partner/earnings?page=2&limit=3&partnerId=${randomUUID()}`, headers: cookie });
       expect(response.statusCode).toBe(200);
@@ -25,6 +26,8 @@ describe("Partner earnings route", () => {
       expect(list).toHaveBeenCalledExactlyOnceWith(partnerId, { page: 2, limit: 3 });
       expect(response.json()).not.toHaveProperty("buyerPhone");
       expect(response.json().availableAmountMinor).toBe(-50);
+      expect(response.json().minimumPayoutMinor).toBe(7500);
+      expect(response.json().payoutConfigurationResolved).toBe(true);
     } finally { await app.close(); }
   });
 

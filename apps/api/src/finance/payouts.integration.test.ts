@@ -44,21 +44,8 @@ async function balances() {
   return (await pool!.query(`SELECT bucket,SUM(amount_minor)::int AS amount FROM ledger_entries
     WHERE partner_id=$1 GROUP BY bucket ORDER BY bucket::text`, [partner])).rows;
 }
-// Terminal operations are T34; these SQL fixtures model their specified ledger effects.
 async function finalize(id: string, status: "PAID" | "REJECTED") {
-  const client = await pool!.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [partner]);
-    const payout = (await client.query("SELECT amount_minor FROM payouts WHERE id=$1 FOR UPDATE", [id])).rows[0];
-    const group = randomUUID();
-    for (const [bucket,amount] of [["PAYOUT_LOCKED",-payout.amount_minor],...(status === "REJECTED" ? [["AVAILABLE",payout.amount_minor]] : [])])
-      await client.query(`INSERT INTO ledger_entries (id,partner_id,payout_id,bucket,amount_minor,entry_type,transaction_group_id,idempotency_key)
-        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$1::text)`, [randomUUID(),partner,id,bucket,amount,status === "PAID" ? "PAYOUT_PAID" : "PAYOUT_REJECT",group]);
-    await client.query("UPDATE payouts SET status=$2,processed_by_admin_user_id=$3,processed_at=now() WHERE id=$1", [id,status,admin]);
-    await client.query("COMMIT");
-  } catch (error) { await client.query("ROLLBACK"); throw error; }
-  finally { client.release(); }
+  await service.transition(admin,id,{ target: status,...(status === "PAID" ? { externalReference: `transfer-${id}` } : {}) });
 }
 async function counts() {
   return (await pool!.query(`SELECT (SELECT count(*)::int FROM payouts) AS payouts,
@@ -262,6 +249,145 @@ describe.skipIf(!pool)("T33 payouts against PostgreSQL", () => {
     const available = (await balances()).find((r) => r.bucket === "AVAILABLE").amount;
     expect(available+requested.payout.amountMinor).toBe(5000);
     expect((await pool!.query("SELECT reversed_amount_minor FROM commissions WHERE id=$1", [c.id])).rows[0].reversed_amount_minor).toBe(5000);
+  });
+
+  it("processes PAID once with deterministic journal, audit and PII-safe event", async () => {
+    await commission(6000);
+    const requested = await service.request(user,"paid-transition");
+    const processed = await service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "bank-transfer-42",note: "Settled externally" },"transition-request");
+    expect(processed).toMatchObject({ id: requested.payout.id,status: "PAID" });
+    expect(await balances()).toEqual([{ bucket: "AVAILABLE",amount: 0 },{ bucket: "PAYOUT_LOCKED",amount: 0 },{ bucket: "PENDING",amount: 0 }]);
+    expect((await pool!.query(`SELECT bucket,amount_minor,entry_type,idempotency_key FROM ledger_entries
+      WHERE payout_id=$1 AND entry_type='PAYOUT_PAID'`, [requested.payout.id])).rows)
+      .toEqual([{ bucket: "PAYOUT_LOCKED",amount_minor: -6000,entry_type: "PAYOUT_PAID",idempotency_key: `payout:${requested.payout.id}:paid` }]);
+    expect((await pool!.query("SELECT payload FROM events WHERE type='PAYOUT_PAID' AND aggregate_id=$1", [requested.payout.id])).rows[0].payload)
+      .toEqual({ v: 1,payoutId: requested.payout.id,partnerId: partner,amountMinor: 6000,status: "PAID" });
+    expect((await pool!.query("SELECT actor_user_id,request_id,metadata FROM audit_logs WHERE entity_id=$1", [requested.payout.id])).rows)
+      .toEqual([{ actor_user_id: admin,request_id: "transition-request",metadata: { partnerId: partner,amountMinor: 6000,fromStatus: "REQUESTED",toStatus: "PAID" } }]);
+    const terminalBeforeRetry = (await pool!.query(`SELECT processed_by_admin_user_id,processed_at,external_reference,note
+      FROM payouts WHERE id=$1`, [requested.payout.id])).rows[0];
+    const writesBeforeRetry = await counts();
+    await expect(service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "changed",note: "changed" }))
+      .resolves.toMatchObject({ status: "PAID" });
+    expect((await pool!.query(`SELECT processed_by_admin_user_id,processed_at,external_reference,note
+      FROM payouts WHERE id=$1`, [requested.payout.id])).rows[0]).toEqual(terminalBeforeRetry);
+    expect(await counts()).toEqual(writesBeforeRetry);
+    expect((await pool!.query("SELECT count(*)::int AS count FROM ledger_entries WHERE payout_id=$1 AND entry_type='PAYOUT_PAID'", [requested.payout.id])).rows[0].count).toBe(1);
+  });
+
+  it("restores an exact rejection once and retains payout/allocation history", async () => {
+    const c = await commission(6000);
+    const requested = await service.request(user,"reject-transition");
+    const allocations = (await pool!.query("SELECT * FROM payout_allocations WHERE payout_id=$1", [requested.payout.id])).rows;
+    await expect(service.transition(admin,requested.payout.id,{ target: "REJECTED",note: "External transfer failed" }))
+      .resolves.toMatchObject({ status: "REJECTED" });
+    expect(await balances()).toEqual([{ bucket: "AVAILABLE",amount: 6000 },{ bucket: "PAYOUT_LOCKED",amount: 0 },{ bucket: "PENDING",amount: 0 }]);
+    expect((await pool!.query("SELECT * FROM payout_allocations WHERE payout_id=$1", [requested.payout.id])).rows).toEqual(allocations);
+    expect((await pool!.query(`SELECT bucket,amount_minor,idempotency_key FROM ledger_entries
+      WHERE payout_id=$1 AND entry_type='PAYOUT_REJECT' ORDER BY idempotency_key`, [requested.payout.id])).rows)
+      .toEqual([
+        { bucket: "PAYOUT_LOCKED",amount_minor: -6000,idempotency_key: `payout:${requested.payout.id}:reject` },
+        { bucket: "AVAILABLE",amount_minor: 6000,idempotency_key: `payout:${requested.payout.id}:reject:available` },
+      ]);
+    await expect(service.transition(admin,requested.payout.id,{ target: "REJECTED",note: "changed" })).resolves.toMatchObject({ status: "REJECTED" });
+    await expect(service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "late-transfer" }))
+      .rejects.toMatchObject({ code: "PAYOUT_ALREADY_FINALIZED" });
+    expect((await pool!.query("SELECT count(*)::int AS count FROM payout_allocations WHERE commission_id=$1", [c.id])).rows[0].count).toBe(1);
+  });
+
+  it("validates terminal transition input before writing", async () => {
+    await commission(6000);
+    const requested = await service.request(user,"transition-validation");
+    for (const input of [
+      { target: "PAID" }, { target: "PAID",externalReference: "   " },
+      { target: "PAID",externalReference: "x".repeat(201) }, { target: "REJECTED",note: "x".repeat(2001) },
+      { target: "PAID",externalReference: "ok",unexpected: true },
+    ]) await expect(service.transition(admin,requested.payout.id,input)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((await pool!.query("SELECT status FROM payouts WHERE id=$1", [requested.payout.id])).rows[0].status).toBe("REQUESTED");
+  });
+
+  it("serializes equal and opposing concurrent terminal transitions", async () => {
+    await commission(6000);
+    const same = await service.request(user,"same-transition");
+    const bothPaid = await Promise.all(["a","b"].map((reference) =>
+      service.transition(admin,same.payout.id,{ target: "PAID",externalReference: reference })));
+    expect(bothPaid.map((p) => p.status)).toEqual(["PAID","PAID"]);
+    expect((await pool!.query("SELECT count(*)::int AS count FROM ledger_entries WHERE payout_id=$1 AND entry_type='PAYOUT_PAID'", [same.payout.id])).rows[0].count).toBe(1);
+    await commission(6000);
+    const opposite = await service.request(user,"opposite-transition");
+    const outcome = await Promise.allSettled([
+      service.transition(admin,opposite.payout.id,{ target: "PAID",externalReference: "first" }),
+      service.transition(admin,opposite.payout.id,{ target: "REJECTED",note: "second" }),
+    ]);
+    expect(outcome.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(outcome.filter((result) => result.status === "rejected")[0]).toMatchObject({ reason: { code: "PAYOUT_ALREADY_FINALIZED" } });
+  });
+
+  it.each(["ledger_entries","events","audit_logs"])("rolls back processing if %s fails", async (table) => {
+    await commission(6000);
+    const requested = await service.request(user,`processing-fault-${table}`);
+    const before = await counts();
+    await pool!.query(`CREATE FUNCTION transition_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Injected transition fault'; END; $$;
+      CREATE TRIGGER transition_injected_fault BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION transition_fault()`);
+    try {
+      await expect(service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "fault" })).rejects.toThrow("Injected transition fault");
+    } finally {
+      await pool!.query(`DROP TRIGGER transition_injected_fault ON ${table}; DROP FUNCTION transition_fault()`);
+    }
+    expect(await counts()).toEqual(before);
+    expect((await pool!.query("SELECT status,processed_at FROM payouts WHERE id=$1", [requested.payout.id])).rows[0]).toEqual({ status: "REQUESTED",processed_at: null });
+    await expect(service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "after-fault" })).resolves.toMatchObject({ status: "PAID" });
+  });
+
+  it("keeps historical payout reads available and scopes paginated Partner/Admin history", async () => {
+    await commission(6000);
+    const first = await service.request(user,"history-first");
+    await service.transition(admin,first.payout.id,{ target: "REJECTED",note: "first" });
+    await commission(6000);
+    const second = await service.request(user,"history-second");
+    await service.transition(admin,second.payout.id,{ target: "PAID",externalReference: "second" });
+    await pool!.query("UPDATE payouts SET requested_at='2026-09-01T00:00:00.000Z' WHERE id IN ($1,$2)", [first.payout.id,second.payout.id]);
+    await pool!.query("UPDATE partners SET status='BLOCKED' WHERE id=$1", [partner]);
+    await pool!.query("DELETE FROM partner_terms_acceptances WHERE partner_id=$1", [partner]);
+    const own = await service.listOwn(user,{ page: 1,limit: 1 });
+    expect(own).toMatchObject({ total: 2,page: 1,limit: 1 });
+    expect(own.items).toHaveLength(1);
+    const ordered = (await pool!.query<{ id: string }>(`SELECT id FROM payouts WHERE id IN ($1,$2)
+      ORDER BY id`, [first.payout.id,second.payout.id])).rows.map((row) => row.id);
+    expect(own.items[0]!.id).toBe(ordered[0]);
+    expect((await service.listOwn(user,{ page: 2,limit: 1 })).items).toMatchObject([{ id: ordered[1] }]);
+    expect(await service.listOwn(otherUser,{ page: 1,limit: 100 })).toMatchObject({ items: [],total: 0,page: 1,limit: 100 });
+    expect((await service.listOwn(user,{ page: 1,limit: 100,status: "PAID" })).items).toMatchObject([{ id: second.payout.id,status: "PAID" }]);
+    expect((await service.listAdmin({ page: 1,limit: 100,status: "REJECTED",partnerId: partner })).items)
+      .toMatchObject([{ id: first.payout.id,partnerId: partner,status: "REJECTED" }]);
+    const detail = await service.detail(second.payout.id);
+    expect(detail).toMatchObject({ id: second.payout.id });
+    expect(detail.allocations).toEqual(expect.arrayContaining([expect.objectContaining({ commissionId: expect.any(String) })]));
+  });
+
+  it("keeps net ledger balances valid when reject, replacement request and return race", async () => {
+    const original = await commission(10000);
+    const requested = await service.request(user,"reject-return-race-initial");
+    const originalAllocations = (await pool!.query("SELECT * FROM payout_allocations WHERE payout_id=$1", [requested.payout.id])).rows;
+    const returns = new AdminReturnService(pool!);
+    const returned = await returns.create(admin,{ orderId: original.order,reason: "Concurrent half return",items: [{ orderItemId: original.item,quantity: 1 }] });
+    const outcomes = await Promise.allSettled([
+      service.transition(admin,requested.payout.id,{ target: "REJECTED",note: "retry funds" }),
+      service.request(user,"reject-return-race-replacement"),
+      returns.complete(returned.id,admin),
+    ]);
+    const rejected = outcomes[0]!;
+    const replacement = outcomes[1]!;
+    const completed = outcomes[2]!;
+    expect(rejected).toMatchObject({ status: "fulfilled",value: { status: "REJECTED" } });
+    expect(completed).toMatchObject({ status: "fulfilled" });
+    if (replacement.status === "rejected") expect(replacement.reason).toMatchObject({ code: "PAYOUT_ALREADY_PENDING" });
+    else expect(replacement.value.payout).toMatchObject({ status: "REQUESTED",amountMinor: expect.any(Number) });
+    const balance = Object.fromEntries((await balances()).map(({ bucket,amount }) => [bucket,amount]));
+    expect(balance.PENDING).toBe(0);
+    expect(balance.AVAILABLE + balance.PAYOUT_LOCKED).toBe(5000);
+    expect((await pool!.query("SELECT * FROM payout_allocations WHERE payout_id=$1", [requested.payout.id])).rows).toEqual(originalAllocations);
+    expect((await pool!.query("SELECT reversed_amount_minor FROM commissions WHERE id=$1", [original.id])).rows[0].reversed_amount_minor).toBe(5000);
   });
 });
 

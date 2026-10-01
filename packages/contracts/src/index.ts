@@ -120,6 +120,7 @@ export const partnerCommissionSchema = z.object({
   eligibleAt: z.string().datetime().nullable(), availableAt: z.string().datetime().nullable()
 });
 export const partnerEarningsResponseSchema = z.object({
+  minimumPayoutMinor: moneyMinor.positive().optional(), payoutConfigurationResolved: z.boolean().optional(),
   currency: z.string().length(3), pendingAmountMinor: ledgerBalanceMinor,
   availableAmountMinor: ledgerBalanceMinor, items: z.array(partnerCommissionSchema),
   total: z.number().int().nonnegative(), page: z.number().int().positive(), limit: z.number().int().positive()
@@ -133,9 +134,20 @@ export const payoutResponseSchema = z.object({
   id: z.string().uuid(), partnerId: z.string().uuid(), amountMinor: moneyMinor.positive(),
   currency: z.literal("BYN"), status: z.enum(["REQUESTED", "PAID", "REJECTED"]),
   requestedByUserId: z.string().uuid(), requestedAt: z.string().datetime(),
+  processedByAdminUserId: z.string().uuid().nullable().default(null),
+  processedAt: z.string().datetime().nullable().default(null),
+  externalReference: z.string().nullable().default(null), note: z.string().nullable().default(null),
   allocations: z.array(z.object({ id: z.string().uuid(), commissionId: z.string().uuid(), amountMinor: moneyMinor.positive() }))
 });
 export type PayoutResponse = z.infer<typeof payoutResponseSchema>;
+export const payoutListQuerySchema = pageQuerySchema.extend({ status: z.enum(["REQUESTED", "PAID", "REJECTED"]).optional() }).strict();
+export const adminPayoutListQuerySchema = payoutListQuerySchema.extend({ partnerId: z.string().uuid().optional() });
+export const payoutListResponseSchema = z.object({ items: z.array(payoutResponseSchema), total: z.number().int().nonnegative(),
+  page: z.number().int().positive(), limit: z.number().int().positive() });
+export const payoutTransitionSchema = z.object({ target: z.enum(["PAID", "REJECTED"]),
+  externalReference: z.string().trim().min(1).max(200).optional(), note: z.string().trim().max(2000).optional()
+}).strict().refine((value) => value.target !== "PAID" || !!value.externalReference, { message: "PAID requires an external reference", path: ["externalReference"] });
+export type PayoutListQuery = z.infer<typeof adminPayoutListQuerySchema>;
 
 export const orderStatusSchema = z.enum(["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "DELIVERY_FAILED"]);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;

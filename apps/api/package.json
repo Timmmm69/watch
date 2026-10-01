@@ -14,6 +14,7 @@
     "catalog:bootstrap": "tsx src/catalog/bootstrap.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "test:payout-browser": "tsx src/finance/payouts.browser.ts",
     "test:financial": "tsx src/finance/acceptance.ts"
   },
   "dependencies": {
