@@ -278,7 +278,8 @@ async function dispatchPayout(
   if (!partnerId || !status) return [];
   const recipient = await loadPartnerRecipient(pool, partnerId);
   const errors: Error[] = [];
-  const currency = (await loadOrderSummary(pool, typeof payload.payoutId === "string" ? payload.payoutId : ""))?.currency ?? "";
+  const payoutId = typeof payload.payoutId === "string" ? payload.payoutId : null;
+  const currency = payoutId ? (await pool.query<{ currency: string }>("SELECT currency FROM payouts WHERE id=$1", [payoutId])).rows[0]?.currency ?? "" : "";
   if (recipient) {
     let label = "";
     if (status === "REQUESTED") label = "запрошена";

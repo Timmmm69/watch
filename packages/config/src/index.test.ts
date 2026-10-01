@@ -31,6 +31,13 @@ describe("API runtime configuration", () => {
       expect(() => loadApiRuntimeConfig({ ...valid,ORDER_OVERDUE_SECONDS: value })).toThrow();
   });
 
+  it("validates prospective payout minimum in platform minor units", () => {
+    expect(loadApiRuntimeConfig(valid).MIN_PAYOUT_MINOR).toBe(5000);
+    expect(loadApiRuntimeConfig({ ...valid, MIN_PAYOUT_MINOR: "10000" }).MIN_PAYOUT_MINOR).toBe(10000);
+    for (const value of ["0", "-1", "1.5", "", "bad", "2147483648"])
+      expect(() => loadApiRuntimeConfig({ ...valid, MIN_PAYOUT_MINOR: value })).toThrow();
+  });
+
   const account = {
     type: "service_account", project_id: "inventory-project", client_email: "inventory@example.iam.gserviceaccount.com",
     private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString()

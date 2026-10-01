@@ -44,6 +44,8 @@ import { stageMedia } from "./catalog/media-upload.js";
 import type { LegalDocumentProjection } from "./legal/legal.js";
 import type { OnboardResult, PartnerState } from "./partner/partner.js";
 import type { PartnerEarningsService } from "./finance/earnings.js";
+import { PayoutError, type PayoutService } from "./finance/payouts.js";
+import { payoutRequestSchema, payoutResponseSchema } from "@watch/contracts";
 import { partnerEarningsQuerySchema, partnerEarningsResponseSchema } from "@watch/contracts";
 import { parseTelegramUpdate, type TelegramInbox } from "./telegram/inbox.js";
 import { ReferralError, type ReferralService } from "./referral/referral.js";
@@ -83,10 +85,11 @@ export interface AppDependencies {
   returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete">;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   earnings?: Pick<PartnerEarningsService, "list">;
+  payouts?: Pick<PayoutService, "request" | "requestSettlement">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -220,6 +223,40 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
       reply.header("Set-Cookie", `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT${new URL(auth.appBaseUrl).protocol === "https:" ? "; Secure" : ""}`);
       return { ok: true };
     });
+
+    if (payouts) {
+      const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>
+        reply.code(status).send({ error: { code, message: code, details: {}, requestId: request.id } });
+      const handleError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (!(error instanceof PayoutError)) throw error;
+        return fail(request,reply,error.code,error.code === "VALIDATION_ERROR" ? 400
+          : ["PARTNER_REQUIRED","PARTNER_BLOCKED","USER_BLOCKED","TERMS_REACCEPT_REQUIRED"].includes(error.code) ? 403
+          : error.code === "RATE_LIMITED" ? 429 : error.code === "NOT_FOUND" ? 404 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409);
+      };
+      app.post("/api/v1/partner/payouts", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = payoutRequestSchema.safeParse(request.body === undefined ? {} : request.body);
+        const key = request.headers["idempotency-key"];
+        if (!parsed.success || typeof key !== "string" || !key.trim() || key.length > 100) return fail(request,reply,"VALIDATION_ERROR");
+        // BR-007 and idempotency ordering are rechecked inside the Partner-locked service.
+        try {
+          const result = await payouts.request(request.auth!.user.id,key,parsed.data);
+          return reply.code(result.created ? 201 : 200).send(payoutResponseSchema.parse(result.payout));
+        } catch (error) { return handleError(request,reply,error); }
+      });
+      app.post("/api/v1/admin/partners/:id/payouts", { preHandler: [requireSession, requireCsrf, createRequireAdmin(auth.adminIds)] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        const parsed = payoutRequestSchema.safeParse(request.body === undefined ? {} : request.body);
+        const key = request.headers["idempotency-key"];
+        if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+          || !parsed.success || typeof key !== "string" || !key.trim() || key.length > 100) return fail(request,reply,"VALIDATION_ERROR");
+        try {
+          const result = await payouts.requestSettlement(request.auth!.user.id,id,key,parsed.data,request.id);
+          return reply.code(result.created ? 201 : 200).send(payoutResponseSchema.parse(result.payout));
+        } catch (error) { return handleError(request,reply,error); }
+      });
+    }
 
     if (earnings) {
       app.get("/api/v1/partner/earnings", { preHandler: requireSession }, async (request, reply) => {

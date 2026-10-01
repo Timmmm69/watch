@@ -17,6 +17,7 @@ import { AdminOrderService } from "./orders/admin.js";
 import { AdminReturnService } from "./returns/returns.js";
 import { OrderViewService } from "./orders/views.js";
 import { PartnerEarningsService } from "./finance/earnings.js";
+import { PayoutService } from "./finance/payouts.js";
 import { verifyS12FinancialData } from "./finance/gate.js";
 import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
 
@@ -63,6 +64,7 @@ const app = createApp({
   returns: new AdminReturnService(pool),
   orderViews: new OrderViewService(pool, runtimeConfig.SUPPORT_CONTACT),
   earnings: new PartnerEarningsService(pool),
+  payouts: new PayoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig).PARTNER_TERMS!, runtimeConfig.MIN_PAYOUT_MINOR),
   checkout: new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig), runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },

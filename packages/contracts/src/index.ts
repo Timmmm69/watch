@@ -115,6 +115,7 @@ export const partnerCommissionSchema = z.object({
   state: z.enum(["PENDING", "HOLD", "EARNED", "VOID"]),
   grossAmountMinor: moneyMinor, reversedAmountMinor: moneyMinor,
   netEarnedAmountMinor: ledgerBalanceMinor,
+  lockedAmountMinor: ledgerBalanceMinor.nonnegative(), paidAmountMinor: ledgerBalanceMinor.nonnegative(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   eligibleAt: z.string().datetime().nullable(), availableAt: z.string().datetime().nullable()
 });
@@ -125,6 +126,16 @@ export const partnerEarningsResponseSchema = z.object({
 });
 export type PartnerEarningsQuery = z.infer<typeof partnerEarningsQuerySchema>;
 export type PartnerEarningsResponse = z.infer<typeof partnerEarningsResponseSchema>;
+
+// U06: no client amount or destination; the server requests the full net AVAILABLE.
+export const payoutRequestSchema = z.object({}).strict();
+export const payoutResponseSchema = z.object({
+  id: z.string().uuid(), partnerId: z.string().uuid(), amountMinor: moneyMinor.positive(),
+  currency: z.literal("BYN"), status: z.enum(["REQUESTED", "PAID", "REJECTED"]),
+  requestedByUserId: z.string().uuid(), requestedAt: z.string().datetime(),
+  allocations: z.array(z.object({ id: z.string().uuid(), commissionId: z.string().uuid(), amountMinor: moneyMinor.positive() }))
+});
+export type PayoutResponse = z.infer<typeof payoutResponseSchema>;
 
 export const orderStatusSchema = z.enum(["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "DELIVERY_FAILED"]);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;

@@ -226,5 +226,7 @@ describe.skipIf(!databaseUrl)("Commission/Ledger migrations on real PostgreSQL",
     await expect(checkDatabaseReady(pool!)).rejects.toThrow("Commission/Ledger migration has not been applied");
     await pool!.query("INSERT INTO _prisma_migrations VALUES ('20261001000000_commission_ledger',now(),NULL)");
     await expect(checkDatabaseReady(pool!)).resolves.toBeUndefined();
+    await pool!.query("DELETE FROM _prisma_migrations WHERE migration_name='20261003000000_payout_allocations'");
+    await expect(checkDatabaseReady(pool!)).rejects.toThrow("Payout allocations migration has not been applied");
   });
 });

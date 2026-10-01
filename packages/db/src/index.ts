@@ -11,6 +11,7 @@ const inventorySyncEventsMigration = "20260930090000_inventory_sync_events";
 const cartMigration = "20260930100000_cart";
 const ordersMigration = "20260930110000_orders";
 const commissionLedgerMigration = "20261001000000_commission_ledger";
+const payoutAllocationsMigration = "20261003000000_payout_allocations";
 
 export function createDatabasePool(connectionString: string): Pool {
   const options: PoolConfig = {
@@ -64,5 +65,8 @@ export async function checkDatabaseReady(pool: Pool): Promise<void> {
   }
   if (!result.rows.some((row) => row.migration_name === commissionLedgerMigration && row.finished_at !== null)) {
     throw new Error("Commission/Ledger migration has not been applied");
+  }
+  if (!result.rows.some((row) => row.migration_name === payoutAllocationsMigration && row.finished_at !== null)) {
+    throw new Error("Payout allocations migration has not been applied");
   }
 }

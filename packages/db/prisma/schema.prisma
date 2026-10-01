@@ -120,6 +120,7 @@ model Partner {
   commissions Commission[]
   ledgerEntries LedgerEntry[]
   payouts Payout[]
+  payoutAllocations PayoutAllocation[]
 
   @@index([status])
   @@map("partners")
@@ -631,6 +632,7 @@ model Commission {
   order               Order           @relation(fields: [orderId, partnerId], references: [id, partnerIdSnapshot], onDelete: Restrict)
   orderItem           OrderItem       @relation(fields: [orderItemId, orderId], references: [id, orderId], onDelete: Restrict)
   ledgerEntries       LedgerEntry[]
+  payoutAllocations   PayoutAllocation[]
 
   @@unique([id, partnerId])
   @@index([partnerId, state, createdAt])
@@ -638,7 +640,7 @@ model Commission {
   @@map("commissions")
 }
 
-// Foundation for LedgerEntry's composite FK; payout operations/allocations are S14.
+// T33: allocation history is immutable; encumbrance follows parent payout status.
 model Payout {
   id                     String       @id @default(uuid()) @db.Uuid
   partnerId              String       @map("partner_id") @db.Uuid
@@ -658,12 +660,30 @@ model Payout {
   requestedBy            User         @relation("PayoutRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
   processedBy            User?        @relation("PayoutProcessedBy", fields: [processedByAdminUserId], references: [id], onDelete: Restrict)
   ledgerEntries          LedgerEntry[]
+  allocations            PayoutAllocation[]
 
   @@unique([id, partnerId])
   @@unique([partnerId, idempotencyKey])
   @@index([status, requestedAt])
   @@index([partnerId, requestedAt])
   @@map("payouts")
+}
+
+model PayoutAllocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  partnerId    String   @map("partner_id") @db.Uuid
+  payoutId     String   @map("payout_id") @db.Uuid
+  commissionId String   @map("commission_id") @db.Uuid
+  amountMinor  Int      @map("amount_minor")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  partner      Partner  @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  payout       Payout   @relation(fields: [payoutId, partnerId], references: [id, partnerId], onDelete: Restrict, onUpdate: Restrict)
+  commission   Commission @relation(fields: [commissionId, partnerId], references: [id, partnerId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([payoutId, commissionId])
+  @@index([commissionId])
+  @@index([payoutId])
+  @@map("payout_allocations")
 }
 
 model LedgerEntry {
