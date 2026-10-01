@@ -579,6 +579,7 @@ model OrderItem {
   variant                            ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
   reservations                       InventoryReservation[]
   commissions                        Commission[]
+  returnItems                        ReturnItem[]
 
   @@unique([orderId, variantId])
   @@unique([id, orderId])
@@ -688,7 +689,7 @@ model LedgerEntry {
   @@map("ledger_entries")
 }
 
-// S12 completion foundation. Return items and Admin queue index are S13.
+// S13/T31 workflow foundation. Completion/reversals belong to T32.
 model Return {
   id                   String       @id @default(uuid()) @db.Uuid
   orderId              String       @map("order_id") @db.Uuid
@@ -700,8 +701,24 @@ model Return {
   note                 String?
   order                Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   createdBy            User         @relation(fields: [createdByAdminUserId], references: [id], onDelete: Restrict)
+  items                ReturnItem[]
 
   @@unique([id, orderId])
   @@index([orderId, status])
+  @@index([status, createdAt, id])
   @@map("returns")
+}
+
+model ReturnItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  returnId    String    @map("return_id") @db.Uuid
+  orderId     String    @map("order_id") @db.Uuid
+  orderItemId String    @map("order_item_id") @db.Uuid
+  quantity    Int
+  return      Return    @relation(fields: [returnId, orderId], references: [id, orderId], onDelete: Restrict)
+  orderItem   OrderItem @relation(fields: [orderItemId, orderId], references: [id, orderId], onDelete: Restrict)
+
+  @@unique([returnId, orderItemId])
+  @@index([orderItemId])
+  @@map("return_items")
 }

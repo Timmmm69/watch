@@ -27,8 +27,10 @@ import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
+import { adminReturnCreateRequestSchema, adminReturnListQuerySchema } from "@watch/contracts";
 import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
 import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
+import { ReturnError, type AdminReturnService } from "./returns/returns.js";
 import { OrderViewError, type OrderViewService } from "./orders/views.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
@@ -78,12 +80,13 @@ export interface AppDependencies {
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   checkout?: Pick<CheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
+  returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel">;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   earnings?: Pick<PartnerEarningsService, "list">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, orderViews, earnings, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -328,6 +331,43 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         return reply.code(status).send({ error: { code: error.code, message: error.message, details: error.details, requestId: request.id } });
       }
     });
+
+    if (returns) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>
+        reply.code(status).send({ error: { code, message: code, details: {}, requestId: request.id } });
+      const handleError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (!(error instanceof ReturnError)) throw error;
+        return fail(request, reply, error.code, error.code === "NOT_FOUND" ? 404
+          : error.code === "VALIDATION_ERROR" ? 400 : 409);
+      };
+      app.get("/api/v1/admin/returns", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = adminReturnListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        return returns.list(parsed.data);
+      });
+      app.post("/api/v1/admin/returns", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = adminReturnCreateRequestSchema.safeParse(request.body);
+        if (!parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.create(request.auth!.user.id, parsed.data, request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
+      app.get("/api/v1/admin/returns/:id", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.detail(id!); } catch (error) { return handleError(request, reply, error); }
+      });
+      app.post("/api/v1/admin/returns/:id/cancel", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.cancel(id!, request.auth!.user.id, request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
+    }
 
     if (orderViews) {
       const orderViewError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {

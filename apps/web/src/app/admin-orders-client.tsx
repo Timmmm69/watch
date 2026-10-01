@@ -156,6 +156,8 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         <span>Страница {result.page}</span><button className="min-h-11" disabled={result.page * result.limit >= result.total || loading} onClick={() => turnPage(result.page + 1)}>Далее</button></nav></>}
     {order && !blocked && <>
       <h2 className="text-xl">{order.publicNumber}</h2><p>{labels[order.status]} · {money(order.totalMinor, order.currency)}{order.overdue ? " · Просрочен" : ""}</p>
+      {["DELIVERED", "COMPLETED"].includes(order.status) && orderId &&
+        <p><Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns?order=${orderId}`}>Оформить возврат</Link></p>}
       <section><h2 className="font-semibold">Получатель</h2>{order.fulfillment && !order.fulfillment.redactedAt ? <>
         <p>{order.fulfillment.recipientName}</p><p>{order.fulfillment.phone}</p><p>{order.fulfillment.address}</p><p>{order.fulfillment.comment}</p></> : <p>Контактные данные не сохранены или удалены.</p>}</section>
       <section><h2 className="font-semibold">Товары</h2>{order.items?.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">

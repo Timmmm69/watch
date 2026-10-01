@@ -6,6 +6,7 @@ import { Storefront } from "./storefront";
 import { CartScreen } from "./cart-client";
 import { CheckoutScreen } from "./checkout-client";
 import { AdminOrdersScreen } from "./admin-orders-client";
+import { AdminReturnsScreen } from "./admin-returns-client";
 import { EarningsScreen } from "./earnings-client";
 
 interface AuthResponse {
@@ -27,7 +28,7 @@ declare global {
   }
 }
 
-export function MiniAppBootstrap({ screen = "shop", orderId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "earnings"; orderId?: string }) {
+export function MiniAppBootstrap({ screen = "shop", orderId, returnId }: { screen?: "shop" | "cart" | "checkout" | "adminOrders" | "adminReturns" | "earnings"; orderId?: string; returnId?: string }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<{ auth?: AuthResponse; error?: string }>({});
@@ -63,6 +64,9 @@ export function MiniAppBootstrap({ screen = "shop", orderId }: { screen?: "shop"
   if (state.auth && screen === "adminOrders") return state.auth.isAdmin
     ? <AdminOrdersScreen key={orderId ?? "list"} csrfToken={state.auth.csrfToken} orderId={orderId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к заказам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth && screen === "adminReturns") return state.auth.isAdmin
+    ? <AdminReturnsScreen key={returnId ?? "list"} csrfToken={state.auth.csrfToken} returnId={returnId} />
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к возвратам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}

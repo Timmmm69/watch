@@ -313,3 +313,62 @@ export const adminVariantPatchRequestSchema = z.object({
   status: variantStatusSchema.optional(),
   safetyBuffer: z.number().int().min(0).optional()
 }).refine((value) => Object.keys(value).length > 0, "At least one field is required");
+
+export const returnStatusSchema = z.enum(["OPEN", "COMPLETED", "CANCELLED"]);
+export type ReturnStatus = z.infer<typeof returnStatusSchema>;
+
+export const adminReturnCreateRequestSchema = z.object({
+  orderId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(1000),
+  items: z.array(z.object({
+    orderItemId: z.string().uuid(),
+    quantity: z.number().int().min(1).max(99)
+  }).strict()).min(1).max(MAX_CART_LINES)
+    .refine((items) => new Set(items.map((item) => item.orderItemId)).size === items.length, "Duplicate OrderItem IDs")
+}).strict();
+export type AdminReturnCreateRequest = z.infer<typeof adminReturnCreateRequestSchema>;
+
+export const adminReturnListQuerySchema = pageQuerySchema.extend({
+  status: returnStatusSchema.optional(),
+  orderId: z.string().uuid().optional()
+}).strict();
+export type AdminReturnListQuery = z.infer<typeof adminReturnListQuerySchema>;
+
+export const adminReturnListItemSchema = z.object({
+  id: z.string().uuid(),
+  orderId: z.string().uuid(),
+  orderPublicNumber: z.string(),
+  status: returnStatusSchema,
+  reason: z.string(),
+  note: z.string().nullable(),
+  itemCount: z.number().int().min(0),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const adminReturnDetailItemSchema = z.object({
+  id: z.string().uuid(),
+  orderItemId: z.string().uuid(),
+  variantId: z.string().uuid(),
+  sku: z.string(),
+  title: z.string(),
+  quantity: z.number().int().min(1),
+  unitPriceMinor: moneyMinor,
+  partnerCommissionUnitSnapshotMinor: moneyMinor
+});
+
+export const adminReturnDetailSchema = z.object({
+  id: z.string().uuid(),
+  orderId: z.string().uuid(),
+  orderPublicNumber: z.string(),
+  status: returnStatusSchema,
+  reason: z.string(),
+  note: z.string().nullable(),
+  createdByAdminUserId: z.string().uuid(),
+  currency: z.string().length(3),
+  items: z.array(adminReturnDetailItemSchema),
+  reversalPreviewMinor: z.number().int().min(0),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type AdminReturnDetail = z.infer<typeof adminReturnDetailSchema>;
