@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { createHash } from "node:crypto";
 import type { LegalDocumentRef, LegalDocumentType } from "@watch/config";
 
 export interface LegalDocumentProjection {
@@ -53,14 +54,17 @@ export class LegalDocuments {
 
   async verifyCurrentConfigured(): Promise<void> {
     for (const [type, ref] of Object.entries(this.currentDocs) as [LegalDocumentType, LegalDocumentRef][]) {
-      const result = await this.pool.query<{ type: LegalDocumentType; version: string; effective_at: Date }>(`
-        SELECT type, version, effective_at FROM legal_documents WHERE id = $1
+      const result = await this.pool.query<LegalDocumentRow>(`
+        SELECT type, version, effective_at, sha256, content_markdown FROM legal_documents WHERE id = $1
       `, [ref.id]);
       const row = result.rows[0];
       if (!row) throw new Error(`Configured current ${type} legal document ${ref.id} is not published`);
       if (row.type !== type) throw new Error(`Configured current ${type} legal document ${ref.id} has type ${row.type}`);
       if (row.version !== ref.version) throw new Error(`Configured current ${type} legal document ${ref.id} version mismatch`);
       if (row.effective_at > new Date()) throw new Error(`Configured current ${type} legal document ${ref.id} is not yet effective`);
+      if (createHash("sha256").update(row.content_markdown, "utf8").digest("hex") !== row.sha256) {
+        throw new Error(`Configured current ${type} legal document hash mismatch`);
+      }
     }
   }
 }

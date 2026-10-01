@@ -29,6 +29,7 @@ COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/packages/config/dist packages/config/dist
 COPY --from=build /app/packages/contracts/dist packages/contracts/dist
 COPY --from=build /app/packages/db/dist packages/db/dist
+COPY --from=build /app/packages/db/prisma/migrations packages/db/prisma/migrations
 COPY --chmod=755 ops/docker/runtime-secrets.sh /usr/local/bin/runtime-secrets
 ENV NODE_ENV=production
 USER node

@@ -14,3 +14,5 @@ packages/db/src/generated/
 *.tsbuildinfo
 ops/secrets/
 ops/docker/production.env
+ops/bootstrap/
+ops/deployment.lock/

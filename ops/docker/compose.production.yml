@@ -1,5 +1,11 @@
 name: watch-production
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-app: &app
   image: watch-api:${RELEASE_TAG:?Set an immutable release tag}
   build:
@@ -32,6 +38,9 @@ x-app: &app
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
+    bootstrap:
+      condition: service_completed_successfully
+  logging: *logging
   init: true
   user: "1000:1000"
   read_only: true
@@ -43,6 +52,7 @@ x-app: &app
 
 services:
   postgres:
+    logging: *logging
     image: postgres:17.10-bookworm
     environment:
       POSTGRES_USER: watch_admin
@@ -63,6 +73,7 @@ services:
       retries: 20
 
   migrate:
+    logging: *logging
     image: watch-migrate:${RELEASE_TAG:?Set an immutable release tag}
     build:
       context: ../..
@@ -84,6 +95,19 @@ services:
     security_opt: [no-new-privileges:true]
     restart: "no"
 
+  bootstrap:
+    <<: *app
+    command: [node, apps/api/dist/operations/cli.js, bootstrap, /run/bootstrap/manifest.json]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [database]
+    volumes:
+      - ${WATCH_BOOTSTRAP_DIR:-../bootstrap}:/run/bootstrap:ro
+    restart: "no"
+
   api:
     <<: *app
     networks: [proxy, database, egress]
@@ -99,8 +123,15 @@ services:
     command: [node, apps/api/dist/telegram/worker.js]
     networks: [database, egress]
     stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, node, -e, "const fs=require('node:fs');try{process.exit(Date.now()-Number(fs.readFileSync('/tmp/watch-worker-heartbeat','utf8'))<30000?0:1)}catch{process.exit(1)}"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
 
   web:
+    logging: *logging
     image: watch-web:${RELEASE_TAG:?Set an immutable release tag}
     build:
       context: ../..
@@ -128,6 +159,7 @@ services:
       start_period: 20s
 
   reverse-proxy:
+    logging: *logging
     image: caddy:2.11.4-alpine
     environment:
       APP_BASE_URL: ${APP_BASE_URL:?Set the real public HTTPS origin}

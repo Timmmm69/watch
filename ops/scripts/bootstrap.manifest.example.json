@@ -1,0 +1,32 @@
+{
+  "supplierName": "REPLACE_WITH_REVIEWED_SUPPLIER_NAME",
+  "documents": [
+    {
+      "type": "PARTNER_TERMS",
+      "id": "REPLACE_WITH_LEGAL_PARTNER_TERMS_ID",
+      "version": "REPLACE_WITH_LEGAL_PARTNER_TERMS_VERSION",
+      "file": "partner-terms.md",
+      "sha256": "REPLACE_WITH_REVIEWED_FILE_SHA256",
+      "effectiveAt": "REPLACE_WITH_REVIEWED_EFFECTIVE_ISO_TIMESTAMP",
+      "requiresReacceptance": true
+    },
+    {
+      "type": "SALES_TERMS",
+      "id": "REPLACE_WITH_LEGAL_SALES_TERMS_ID",
+      "version": "REPLACE_WITH_LEGAL_SALES_TERMS_VERSION",
+      "file": "sales-terms.md",
+      "sha256": "REPLACE_WITH_REVIEWED_FILE_SHA256",
+      "effectiveAt": "REPLACE_WITH_REVIEWED_EFFECTIVE_ISO_TIMESTAMP",
+      "requiresReacceptance": false
+    },
+    {
+      "type": "PRIVACY",
+      "id": "REPLACE_WITH_LEGAL_PRIVACY_ID",
+      "version": "REPLACE_WITH_LEGAL_PRIVACY_VERSION",
+      "file": "privacy.md",
+      "sha256": "REPLACE_WITH_REVIEWED_FILE_SHA256",
+      "effectiveAt": "REPLACE_WITH_REVIEWED_EFFECTIVE_ISO_TIMESTAMP",
+      "requiresReacceptance": false
+    }
+  ]
+}

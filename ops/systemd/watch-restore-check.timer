@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly Watch restore verification
+
+[Timer]
+OnCalendar=*-*-01 04:00:00 UTC
+Persistent=true
+Unit=watch-restore-check.service
+
+[Install]
+WantedBy=timers.target

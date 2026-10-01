@@ -12,6 +12,10 @@ const cartMigration = "20260930100000_cart";
 const ordersMigration = "20260930110000_orders";
 const commissionLedgerMigration = "20261001000000_commission_ledger";
 const payoutAllocationsMigration = "20261003000000_payout_allocations";
+const productAssetsMigration = "20260930060000_product_assets";
+const referralAttributionMigration = "20260930070000_referral_attribution";
+const returnsMigration = "20261002000000_returns";
+const analyticsMigration = "20261004000000_analytics_cohorts";
 
 export function createDatabasePool(connectionString: string): Pool {
   const options: PoolConfig = {
@@ -32,6 +36,13 @@ export async function checkDatabaseReady(pool: Pool): Promise<void> {
 
   if (result.rows.some((row) => row.finished_at === null && row.rolled_back_at === null)) {
     throw new Error("A database migration failed or is incomplete");
+  }
+  // A rolled-back attempt cannot satisfy any installed-slice prerequisite.
+  result.rows = result.rows.filter((row) => row.rolled_back_at === null);
+  for (const migration of [productAssetsMigration, referralAttributionMigration, returnsMigration, analyticsMigration]) {
+    if (!result.rows.some((row) => row.migration_name === migration && row.finished_at !== null && row.rolled_back_at === null)) {
+      throw new Error(`Required migration ${migration} has not been applied`);
+    }
   }
   if (!result.rows.some((row) => row.migration_name === foundationMigration && row.finished_at !== null)) {
     throw new Error("Repository foundation migration has not been applied");

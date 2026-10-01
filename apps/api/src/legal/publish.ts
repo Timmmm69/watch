@@ -66,6 +66,7 @@ async function main(): Promise<void> {
     );
     const reused = existingVersion.rows[0];
     if (reused) {
+      if (reused.sha256 !== sha256) throw new Error("Immutable legal version has different content; publish a new version after review");
       console.log(JSON.stringify({ id: reused.id, type, version: args.version, sha256: reused.sha256, reused: true }));
       return;
     }

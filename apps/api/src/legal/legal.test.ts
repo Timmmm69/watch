@@ -1,9 +1,11 @@
 import type { Pool, QueryResult } from "pg";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { LegalDocuments } from "./legal.js";
 
 const pastDate = new Date("2026-01-01T00:00:00Z");
 const futureDate = new Date("2099-01-01T00:00:00Z");
+const integrity = { content_markdown: "# Reviewed terms", sha256: createHash("sha256").update("# Reviewed terms").digest("hex") };
 
 interface Row { [column: string]: unknown }
 
@@ -48,7 +50,7 @@ describe("LegalDocuments", () => {
     const pool = poolWith(async (sql, params) => {
       expect(sql).toContain("effective_at");
       expect(params).toEqual(["doc-1"]);
-      return result([{ type: "PARTNER_TERMS", version: "v1", effective_at: pastDate }]);
+      return result([{ ...integrity, type: "PARTNER_TERMS", version: "v1", effective_at: pastDate }]);
     });
     const store = new LegalDocuments(pool, { PARTNER_TERMS: { id: "doc-1", version: "v1" } });
     await expect(store.verifyCurrentConfigured()).resolves.toBeUndefined();
@@ -59,7 +61,8 @@ describe("LegalDocuments", () => {
       { rows: [], message: "not published" },
       { rows: [{ type: "SALES_TERMS", version: "v1", effective_at: pastDate }], message: "has type" },
       { rows: [{ type: "PARTNER_TERMS", version: "v2", effective_at: pastDate }], message: "version mismatch" },
-      { rows: [{ type: "PARTNER_TERMS", version: "v1", effective_at: futureDate }], message: "not yet effective" }
+      { rows: [{ type: "PARTNER_TERMS", version: "v1", effective_at: futureDate }], message: "not yet effective" },
+      { rows: [{ ...integrity, sha256: "0".repeat(64), type: "PARTNER_TERMS", version: "v1", effective_at: pastDate }], message: "hash mismatch" }
     ];
     for (const { rows, message } of cases) {
       const pool = poolWith(async () => result(rows));
@@ -72,8 +75,8 @@ describe("LegalDocuments", () => {
     const query = vi.fn(async (_sql, params) => {
       const id = params[0];
       return result(id === "doc-1"
-        ? [{ type: "PARTNER_TERMS", version: "v1", effective_at: pastDate }]
-        : [{ type: "SALES_TERMS", version: "v2", effective_at: pastDate }]);
+        ? [{ ...integrity, type: "PARTNER_TERMS", version: "v1", effective_at: pastDate }]
+        : [{ ...integrity, type: "SALES_TERMS", version: "v2", effective_at: pastDate }]);
     });
     const pool = poolWith(query);
     const store = new LegalDocuments(pool, {

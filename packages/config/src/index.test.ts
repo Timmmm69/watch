@@ -52,8 +52,15 @@ describe("API runtime configuration", () => {
   };
 
   it("requires HTTPS origin and exact proxy trust in production", () => {
-    const production = { ...valid, NODE_ENV: "production", APP_BASE_URL: "https://app.example.com", API_TRUSTED_PROXY_IP: "172.30.36.2" };
+    const production = { ...valid, ...google, NODE_ENV: "production", APP_BASE_URL: "https://app.example.com", API_TRUSTED_PROXY_IP: "172.30.36.2",
+      LEGAL_SALES_TERMS_ID: salesTermsId, LEGAL_SALES_TERMS_VERSION: "v1", LEGAL_PRIVACY_ID: privacyId, LEGAL_PRIVACY_VERSION: "v1",
+      OBJECT_STORAGE_ENDPOINT: "https://account.r2.cloudflarestorage.com", OBJECT_STORAGE_REGION: "auto",
+      OBJECT_STORAGE_BUCKET: "private-media", OBJECT_STORAGE_ACCESS_KEY_ID: "test-key", OBJECT_STORAGE_SECRET_ACCESS_KEY: "test-secret" };
     expect(loadApiRuntimeConfig(production).API_TRUSTED_PROXY_IP).toBe("172.30.36.2");
+    for (const field of ["LEGAL_SALES_TERMS_ID", "LEGAL_PRIVACY_ID", "INVENTORY_PROVIDER", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_SECRET_ACCESS_KEY"]) {
+      expect(() => loadApiRuntimeConfig({ ...production, [field]: undefined })).toThrow();
+    }
+    expect(() => loadApiRuntimeConfig({ ...production, OBJECT_STORAGE_ENDPOINT: "http://storage.example.com" })).toThrow();
     expect(loadApiRuntimeConfig(valid).API_TRUSTED_PROXY_IP).toBeUndefined();
     expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: undefined })).toThrow();
     for (const proxy of ["true", "1", "*", "172.30.36.0/24", "172.30.36.2,127.0.0.1"]) {
@@ -103,6 +110,12 @@ describe("API runtime configuration", () => {
       ADMIN_TELEGRAM_IDS: ["42", "9007199254740993"],
       CSRF_SECRET: Buffer.alloc(32, 7)
     });
+  });
+  it("caps raw Telegram payload retention at 30 days", () => {
+    expect(loadApiRuntimeConfig(valid).TELEGRAM_UPDATE_RETENTION_DAYS).toBe(30);
+    expect(loadApiRuntimeConfig({ ...valid, TELEGRAM_UPDATE_RETENTION_DAYS: "7" }).TELEGRAM_UPDATE_RETENTION_DAYS).toBe(7);
+    for (const value of ["0", "-1", "31", "1.5", "bad"])
+      expect(() => loadApiRuntimeConfig({ ...valid, TELEGRAM_UPDATE_RETENTION_DAYS: value })).toThrow();
   });
 
   it("requires a 3-letter PLATFORM_CURRENCY", () => {

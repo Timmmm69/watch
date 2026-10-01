@@ -57,7 +57,7 @@ export async function processTelegramUpdate(pool: Pool, payload: unknown, config
   });
 }
 
-export async function callBot(token: string, method: string, body: Record<string, unknown>): Promise<void> {
+export async function callBot<T = void>(token: string, method: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000)
@@ -74,4 +74,5 @@ export async function callBot(token: string, method: string, body: Record<string
     }
     throw new Error(`Telegram ${method} failed`);
   }
+  return (result as { result: T }).result;
 }

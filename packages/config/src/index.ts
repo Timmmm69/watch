@@ -77,6 +77,12 @@ export const apiRuntimeConfigSchema = z.object({
   INVENTORY_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
   INVENTORY_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(86400).default(600),
   INVENTORY_PROVIDER: z.literal("google_sheets").optional(),
+  TELEGRAM_UPDATE_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(30),
+  OBJECT_STORAGE_ENDPOINT: z.url().optional(),
+  OBJECT_STORAGE_REGION: z.string().min(1).optional(),
+  OBJECT_STORAGE_BUCKET: z.string().min(1).optional(),
+  OBJECT_STORAGE_ACCESS_KEY_ID: z.string().min(1).optional(),
+  OBJECT_STORAGE_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   GOOGLE_SHEETS_SPREADSHEET_ID: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
   GOOGLE_SHEETS_WORKSHEET_NAME: z.string().trim().min(1).max(100).optional(),
   GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: z.string().transform(parseGoogleServiceAccount).optional(),
@@ -94,6 +100,14 @@ export const apiRuntimeConfigSchema = z.object({
     }
     if (!value.API_TRUSTED_PROXY_IP) {
       ctx.addIssue({ code: "custom", message: "Production requires an exact trusted reverse-proxy IP", path: ["API_TRUSTED_PROXY_IP"] });
+    }
+    for (const field of ["LEGAL_SALES_TERMS_ID", "LEGAL_SALES_TERMS_VERSION", "LEGAL_PRIVACY_ID", "LEGAL_PRIVACY_VERSION",
+      "INVENTORY_PROVIDER", "OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_REGION", "OBJECT_STORAGE_BUCKET",
+      "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY"] as const) {
+      if (!value[field]) ctx.addIssue({ code: "custom", message: `Production requires ${field}`, path: [field] });
+    }
+    if (value.OBJECT_STORAGE_ENDPOINT && new URL(value.OBJECT_STORAGE_ENDPOINT).protocol !== "https:") {
+      ctx.addIssue({ code: "custom", message: "Production object storage requires HTTPS", path: ["OBJECT_STORAGE_ENDPOINT"] });
     }
   }
   if (value.INVENTORY_PROVIDER === "google_sheets") {

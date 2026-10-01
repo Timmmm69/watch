@@ -12,6 +12,7 @@
     "telegram:configure": "tsx src/telegram/configure.ts",
     "legal:publish": "tsx src/legal/publish.ts",
     "catalog:bootstrap": "tsx src/catalog/bootstrap.ts",
+    "ops": "tsx src/operations/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:payout-browser": "tsx src/finance/payouts.browser.ts",

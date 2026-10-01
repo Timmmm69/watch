@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Watch database backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+Unit=watch-backup.service
+
+[Install]
+WantedBy=timers.target

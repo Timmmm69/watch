@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { currentLegalDocuments, loadApiRuntimeConfig } from "@watch/config";
-import { checkDatabaseReady, createDatabasePool } from "@watch/db";
+import { createDatabasePool } from "@watch/db";
 import { createApp } from "./app.js";
 import { AnalyticsService } from "./analytics/analytics.js";
 import { SessionStore } from "./auth/session.js";
@@ -21,6 +21,7 @@ import { PartnerEarningsService } from "./finance/earnings.js";
 import { PayoutService } from "./finance/payouts.js";
 import { verifyS12FinancialData } from "./finance/gate.js";
 import { createConfiguredInventoryOrchestrator } from "./inventory/runtime.js";
+import { verifyInstalledRelease } from "./operations/readiness.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
 
@@ -42,9 +43,7 @@ const assetService = new AssetService(pool, new S3ObjectStorage(
   process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY!
 ));
 const checkReadiness = async () => {
-  await checkDatabaseReady(pool);
-  await legalDocuments.verifyCurrentConfigured();
-  await catalogService.verifyCurrencyConfigured();
+  await verifyInstalledRelease(pool, runtimeConfig);
 };
 const app = createApp({
   ...(runtimeConfig.API_TRUSTED_PROXY_IP ? { trustedProxyIp: runtimeConfig.API_TRUSTED_PROXY_IP } : {}),
@@ -84,7 +83,7 @@ try {
   await verifyS12FinancialData(pool);
   await app.listen({ host: runtimeConfig.API_HOST, port: runtimeConfig.API_PORT });
 } catch (error) {
-  app.log.error(error);
+  app.log.error({ errorName: error instanceof Error ? error.name : "Unknown" }, "Startup verification failed");
   await app.close();
   process.exitCode = 1;
 }

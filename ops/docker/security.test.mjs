@@ -11,7 +11,7 @@ test("production Compose isolates services, secrets and migration ordering", () 
   });
   assert.equal(result.status, 0, result.stderr);
   const config = JSON.parse(result.stdout);
-  assert.deepEqual(Object.keys(config.services).sort(), ["api", "migrate", "postgres", "reverse-proxy", "web", "worker"]);
+  assert.deepEqual(Object.keys(config.services).sort(), ["api", "bootstrap", "migrate", "postgres", "reverse-proxy", "web", "worker"]);
   for (const [name, service] of Object.entries(config.services)) {
     if (name !== "reverse-proxy") assert.equal(service.ports, undefined, `${name} must not publish ports`);
   }
@@ -25,10 +25,18 @@ test("production Compose isolates services, secrets and migration ordering", () 
   assert.equal(config.services.api.environment.API_TRUSTED_PROXY_IP, proxyIp);
   for (const name of ["api", "web", "worker"]) {
     assert.equal(config.services[name].depends_on.migrate.condition, "service_completed_successfully");
+    assert.equal(config.services[name].depends_on.bootstrap.condition, "service_completed_successfully");
     assert.equal(config.services[name].read_only, true);
     assert.equal(config.services[name].user, "1000:1000");
   }
   assert.equal(config.services.migrate.restart, "no");
+  assert.equal(config.services.bootstrap.restart, "no");
+  assert.equal(config.services.bootstrap.depends_on.bootstrap, undefined);
+  assert.ok(config.services.worker.healthcheck);
+  for (const service of Object.values(config.services)) {
+    assert.equal(service.logging.options["max-size"], "10m");
+    assert.equal(service.logging.options["max-file"], "3");
+  }
   assert.deepEqual(config.services.migrate.secrets.map((s) => s.source), ["migrate_database_url"]);
   assert.equal(config.services.web.secrets, undefined);
   assert.equal(config.services.api.secrets.some((s) => s.source === "migrate_database_url" || s.source === "postgres_password"), false);

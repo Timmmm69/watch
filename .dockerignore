@@ -13,5 +13,8 @@
 **/.env.*
 !**/.env.example
 ops/secrets
+ops/bootstrap
+ops/deployment.lock
+ops/docker/production.env
 .local-postgres-test
 *.log
