@@ -27,7 +27,7 @@ import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
-import { adminReturnCreateRequestSchema, adminReturnListQuerySchema } from "@watch/contracts";
+import { adminReturnCreateRequestSchema, adminReturnListQuerySchema, adminReturnCompleteRequestSchema } from "@watch/contracts";
 import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
 import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
 import { ReturnError, type AdminReturnService } from "./returns/returns.js";
@@ -80,7 +80,7 @@ export interface AppDependencies {
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   checkout?: Pick<CheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
-  returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel">;
+  returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete">;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   earnings?: Pick<PartnerEarningsService, "list">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
@@ -359,6 +359,14 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         const id = (request.params as { id?: string }).id;
         if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
         try { return await returns.detail(id!); } catch (error) { return handleError(request, reply, error); }
+      });
+      app.post("/api/v1/admin/returns/:id/complete", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminReturnCompleteRequestSchema.safeParse(request.body ?? {});
+        if (!validUuid(id) || !parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.complete(id!, request.auth!.user.id, request.id, parsed.data.note); }
+        catch (error) { return handleError(request, reply, error); }
       });
       app.post("/api/v1/admin/returns/:id/cancel", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
         reply.header("Cache-Control", "no-store");

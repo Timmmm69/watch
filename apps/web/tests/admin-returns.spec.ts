@@ -63,6 +63,36 @@ test("detail shows items and preview, cancels OPEN Return with confirmation and 
   expect(submissions).toEqual([{}]);
   await expect(page.getByRole("button", { name: "Отменить возврат", exact: true })).toHaveCount(0);
 });
+test("completion confirms exact reversal, preserves note after failure and hides terminal actions", async ({ page }) => {
+  await page.route("**/api/v1/auth/session", (route) => route.fulfill({ json: { user: { firstName: "Admin" }, csrfToken: "fixture", isAdmin: true } }));
+  let status = "OPEN", note: string | null = null;
+  let submissions = 0;
+  await page.route(`**/api/v1/admin/returns/${returnId}`, (route) => route.fulfill({ json: { ...detail, status, note } }));
+  await page.route(`**/api/v1/admin/returns/${returnId}/complete`, (route) => {
+    submissions++;
+    expect(route.request().headers()["x-csrf-token"]).toBe("fixture");
+    expect(route.request().postDataJSON()).toEqual({ note: "Принято" });
+    if (submissions === 1) return route.fulfill({ status: 409, json: { error: { code: "INTERNAL_INVARIANT_VIOLATION" } } });
+    status = "COMPLETED"; note = "Принято";
+    return route.fulfill({ json: { ...detail, status, note } });
+  });
+  await page.goto(`/admin/returns/${returnId}`);
+  await page.getByRole("button", { name: "Завершить возврат", exact: true }).click();
+  const confirmation = page.getByRole("region", { name: "Подтверждение завершения возврата" });
+  await expect(confirmation).toContainText("задолженность партнёра");
+  await page.getByLabel("Комментарий (необязательно)").fill("Принято");
+  await page.getByRole("button", { name: "Да, завершить возврат" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
+  await page.getByRole("button", { name: "Завершить возврат", exact: true }).click();
+  await expect(page.getByLabel("Комментарий (необязательно)")).toHaveValue("Принято");
+  await page.getByRole("button", { name: "Да, завершить возврат" }).click();
+  await expect(page.getByText("Возвращённая комиссия", { exact: false })).toBeVisible();
+  await expect(page.getByText("Комментарий: Принято")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Завершить возврат", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Отменить возврат", exact: true })).toHaveCount(0);
+  expect(submissions).toBe(2);
+});
+
 test("create loads a DELIVERED Order via preset, previews the effect and submits exact quantities", async ({ page }) => {
   const submissions: unknown[] = [];
   const created = { ...detail, reason: "Брак при доставке" };

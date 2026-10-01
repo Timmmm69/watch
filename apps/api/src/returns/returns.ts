@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { AdminReturnCreateRequest, AdminReturnListQuery, ReturnStatus } from "@watch/contracts";
+import { CommissionError, reverseCommission } from "../finance/commissions.js";
 
 export class ReturnError extends Error {
   constructor(readonly code: "NOT_FOUND" | "VALIDATION_ERROR" | "RETURN_NOT_ALLOWED"
@@ -109,6 +110,62 @@ export class AdminReturnService {
       throw error;
     } finally { client.release(); }
     return await this.detail(returnId);
+  }
+
+  async complete(id: string, actorUserId: string, requestId?: string, note?: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Identity is immutable; acquire financial locks before locking the Return.
+      const identity = (await client.query<{ order_id: string; partner_id_snapshot: string | null }>(
+        `SELECT r.order_id,o.partner_id_snapshot FROM returns r JOIN orders o ON o.id=r.order_id WHERE r.id=$1`, [id])).rows[0];
+      if (!identity) throw new ReturnError("NOT_FOUND");
+      if (identity.partner_id_snapshot) await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [identity.partner_id_snapshot]);
+      const order = (await client.query<{ status: string; commission_eligible_snapshot: boolean }>(
+        "SELECT status,commission_eligible_snapshot FROM orders WHERE id=$1 FOR UPDATE", [identity.order_id])).rows[0]!;
+      const items = (await client.query<{ id: string; quantity: number; returned_quantity: number; partner_commission_unit_snapshot_minor: number }>(
+        `SELECT oi.id,oi.quantity,ri.quantity AS returned_quantity,oi.partner_commission_unit_snapshot_minor
+         FROM order_items oi JOIN return_items ri ON ri.order_item_id=oi.id AND ri.order_id=oi.order_id
+         WHERE ri.return_id=$1 ORDER BY oi.id FOR UPDATE OF oi`, [id])).rows;
+      const commissions = (await client.query<{ id: string; order_item_id: string }>(
+        "SELECT id,order_item_id FROM commissions WHERE order_id=$1 AND order_item_id=ANY($2::uuid[]) ORDER BY id FOR UPDATE",
+        [identity.order_id, items.map((item) => item.id)])).rows;
+      const row = (await client.query<ReturnRow>("SELECT * FROM returns WHERE id=$1 FOR UPDATE", [id])).rows[0]!;
+      if (row.status !== "COMPLETED") {
+        if (row.status !== "OPEN" || !["DELIVERED", "COMPLETED"].includes(order.status)) throw new ReturnError("RETURN_NOT_ALLOWED");
+        if (!items.length) throw new ReturnError("INTERNAL_INVARIANT_VIOLATION");
+        const quantities = (await client.query<{ order_item_id: string; returned: number }>(
+          `SELECT ri.order_item_id,SUM(ri.quantity)::int AS returned FROM return_items ri JOIN returns r ON r.id=ri.return_id
+           WHERE r.order_id=$1 AND r.status IN ('OPEN','COMPLETED') AND ri.order_item_id=ANY($2::uuid[]) GROUP BY ri.order_item_id`,
+          [identity.order_id, items.map((item) => item.id)])).rows;
+        const returned = new Map(quantities.map((item) => [item.order_item_id, item.returned]));
+        const byItem = new Map(commissions.map((commission) => [commission.order_item_id, commission.id]));
+        const now = new Date();
+        let commissionReversalMinor = 0;
+        for (const item of items) {
+          if ((returned.get(item.id) ?? 0) > item.quantity) throw new ReturnError("RETURN_QUANTITY_EXCEEDED");
+          if (!order.commission_eligible_snapshot || item.partner_commission_unit_snapshot_minor === 0) continue;
+          const commissionId = byItem.get(item.id);
+          if (!commissionId) throw new ReturnError("INTERNAL_INVARIANT_VIOLATION");
+          commissionReversalMinor += await reverseCommission(client, commissionId,
+            item.partner_commission_unit_snapshot_minor * item.returned_quantity, `return:${id}:completed`, now);
+        }
+        await client.query("UPDATE returns SET status='COMPLETED',note=$2,updated_at=$3 WHERE id=$1", [id, note ?? null, now]);
+        await client.query(`INSERT INTO events (id,type,aggregate_type,aggregate_id,dedupe_key,payload,created_at)
+          VALUES ($1,'RETURN_COMPLETED','Return',$2,$3,$4,$5)`, [randomUUID(), id, `return:${id}:completed`,
+          JSON.stringify({ v: 1, returnId: id, orderId: identity.order_id,
+            ...(identity.partner_id_snapshot ? { partnerIdSnapshot: identity.partner_id_snapshot } : {}), commissionReversalMinor }), now]);
+        await client.query(`INSERT INTO audit_logs (id,actor_user_id,action,entity_type,entity_id,request_id,metadata,created_at)
+          VALUES ($1,$2,'admin.return.complete','Return',$3,$4,$5,$6)`, [randomUUID(), actorUserId, id, requestId ?? null,
+          JSON.stringify({ orderId: identity.order_id, commissionReversalMinor }), now]);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error instanceof CommissionError) throw new ReturnError(error.code);
+      throw error;
+    } finally { client.release(); }
+    return await this.detail(id);
   }
 
   async cancel(id: string, actorUserId: string, requestId?: string) {

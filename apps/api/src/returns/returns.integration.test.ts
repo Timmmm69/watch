@@ -25,8 +25,8 @@ function request(variantId: string, quantity = 1) {
     salesTermsDocumentId: docs.SALES_TERMS.id, privacyDocumentId: docs.PRIVACY.id,
     salesTermsAccepted: true, privacyAcknowledged: true };
 }
-async function placeOrder(buyerId: string, attributed: boolean, quantity = 1): Promise<{ id: string; itemId: string }> {
-  const variantId = attributed ? attributedVariant : organicVariant;
+async function placeOrder(buyerId: string, attributed: boolean, quantity = 1, variantOverride?: string): Promise<{ id: string; itemId: string }> {
+  const variantId = variantOverride ?? (attributed ? attributedVariant : organicVariant);
   await pool!.query("DELETE FROM carts WHERE buyer_user_id=$1", [buyerId]);
   const cart = randomUUID();
   await pool!.query("INSERT INTO carts (id,buyer_user_id) VALUES ($1,$2)", [cart, buyerId]);
@@ -51,6 +51,150 @@ async function counts() {
 async function setStatus(orderId: string, status: string) {
   await pool!.query("UPDATE orders SET status=$2 WHERE id=$1", [orderId, status]);
 }
+
+async function finance(orderId: string) {
+  const commissions = (await pool!.query(`SELECT c.state,c.gross_amount_minor,c.reversed_amount_minor,
+    -COALESCE((SELECT SUM(amount_minor)::int FROM ledger_entries WHERE commission_id=c.id AND entry_type='COMMISSION_REVERSAL'),0) AS ledger_reversed
+    FROM commissions c WHERE order_id=$1 ORDER BY c.id`, [orderId])).rows;
+  for (const commission of commissions) expect(commission.reversed_amount_minor).toBe(commission.ledger_reversed);
+  return { commissions, balances: (await pool!.query(`SELECT bucket,SUM(amount_minor)::int AS amount FROM ledger_entries
+    WHERE partner_id=$1 GROUP BY bucket ORDER BY bucket::text`, [partner])).rows };
+}
+
+describe.skipIf(!pool)("T32 Return completion and reversals against PostgreSQL", () => {
+  it("partially reverses HOLD, releases only the remainder, then fully reverses EARNED idempotently", async () => {
+    const { id, itemId } = await placeOrder(admin, true, 3);
+    await deliver(id);
+    const inventory = (await pool!.query("SELECT * FROM inventory_items WHERE variant_id=$1", [attributedVariant])).rows;
+    const first = await service.create(admin, { orderId: id, reason: "Partial", items: [{ orderItemId: itemId, quantity: 1 }] });
+    expect(await new OrderCompletionWorker(pool!).completeOrder(id)).toBe(false);
+    const completed = await service.complete(first.id, admin, "t32", "Private note");
+    expect(completed).toMatchObject({ status: "COMPLETED", note: "Private note" });
+    expect(await finance(id)).toMatchObject({ commissions: [{ state: "HOLD", reversed_amount_minor: 100 }], balances: [{ bucket: "PENDING", amount: 200 }] });
+    const before = await counts();
+    expect(await service.complete(first.id, admin, "retry", "Different note")).toEqual(completed);
+    expect(await counts()).toEqual(before);
+    expect(await new OrderCompletionWorker(pool!).completeOrder(id)).toBe(true);
+    expect(await finance(id)).toMatchObject({ commissions: [{ state: "EARNED", reversed_amount_minor: 100 }] });
+    const second = await service.create(admin, { orderId: id, reason: "Remaining", items: [{ orderItemId: itemId, quantity: 2 }] });
+    await service.complete(second.id, admin);
+    expect(await finance(id)).toMatchObject({ commissions: [{ state: "VOID", reversed_amount_minor: 300 }], balances: [{ bucket: "AVAILABLE", amount: 0 }, { bucket: "PENDING", amount: 0 }] });
+    expect((await pool!.query("SELECT * FROM inventory_items WHERE variant_id=$1", [attributedVariant])).rows).toEqual(inventory);
+    const event = (await pool!.query("SELECT payload,dedupe_key FROM events WHERE aggregate_id=$1 AND type='RETURN_COMPLETED'", [first.id])).rows;
+    expect(event).toEqual([{ dedupe_key: `return:${first.id}:completed`, payload: { v: 1, returnId: first.id, orderId: id, partnerIdSnapshot: partner, commissionReversalMinor: 100 } }]);
+    const audit = (await pool!.query("SELECT metadata FROM audit_logs WHERE request_id='t32'")).rows[0];
+    expect(audit.metadata).toEqual({ orderId: id, commissionReversalMinor: 100 });
+    await expect(service.cancel(first.id, admin)).rejects.toMatchObject({ code: "RETURN_NOT_ALLOWED" });
+  });
+
+  it("fully reverses HOLD to VOID and still allows system completion", async () => {
+    const { id, itemId } = await placeOrder(admin, true, 2); await deliver(id);
+    const created = await service.create(admin, { orderId: id, reason: "Full", items: [{ orderItemId: itemId, quantity: 2 }] });
+    await service.complete(created.id, admin);
+    expect(await finance(id)).toMatchObject({ commissions: [{ state: "VOID", reversed_amount_minor: 200 }], balances: [{ bucket: "PENDING", amount: 0 }] });
+    expect(await new OrderCompletionWorker(pool!).completeOrder(id)).toBe(true);
+    expect((await pool!.query("SELECT * FROM ledger_entries WHERE entry_type='COMMISSION_RELEASE'")).rows).toEqual([]);
+  });
+
+  for (const paid of [false, true]) it(`creates AVAILABLE debt after a ${paid ? "paid" : "requested"} payout without rewriting history`, async () => {
+    const { id, itemId } = await placeOrder(admin, true, 2); await deliver(id);
+    await new OrderCompletionWorker(pool!).completeOrder(id);
+    const payoutId = randomUUID();
+    await pool!.query(`INSERT INTO payouts (id,partner_id,amount_minor,currency,status,idempotency_key,request_fingerprint,requested_by_user_id)
+      VALUES ($1,$2,200,$3,$4,$5,$6,$7)`, [payoutId, partner, currency, paid ? "PAID" : "REQUESTED", randomUUID(), "a".repeat(64), partnerUser]);
+    const group = randomUUID();
+    for (const [bucket, amount, type] of [["AVAILABLE", -200, "PAYOUT_LOCK"], ["PAYOUT_LOCKED", 200, "PAYOUT_LOCK"],
+      ...(paid ? [["PAYOUT_LOCKED", -200, "PAYOUT_PAID"]] : [])])
+      await pool!.query(`INSERT INTO ledger_entries (id,partner_id,payout_id,bucket,amount_minor,entry_type,transaction_group_id,idempotency_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [randomUUID(), partner, payoutId, bucket, amount, type, group, randomUUID()]);
+    const history = (await pool!.query("SELECT * FROM ledger_entries WHERE payout_id=$1 ORDER BY id", [payoutId])).rows;
+    const payout = (await pool!.query("SELECT * FROM payouts WHERE id=$1", [payoutId])).rows;
+    const created = await service.create(admin, { orderId: id, reason: "Late", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await service.complete(created.id, admin);
+    expect((await finance(id)).commissions).toMatchObject([{ state: "EARNED", reversed_amount_minor: 100 }]);
+    expect((await finance(id)).balances).toContainEqual({ bucket: "AVAILABLE", amount: -100 });
+    expect((await pool!.query("SELECT * FROM ledger_entries WHERE payout_id=$1 ORDER BY id", [payoutId])).rows).toEqual(history);
+    expect((await pool!.query("SELECT * FROM payouts WHERE id=$1", [payoutId])).rows).toEqual(payout);
+  });
+
+  it("completes organic and attributed zero-unit returns without financial entries", async () => {
+    for (const attributed of [false, true]) {
+      const { id, itemId } = await placeOrder(admin, attributed, 1, organicVariant); await deliver(id);
+      const created = await service.create(admin, { orderId: id, reason: "No commission", items: [{ orderItemId: itemId, quantity: 1 }] });
+      await service.complete(created.id, admin);
+      expect((await pool!.query("SELECT payload FROM events WHERE aggregate_id=$1 AND type='RETURN_COMPLETED'", [created.id])).rows[0].payload.commissionReversalMinor).toBe(0);
+      expect((await finance(id)).commissions).toEqual([]);
+    }
+  });
+
+  it("serializes concurrent completions and Order completion without duplicate money", async () => {
+    const { id, itemId } = await placeOrder(admin, true, 2); await deliver(id);
+    const created = await service.create(admin, { orderId: id, reason: "Race", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await Promise.all([service.complete(created.id, admin), service.complete(created.id, admin), new OrderCompletionWorker(pool!).completeOrder(id)]);
+    await new OrderCompletionWorker(pool!).completeOrder(id);
+    expect(await finance(id)).toMatchObject({ commissions: [{ state: "EARNED", reversed_amount_minor: 100 }], balances: [{ bucket: "AVAILABLE", amount: 100 }, { bucket: "PENDING", amount: 0 }] });
+    expect((await pool!.query("SELECT count(*)::int AS count FROM ledger_entries WHERE entry_type='COMMISSION_REVERSAL'")).rows[0].count).toBe(1);
+    expect((await pool!.query("SELECT count(*)::int AS count FROM events WHERE type='RETURN_COMPLETED' AND aggregate_id=$1", [created.id])).rows[0].count).toBe(1);
+  });
+
+  it("rejects cancelled/missing Returns and rechecks cumulative quantities under locks", async () => {
+    await expect(service.complete(randomUUID(), admin)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const { id, itemId } = await placeOrder(admin, true); await deliver(id);
+    const created = await service.create(admin, { orderId: id, reason: "Cancelled", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await service.cancel(created.id, admin);
+    await expect(service.complete(created.id, admin)).rejects.toMatchObject({ code: "RETURN_NOT_ALLOWED" });
+    const next = await service.create(admin, { orderId: id, reason: "Corrupt quantity", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await pool!.query("UPDATE return_items SET quantity=2 WHERE return_id=$1", [next.id]);
+    await expect(service.complete(next.id, admin)).rejects.toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
+    expect((await service.detail(next.id)).status).toBe("OPEN");
+    expect((await finance(id)).commissions[0].reversed_amount_minor).toBe(0);
+  });
+
+  it("rolls back reversal/projection/status/Event together when Audit fails, then retries once", async () => {
+    const { id, itemId } = await placeOrder(admin, true); await deliver(id);
+    const created = await service.create(admin, { orderId: id, reason: "Rollback", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await pool!.query(`CREATE FUNCTION fail_t32_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 't32 audit failure'; END $$;
+      CREATE TRIGGER fail_t32_audit BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_t32_audit()`);
+    try {
+      const before = await finance(id);
+      await expect(service.complete(created.id, admin)).rejects.toThrow("t32 audit failure");
+      expect(await finance(id)).toEqual(before);
+      expect((await service.detail(created.id)).status).toBe("OPEN");
+      expect((await pool!.query("SELECT * FROM events WHERE aggregate_id=$1", [created.id])).rows).toEqual([]);
+    } finally { await pool!.query("DROP TRIGGER fail_t32_audit ON audit_logs; DROP FUNCTION fail_t32_audit()"); }
+    await service.complete(created.id, admin);
+    expect((await finance(id)).commissions[0]).toMatchObject({ state: "VOID", reversed_amount_minor: 100 });
+  });
+
+  it("serializes completion versus cancellation and competing Return creation", async () => {
+    const { id, itemId } = await placeOrder(admin, true); await deliver(id);
+    const created = await service.create(admin, { orderId: id, reason: "Race", items: [{ orderItemId: itemId, quantity: 1 }] });
+    const results = await Promise.allSettled([service.complete(created.id, admin), service.cancel(created.id, admin)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: "RETURN_NOT_ALLOWED" });
+    const status = (await service.detail(created.id)).status;
+    expect((await finance(id)).commissions[0].reversed_amount_minor).toBe(status === "COMPLETED" ? 100 : 0);
+    if (status === "CANCELLED") {
+      const next = await service.create(admin, { orderId: id, reason: "Retry", items: [{ orderItemId: itemId, quantity: 1 }] });
+      await service.complete(next.id, admin);
+    }
+    await expect(service.create(admin, { orderId: id, reason: "Overrun", items: [{ orderItemId: itemId, quantity: 1 }] }))
+      .rejects.toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
+  });
+
+  it("fails closed on a missing positive Commission", async () => {
+    const { id, itemId } = await placeOrder(admin, true, 1, organicVariant); await deliver(id);
+    // Simulate retained pre-S12 data without a Commission; preserve the append-only journal.
+    await pool!.query("UPDATE order_items SET partner_commission_unit_snapshot_minor=100 WHERE id=$1", [itemId]);
+    const corrupt = await service.create(admin, { orderId: id, reason: "Missing", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await expect(service.complete(corrupt.id, admin)).rejects.toMatchObject({ code: "INTERNAL_INVARIANT_VIOLATION" });
+    expect((await service.detail(corrupt.id)).status).toBe("OPEN");
+    expect((await finance(id)).commissions).toEqual([]);
+    expect((await pool!.query("SELECT * FROM events WHERE aggregate_id=$1", [corrupt.id])).rows).toEqual([]);
+  });
+});
 
 describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () => {
   it("creates OPEN Returns only for DELIVERED/COMPLETED Orders with server-derived Order identity", async () => {
@@ -227,6 +371,6 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   if (!pool) return;
-  await pool.query("TRUNCATE orders,returns,audit_logs,attribution_touches CASCADE");
+  await pool.query("TRUNCATE orders,returns,payouts,audit_logs,attribution_touches CASCADE");
 });
 afterAll(async () => { if (pool) { await pool.query(`DROP SCHEMA ${schema} CASCADE`); await pool.end(); } });

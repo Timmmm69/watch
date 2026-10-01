@@ -31,6 +31,8 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
   const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [confirmComplete, setConfirmComplete] = useState(false);
+  const [completionNote, setCompletionNote] = useState("");
   const [draft, setDraft] = useState({ status: "", orderId: "" });
   const [query, setQuery] = useState("page=1&limit=20");
   const [orderInput, setOrderInput] = useState("");
@@ -134,6 +136,17 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
     finally { busy.current = false; setPending(""); }
   };
   const turnPage = (page: number) => { const next = new URLSearchParams(query); next.set("page", String(page)); setQuery(next.toString()); };
+  const completeReturn = async () => {
+    if (!returnId || busy.current || blocked || loading) return;
+    busy.current = true; setPending("complete"); ++sequence.current;
+    try {
+      await request(`/api/v1/admin/returns/${encodeURIComponent(returnId)}/complete`,
+        completionNote.trim() ? { note: completionNote.trim() } : {});
+      setConfirmComplete(false); setError("");
+      await refresh();
+    } catch (cause) { setError((cause as Error).message); setConfirmComplete(false); }
+    finally { busy.current = false; setPending(""); }
+  };
   const preview = order && order.currency
     ? (order.items ?? []).reduce((sum, item) => sum + item.partnerCommissionUnitMinor * (quantities[item.id] ?? 0), 0) : 0;
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
@@ -180,9 +193,15 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
       <section><h2 className="font-semibold">Позиции</h2>{detail.items.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">
         <h3>{item.title} · {item.sku}</h3><p>{item.quantity} шт. × {money(item.unitPriceMinor, detail.currency)}</p>
         <p>Комиссия за единицу: {money(item.partnerCommissionUnitSnapshotMinor, detail.currency)}</p></article>)}</section>
-      <p>Предполагаемый возврат комиссии: {money(detail.reversalPreviewMinor, detail.currency)} — применится при завершении возврата.</p>
+      <p>{detail.status === "COMPLETED" ? "Возвращённая комиссия" : "Предполагаемый возврат комиссии"}: {money(detail.reversalPreviewMinor, detail.currency)}{detail.status === "OPEN" && " — применится при завершении возврата."}</p>
       {detail.status === "OPEN" && <section className="flex flex-wrap gap-3">
-        <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => setConfirm(true)}>{pending === "cancel" ? "Сохранение…" : "Отменить возврат"}</button></section>}
+        <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
+        <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отменить возврат"}</button></section>}
+      {confirmComplete && detail.status === "OPEN" && <section aria-label="Подтверждение завершения возврата" className="rounded border border-slate-600 p-4">
+        <p>Завершить возврат и списать комиссию {money(detail.reversalPreviewMinor, detail.currency)}? Уже выплаченная комиссия образует задолженность партнёра.</p>
+        <label>Комментарий (необязательно)<textarea className="block w-full bg-slate-900" maxLength={1000} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} /></label>
+        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void completeReturn()}>Да, завершить возврат</button>
+        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => setConfirmComplete(false)}>Вернуться</button></section>}
       {confirm && <section aria-label="Подтверждение отмены возврата" className="rounded border border-slate-600 p-4">
         <p>Отменить возврат? После отмены заказ снова сможет завершиться автоматически.</p>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void cancelReturn()}>Да, отменить возврат</button>

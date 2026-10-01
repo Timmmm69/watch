@@ -328,6 +328,10 @@ export const adminReturnCreateRequestSchema = z.object({
 }).strict();
 export type AdminReturnCreateRequest = z.infer<typeof adminReturnCreateRequestSchema>;
 
+export const adminReturnCompleteRequestSchema = z.object({
+  note: z.string().trim().min(1).max(1000).optional()
+}).strict();
+
 export const adminReturnListQuerySchema = pageQuerySchema.extend({
   status: returnStatusSchema.optional(),
   orderId: z.string().uuid().optional()

@@ -15,7 +15,7 @@ const detail = { id, orderId: id, orderPublicNumber: "W-0123456789AB", status: "
 function setup(admin = true, blocked = false) {
   const returns = { list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 }),
     detail: vi.fn().mockResolvedValue(detail), create: vi.fn().mockResolvedValue(detail),
-    cancel: vi.fn().mockResolvedValue(detail) };
+    cancel: vi.fn().mockResolvedValue(detail), complete: vi.fn().mockResolvedValue({ ...detail, status: "COMPLETED" }) };
   const current = { session: { id: "session-1", userId: id }, user: { id, telegramUserId: "42", isAdmin: admin, isBlocked: blocked } };
   const app = createApp({ logger: false, checkReadiness: async () => undefined, returns,
     auth: { store: { loadCurrent: vi.fn().mockResolvedValue(current) } as unknown as SessionStore, csrfSecret: secret,
@@ -35,8 +35,9 @@ describe("Admin Return API", () => {
     for (const requestHeaders of [{ cookie }, { ...headers, origin: "https://wrong.example" }, { ...headers, "x-csrf-token": "bad" }]) {
       expect((await app.inject({ method: "POST", url: "/api/v1/admin/returns", headers: requestHeaders, payload })).statusCode).toBe(403);
       expect((await app.inject({ method: "POST", url: `/api/v1/admin/returns/${id}/cancel`, headers: requestHeaders, payload: {} })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST", url: `/api/v1/admin/returns/${id}/complete`, headers: requestHeaders, payload: {} })).statusCode).toBe(403);
     }
-    expect(returns.create).not.toHaveBeenCalled(); expect(returns.cancel).not.toHaveBeenCalled();
+    expect(returns.create).not.toHaveBeenCalled(); expect(returns.cancel).not.toHaveBeenCalled(); expect(returns.complete).not.toHaveBeenCalled();
     const blocked = setup(true, true);
     expect((await blocked.app.inject({ method: "POST", url: "/api/v1/admin/returns", headers, payload })).json().error.code).toBe("USER_BLOCKED");
     expect(blocked.returns.create).not.toHaveBeenCalled(); await blocked.app.close();
@@ -84,6 +85,31 @@ describe("Admin Return API", () => {
     const response = await app.inject({ method: "POST", url: `/api/v1/admin/returns/${id}/cancel`, headers, payload: {} });
     expect(response.statusCode).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
     expect(returns.cancel).toHaveBeenCalledWith(id, id, expect.any(String));
+    await app.close();
+  });
+  it("validates completion, maps errors and passes the authenticated actor and optional note", async () => {
+    const { app, returns } = setup();
+    const url = `/api/v1/admin/returns/${id}/complete`;
+    expect((await app.inject({ method: "POST", url, payload: {} })).statusCode).toBe(401);
+    for (const state of [setup(false), setup(true, true)]) {
+      expect((await state.app.inject({ method: "POST", url, headers, payload: {} })).statusCode).toBe(403);
+      expect(state.returns.complete).not.toHaveBeenCalled(); await state.app.close();
+    }
+    for (const payload of [{ note: " " }, { note: "x".repeat(1001) }, { note: 42 }, { actorUserId: id }])
+      expect((await app.inject({ method: "POST", url, headers, payload })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/v1/admin/returns/bad/complete", headers, payload: {} })).statusCode).toBe(400);
+    expect(returns.complete).not.toHaveBeenCalled();
+    for (const payload of [{}, { note: "  Received  " }]) {
+      const response = await app.inject({ method: "POST", url, headers, payload });
+      expect(response.statusCode).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.json().status).toBe("COMPLETED");
+      expect(returns.complete).toHaveBeenLastCalledWith(id, id, expect.any(String), "note" in payload ? "Received" : undefined);
+    }
+    for (const [code, status] of [["NOT_FOUND", 404], ["RETURN_NOT_ALLOWED", 409], ["RETURN_QUANTITY_EXCEEDED", 409], ["INTERNAL_INVARIANT_VIOLATION", 409]] as const) {
+      returns.complete.mockRejectedValue(new ReturnError(code));
+      const response = await app.inject({ method: "POST", url, headers, payload: {} });
+      expect(response.statusCode).toBe(status); expect(response.json().error.code).toBe(code);
+    }
     await app.close();
   });
 });
