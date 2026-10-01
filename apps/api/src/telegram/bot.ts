@@ -62,9 +62,16 @@ export async function callBot(token: string, method: string, body: Record<string
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000)
   });
-  if (!response.ok) throw new Error(`Telegram ${method} HTTP ${response.status}`);
+  if (!response.ok) {
+    if (response.status === 403) throw new Error(`Telegram ${method} blocked`);
+    throw new Error(`Telegram ${method} HTTP ${response.status}`);
+  }
   const result: unknown = await response.json();
   if (!result || typeof result !== "object" || (result as { ok?: unknown }).ok !== true) {
+    const description = (result as { description?: unknown }).description;
+    if (typeof description === "string" && /blocked|deactivated/i.test(description)) {
+      throw new Error(`Telegram ${method} blocked: ${description}`);
+    }
     throw new Error(`Telegram ${method} failed`);
   }
 }

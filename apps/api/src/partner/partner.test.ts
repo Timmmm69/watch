@@ -125,4 +125,30 @@ describe("PartnerService.onboard", () => {
     const statements = client.queries.map((q) => q.sql);
     expect(statements.some((s) => s.includes("ON CONFLICT DO NOTHING"))).toBe(true);
   });
+
+  it("emits PARTNER_ACTIVATED on first onboarding only", async () => {
+    const legal = { getCurrent: async () => currentDoc } as unknown as LegalDocuments;
+    const client = makeClient((sql) => {
+      if (sql.includes("INSERT INTO partners")) return result([{ id: "p1", status: "ACTIVE" }]);
+      return result([]);
+    });
+    const pool = { connect: async () => client } as unknown as Pool;
+    await new PartnerService(pool, legal).onboard("user-1", "doc-1", "v1");
+    const event = client.queries.find((q) => q.sql.includes("INSERT INTO events") && q.sql.includes("PARTNER_ACTIVATED"));
+    expect(event).toBeTruthy();
+    expect(event!.params[3]).toContain('"partnerId":"p1"');
+  });
+
+  it("does not emit PARTNER_ACTIVATED on reacceptance", async () => {
+    const legal = { getCurrent: async () => currentDoc } as unknown as LegalDocuments;
+    const client = makeClient((sql) => {
+      if (sql.includes("INSERT INTO partners")) return result([]);
+      if (sql.includes("FOR UPDATE")) return result([{ id: "p1", status: "ACTIVE" }]);
+      return result([]);
+    });
+    const pool = { connect: async () => client } as unknown as Pool;
+    await new PartnerService(pool, legal).onboard("user-1", "doc-1", "v1");
+    const event = client.queries.find((q) => q.sql.includes("INSERT INTO events") && q.sql.includes("PARTNER_ACTIVATED"));
+    expect(event).toBeFalsy();
+  });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { LegalDocuments } from "../legal/legal.js";
 
@@ -76,6 +77,13 @@ export class PartnerService {
         "INSERT INTO partner_terms_acceptances (partner_id, legal_document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         [partner.id, current.id]
       );
+      if (inserted.rows[0]) {
+        await client.query(
+          `INSERT INTO events (id, type, aggregate_type, aggregate_id, dedupe_key, payload, created_at)
+           VALUES ($1, 'PARTNER_ACTIVATED', 'Partner', $2, $3, $4, now())`,
+          [randomUUID(), partner.id, `partner:${partner.id}:activated`, JSON.stringify({ v: 1, partnerId: partner.id })]
+        );
+      }
       await client.query("COMMIT");
       return { kind: "ok", partner: { id: partner.id, status: partner.status } };
     } catch (error) {

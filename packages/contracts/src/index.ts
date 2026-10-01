@@ -141,6 +141,93 @@ export const reservationReconcileSchema = z.object({
 }).strict();
 export type ReservationReconcileRequest = z.infer<typeof reservationReconcileSchema>;
 
+export const buyerOrderItemSchema = z.object({
+  id: z.string().uuid(),
+  variantId: z.string().uuid(),
+  sku: z.string(),
+  title: z.string(),
+  attributes: z.record(z.string(), z.unknown()),
+  quantity: z.number().int().min(1),
+  unitPriceMinor: moneyMinor,
+  lineTotalMinor: moneyMinor
+});
+
+export const partnerOrderItemSchema = buyerOrderItemSchema.extend({
+  partnerCommissionUnitSnapshotMinor: moneyMinor
+});
+
+export const orderTimelineEntrySchema = z.object({
+  status: orderStatusSchema,
+  at: z.string().datetime()
+});
+
+export const fulfillmentDetailSchema = z.object({
+  recipientName: z.string().nullable(),
+  phone: z.string().nullable(),
+  address: z.string().nullable(),
+  comment: z.string().nullable(),
+  redactedAt: z.string().datetime().nullable()
+});
+
+export const buyerOrderListQuerySchema = pageQuerySchema.extend({
+  status: orderStatusSchema.optional()
+});
+export type BuyerOrderListQuery = z.infer<typeof buyerOrderListQuerySchema>;
+
+export const buyerOrderListItemSchema = z.object({
+  id: z.string().uuid(),
+  publicNumber: z.string(),
+  status: orderStatusSchema,
+  totalMinor: moneyMinor,
+  currency: z.string().length(3),
+  itemCount: z.number().int().min(0),
+  createdAt: z.string().datetime()
+});
+
+export const buyerOrderDetailSchema = z.object({
+  id: z.string().uuid(),
+  publicNumber: z.string(),
+  status: orderStatusSchema,
+  currency: z.string().length(3),
+  subtotalMinor: moneyMinor,
+  totalMinor: moneyMinor,
+  items: z.array(buyerOrderItemSchema),
+  timeline: z.array(orderTimelineEntrySchema),
+  fulfillment: fulfillmentDetailSchema.nullable(),
+  supportContact: z.string(),
+  createdAt: z.string().datetime()
+});
+
+export const partnerOrderListQuerySchema = pageQuerySchema.extend({
+  status: orderStatusSchema.optional()
+});
+export type PartnerOrderListQuery = z.infer<typeof partnerOrderListQuerySchema>;
+
+export const partnerOrderListItemSchema = z.object({
+  id: z.string().uuid(),
+  publicNumber: z.string(),
+  status: orderStatusSchema,
+  totalMinor: moneyMinor,
+  currency: z.string().length(3),
+  commissionEligibleSnapshot: z.boolean(),
+  itemCount: z.number().int().min(0),
+  createdAt: z.string().datetime()
+});
+
+export const partnerOrderDetailSchema = z.object({
+  id: z.string().uuid(),
+  publicNumber: z.string(),
+  status: orderStatusSchema,
+  currency: z.string().length(3),
+  subtotalMinor: moneyMinor,
+  totalMinor: moneyMinor,
+  commissionEligibleSnapshot: z.boolean(),
+  items: z.array(partnerOrderItemSchema),
+  timeline: z.array(orderTimelineEntrySchema),
+  supportContact: z.string(),
+  createdAt: z.string().datetime()
+});
+
 export const storefrontProductsQuerySchema = pageQuerySchema.extend({
   q: z.string().trim().min(1).max(100).optional(),
   category: z.string().min(1).max(140).optional(),

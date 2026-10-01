@@ -27,7 +27,9 @@ import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
+import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
 import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
+import { OrderViewError, type OrderViewService } from "./orders/views.js";
 import type { LegalDocumentType } from "@watch/config";
 import { createRequireAdmin, createRequireCsrf, createRequireSession, deriveCsrfToken, isAdmin } from "./auth/middleware.js";
 import { BlockedUserError, readSessionCookie, serializeSessionCookie, SESSION_COOKIE_NAME, type SessionStore } from "./auth/session.js";
@@ -74,10 +76,11 @@ export interface AppDependencies {
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
   checkout?: Pick<CheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
+  orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, webhook }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, orderViews, webhook }: AppDependencies) {
   const app = Fastify({ logger });
   if (assets) {
     app.register(multipart, { limits: {
@@ -311,6 +314,55 @@ export function createApp({ checkReadiness, logger = true, auth, legal, partner,
         return reply.code(status).send({ error: { code: error.code, message: error.message, details: error.details, requestId: request.id } });
       }
     });
+
+    if (orderViews) {
+      const orderViewError = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (error instanceof OrderViewError) {
+          return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Order not found", details: {}, requestId: request.id } });
+        }
+        throw error;
+      };
+      app.get("/api/v1/orders", { preHandler: requireSession }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = buyerOrderListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid order list query", details: {}, requestId: request.id } });
+        }
+        const result = await orderViews.listBuyerOrders(request.auth!.user.id, parsed.data);
+        return { items: result.items.map((item) => buyerOrderListItemSchema.parse(item)), total: result.total, page: result.page, limit: result.limit };
+      });
+      app.get("/api/v1/orders/:publicNumber", { preHandler: requireSession }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const publicNumber = (request.params as { publicNumber?: string }).publicNumber ?? "";
+        try {
+          return buyerOrderDetailSchema.parse(await orderViews.getBuyerOrder(request.auth!.user.id, publicNumber));
+        } catch (error) { return orderViewError(request, reply, error); }
+      });
+      app.get("/api/v1/partner/orders", { preHandler: requireSession }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const parsed = partnerOrderListQuerySchema.safeParse(request.query ?? {});
+        if (!parsed.success) {
+          return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid order list query", details: {}, requestId: request.id } });
+        }
+        const state = partner ? await partner.loadState(request.auth!.user.id) : { partner: null };
+        if (!state.partner) {
+          return reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
+        }
+        const result = await orderViews.listPartnerOrders(state.partner.id, parsed.data);
+        return { items: result.items.map((item) => partnerOrderListItemSchema.parse(item)), total: result.total, page: result.page, limit: result.limit };
+      });
+      app.get("/api/v1/partner/orders/:publicNumber", { preHandler: requireSession }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const publicNumber = (request.params as { publicNumber?: string }).publicNumber ?? "";
+        const state = partner ? await partner.loadState(request.auth!.user.id) : { partner: null };
+        if (!state.partner) {
+          return reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
+        }
+        try {
+          return partnerOrderDetailSchema.parse(await orderViews.getPartnerOrder(state.partner.id, publicNumber));
+        } catch (error) { return orderViewError(request, reply, error); }
+      });
+    }
 
     if (cart) {
       const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {
