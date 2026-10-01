@@ -2014,8 +2014,23 @@ Before S09 finalization confirm contact fields, delivery method, payment path, w
 ## U05 — Return/legal policy
 Needed for legal text, retention and final hold value. Generic Return engine can exist; default financial hold remains 14 days until changed.
 
-## U06 — Payout method — BLOCKS S14
-Need country/currency compatibility with PLATFORM_CURRENCY, destination fields, method, minimum, fees, tax/legal ops. Do not invent card/bank fields.
+## U06 — Payout method — RESOLVED 2026-10-01
+MVP payout is **MANUAL_OFF_PLATFORM** and supports only the current immutable `PLATFORM_CURRENCY` (BYN) for Belarus-based Partner operations.
+
+Exact MVP rules:
+- self-service payout request always requests the full positive net AVAILABLE balance under BR-100; the client does not choose an arbitrary amount;
+- configured minimum is `MIN_PAYOUT_MINOR=5000` (50 BYN). This is a runtime business threshold and may be changed prospectively without rewriting historical Payouts;
+- no card number, IBAN, bank account, wallet or other payout destination is collected or stored by the platform in MVP;
+- `payouts.destination_snapshot` is therefore always NULL for MVP MANUAL_OFF_PLATFORM payouts;
+- after a REQUESTED payout is created and its AVAILABLE amount is locked by the ledger, Admin arranges the actual bank/payment transfer outside the application using an operational channel agreed with the Partner;
+- the application never initiates a payment provider/bank transfer and never stores payment credentials;
+- Partner payout amount is not reduced by platform payout fees. Any real transfer fee is borne outside the payout ledger by the platform/operator and, when contribution economics are completed, belongs to U04 platform-paid variable costs;
+- Admin may mark a payout PAID only after the external transfer has actually completed and must record a non-secret `external_reference`; no bank/card data may be copied into that field or Audit/Event payloads;
+- Admin may mark REQUESTED→REJECTED with an operational reason; ledger restoration follows BR-108 exactly;
+- no tax calculation, withholding or tax filing is automated by the product in MVP. Required contractual/tax eligibility checks remain an external operator/legal process before PAID. Production legal wording and responsibilities must be reflected in U08 Partner Terms/Privacy and applicable operating procedures;
+- BLOCKED Partner cannot self-request, but Admin settlement payout remains allowed under BR-109 and uses the same MANUAL_OFF_PLATFORM method.
+
+This resolves the product/technical payout configuration required for S14 without inventing bank/card fields or payment-provider APIs. Production legal/tax compliance remains subject to U08 and the operator's jurisdiction-specific process.
 
 ## U07 — Hosting/domain — BLOCKS S16 production
 Cloudflare R2 is selected as the production product-media object-storage target. Exact hosting provider/budget/domain and backup target remain unresolved and still block S16 production completion.
@@ -2053,7 +2068,7 @@ Before S04 domain-specific filters: U02.
 Before S07 completion: U01 is already resolved as Google Sheets complete snapshot + `MANUAL`; completion now requires the real adapter/config and successful live Sheet access, not another product decision.
 Before S09 production behavior: confirm U03 or accept provisional manual-fulfilment fields/process.
 Before production S12 release timing: confirm U05 hold value or explicitly accept 14d.
-Before S14: U06.
+Before S14: U06 is resolved as MANUAL_OFF_PLATFORM, full AVAILABLE payout, 50 BYN minimum, no stored destination fields. T33/T34 may implement this model; production use still requires U08 legal wording/operational compliance.
 Before complete S15 contribution: U04.
 Before S16: U07 + production U08.
 
@@ -2080,7 +2095,7 @@ Do not ask Codex to guess U03/U06/U08 or any deployment credential/value.
 - production inventory launch without real configured Google Sheet access, service-account credentials/sharing and successful live verification;
 - source-specific category/watch filters without U02;
 - final checkout/fulfilment semantics if U03 differs from assumption;
-- payout destination/UI or live payout workflow without U06;
+- automated payout-provider integration or storage of bank/card destination data is NOT part of the resolved U06 MVP; production payout use still requires U08 legal wording/operational compliance;
 - complete contribution claims without U04;
 - production legal launch/PII retention without U08;
 - production deployment without U07.
