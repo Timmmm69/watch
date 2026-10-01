@@ -47,6 +47,7 @@ const checkReadiness = async () => {
   await catalogService.verifyCurrencyConfigured();
 };
 const app = createApp({
+  ...(runtimeConfig.API_TRUSTED_PROXY_IP ? { trustedProxyIp: runtimeConfig.API_TRUSTED_PROXY_IP } : {}),
   analytics: new AnalyticsService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.BUSINESS_TIMEZONE,
     runtimeConfig.INVENTORY_MAX_AGE_SECONDS, runtimeConfig.ORDER_OVERDUE_SECONDS),
   checkReadiness,

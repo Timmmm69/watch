@@ -1,0 +1,34 @@
+name: Dependency security
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - run: npm install -g pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:topology
+      - run: pnpm test:db-security
+        env:
+          WATCH_SECURITY_TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+      - run: docker run --rm --network none -e APP_BASE_URL=https://example.invalid -v "$PWD/ops/docker/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile --validate >/dev/null
+      - run: pnpm audit --prod

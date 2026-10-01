@@ -1,4 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { installSecurityRateLimits } from "./security/rate-limits.js";
 import multipart from "@fastify/multipart";
 import { timingSafeEqual } from "node:crypto";
 import { analyticsQuerySchema } from "@watch/contracts";
@@ -67,6 +68,7 @@ export interface AppDependencies {
   analytics?: Pick<AnalyticsService, "summary" | "dashboard">;
   checkReadiness: () => Promise<void>;
   logger?: boolean;
+  trustedProxyIp?: string;
   auth?: {
     store: SessionStore;
     csrfSecret: Buffer;
@@ -94,8 +96,13 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics }: AppDependencies) {
-  const app = Fastify({ logger });
+export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics }: AppDependencies) {
+  const app = Fastify({
+    logger: logger ? { redact: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "req.headers['x-telegram-bot-api-secret-token']", "res.headers['set-cookie']"] } : false,
+    trustProxy: trustedProxyIp ? [trustedProxyIp] : false,
+    bodyLimit: 1_048_576
+  });
+  installSecurityRateLimits(app);
   if (assets) {
     app.register(multipart, { limits: {
       files: 1, fields: 3, parts: 4, fieldSize: 100, fieldNameSize: 32,

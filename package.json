@@ -13,6 +13,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --if-present test",
+    "test:topology": "node --test ops/docker/security.test.mjs",
+    "test:db-security": "node --test ops/docker/database-security.test.mjs",
     "test:e2e": "pnpm --filter @watch/web test:e2e",
     "test:financial": "pnpm build:packages && pnpm --filter @watch/api test:financial",
     "db:generate": "pnpm --filter @watch/db db:generate",

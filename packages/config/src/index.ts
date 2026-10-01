@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createPrivateKey } from "node:crypto";
+import { isIP } from "node:net";
 
 export interface GoogleSheetsServiceAccount {
   type: "service_account";
@@ -50,6 +51,9 @@ function parseCsrfSecret(value: string): Buffer {
 const legalVersion = z.string().min(1).max(64);
 
 export const apiRuntimeConfigSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  // Only individual proxy addresses are accepted; no wildcard/CIDR/hop-count trust.
+  API_TRUSTED_PROXY_IP: z.string().refine((value) => isIP(value) !== 0, "API_TRUSTED_PROXY_IP must be an exact IP address").optional(),
   APP_BASE_URL: z.url(),
   DATABASE_URL: z.url().refine((value) => {
     const protocol = new URL(value).protocol;
@@ -83,6 +87,15 @@ export const apiRuntimeConfigSchema = z.object({
   LEGAL_PRIVACY_ID: z.string().uuid().optional(),
   LEGAL_PRIVACY_VERSION: legalVersion.optional()
 }).superRefine((value, ctx) => {
+  if (value.NODE_ENV === "production") {
+    const origin = new URL(value.APP_BASE_URL);
+    if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+      ctx.addIssue({ code: "custom", message: "Production APP_BASE_URL must be a single HTTPS origin", path: ["APP_BASE_URL"] });
+    }
+    if (!value.API_TRUSTED_PROXY_IP) {
+      ctx.addIssue({ code: "custom", message: "Production requires an exact trusted reverse-proxy IP", path: ["API_TRUSTED_PROXY_IP"] });
+    }
+  }
   if (value.INVENTORY_PROVIDER === "google_sheets") {
     for (const field of ["GOOGLE_SHEETS_SPREADSHEET_ID", "GOOGLE_SHEETS_WORKSHEET_NAME", "GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64"] as const) {
       if (value[field] === undefined) ctx.addIssue({ code: "custom", message: `${field} is required for google_sheets`, path: [field] });

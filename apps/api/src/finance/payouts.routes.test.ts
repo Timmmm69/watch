@@ -40,21 +40,32 @@ describe("T33 payout routes", () => {
       expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers })).statusCode).toBe(200);
     } finally { await app.close(); }
   });
-  it("rejects missing Session, global block, Origin/CSRF failures and arbitrary client fields", async () => {
+  it("rejects missing Session, global block and Origin/CSRF failures", async () => {
     const { app,request } = setup();
     try {
       expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",payload: {} })).statusCode).toBe(401);
       for (const altered of [{ ...headers,origin: "https://evil.example" },{ ...headers,"x-csrf-token": "invalid" }])
         expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers: altered,payload: {} })).statusCode).toBe(403);
-      for (const payload of [{ amountMinor: 1 },{ partnerId },{ card: "private" },{ currency: "USD" },[],null])
-        expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers: { ...headers,"content-type": "application/json" },payload: JSON.stringify(payload) })).statusCode).toBe(400);
-      for (const key of ["", " ","x".repeat(101)])
-        expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers: { ...headers,"idempotency-key": key },payload: {} })).statusCode).toBe(400);
       expect(request).not.toHaveBeenCalled();
     } finally { await app.close(); }
     const blocked = setup(false,true);
     try { expect((await blocked.app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers,payload: {} })).statusCode).toBe(403); }
     finally { await blocked.app.close(); }
+  });
+  // Isolate validation cases so they do not exhaust the production payout budget.
+  it.each([{ amountMinor: 1 },{ partnerId },{ card: "private" },{ currency: "USD" },[],null])("rejects arbitrary payout input %j", async (payload) => {
+    const { app,request } = setup();
+    try {
+      expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers: { ...headers,"content-type": "application/json" },payload: JSON.stringify(payload) })).statusCode).toBe(400);
+      expect(request).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+  it.each(["", " ","x".repeat(101)])("rejects invalid payout idempotency key %j", async (key) => {
+    const { app,request } = setup();
+    try {
+      expect((await app.inject({ method: "POST",url: "/api/v1/partner/payouts",headers: { ...headers,"idempotency-key": key },payload: {} })).statusCode).toBe(400);
+      expect(request).not.toHaveBeenCalled();
+    } finally { await app.close(); }
   });
   it.each([["PARTNER_REQUIRED",403],["PARTNER_BLOCKED",403],["TERMS_REACCEPT_REQUIRED",403],
     ["PAYOUT_CONFIGURATION_MISSING",409],["PAYOUT_NOT_AVAILABLE",409],["PAYOUT_BELOW_MINIMUM",409],

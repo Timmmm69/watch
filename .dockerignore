@@ -1,0 +1,17 @@
+.git
+.serena
+.agents
+.codex
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+ops/secrets
+.local-postgres-test
+*.log

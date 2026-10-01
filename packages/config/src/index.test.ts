@@ -51,6 +51,19 @@ describe("API runtime configuration", () => {
     GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: Buffer.from(JSON.stringify(account)).toString("base64")
   };
 
+  it("requires HTTPS origin and exact proxy trust in production", () => {
+    const production = { ...valid, NODE_ENV: "production", APP_BASE_URL: "https://app.example.com", API_TRUSTED_PROXY_IP: "172.30.36.2" };
+    expect(loadApiRuntimeConfig(production).API_TRUSTED_PROXY_IP).toBe("172.30.36.2");
+    expect(loadApiRuntimeConfig(valid).API_TRUSTED_PROXY_IP).toBeUndefined();
+    expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: undefined })).toThrow();
+    for (const proxy of ["true", "1", "*", "172.30.36.0/24", "172.30.36.2,127.0.0.1"]) {
+      expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: proxy })).toThrow();
+    }
+    for (const url of ["http://app.example.com", "https://app.example.com/path", "https://user:secret@app.example.com", "https://app.example.com?x=1", "https://app.example.com#x"]) {
+      expect(() => loadApiRuntimeConfig({ ...production, APP_BASE_URL: url })).toThrow();
+    }
+  });
+
   it("accepts and decodes Google Sheets service-account configuration without requiring it when unset", () => {
     expect(loadApiRuntimeConfig({ ...valid, ...google }).GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64).toEqual(account);
     expect(loadApiRuntimeConfig(valid).INVENTORY_PROVIDER).toBeUndefined();

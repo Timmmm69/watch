@@ -12,3 +12,5 @@ packages/db/src/generated/
 .serena/
 .local-postgres-test/
 *.tsbuildinfo
+ops/secrets/
+ops/docker/production.env

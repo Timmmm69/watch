@@ -6,6 +6,22 @@ import { CatalogNotFoundError, CatalogValidationError } from "./catalog/catalog.
 import { ActiveProductInvariantError } from "./catalog/invariant.js";
 
 describe("infrastructure endpoints", () => {
+  it("trusts forwarding only from the configured proxy and disables trust by default", async () => {
+    const headers = { "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https", "x-forwarded-host": "app.example.com" };
+    for (const trustedProxyIp of [undefined, "172.30.36.2"]) {
+      const app = createApp({ checkReadiness: async () => undefined, logger: false,
+        ...(trustedProxyIp ? { trustedProxyIp } : {}) });
+      app.get("/proxy-test", async (request) => ({ ip: request.ip, protocol: request.protocol }));
+      const direct = await app.inject({ url: "/proxy-test", headers, remoteAddress: "172.30.36.3" });
+      expect(direct.json()).toEqual({ ip: "172.30.36.3", protocol: "http" });
+      const proxy = await app.inject({ url: "/proxy-test", headers, remoteAddress: "172.30.36.2" });
+      expect(proxy.json()).toEqual(trustedProxyIp ? { ip: "203.0.113.9", protocol: "https" } : { ip: "172.30.36.2", protocol: "http" });
+      const cors = await app.inject({ method: "OPTIONS", url: "/health", headers: { origin: "https://evil.example", "access-control-request-method": "POST" } });
+      expect(cors.headers["access-control-allow-origin"]).toBeUndefined();
+      await app.close();
+    }
+  });
+
   it("serves liveness without checking dependencies", async () => {
     const checkReadiness = vi.fn(async () => undefined);
     const app = createApp({ checkReadiness, logger: false });

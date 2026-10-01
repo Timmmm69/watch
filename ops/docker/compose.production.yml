@@ -1,0 +1,192 @@
+name: watch-production
+
+x-app: &app
+  image: watch-api:${RELEASE_TAG:?Set an immutable release tag}
+  build:
+    context: ../..
+    dockerfile: ops/docker/Dockerfile
+    target: api
+  env_file: ${WATCH_CONFIG_FILE:-production.env}
+  environment: &app-env
+    NODE_ENV: production
+    API_HOST: 0.0.0.0
+    API_PORT: "3001"
+    API_TRUSTED_PROXY_IP: 172.30.36.2
+    DATABASE_URL_FILE: /run/secrets/app_database_url
+    TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+    TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
+    CSRF_SECRET_FILE: /run/secrets/csrf_secret
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE: /run/secrets/google_service_account
+    OBJECT_STORAGE_ACCESS_KEY_ID_FILE: /run/secrets/storage_access_key
+    OBJECT_STORAGE_SECRET_ACCESS_KEY_FILE: /run/secrets/storage_secret_key
+  secrets: &app-secrets
+    - app_database_url
+    - telegram_bot_token
+    - telegram_webhook_secret
+    - csrf_secret
+    - google_service_account
+    - storage_access_key
+    - storage_secret_key
+  depends_on: &app-dependencies
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  init: true
+  user: "1000:1000"
+  read_only: true
+  tmpfs:
+    - /tmp:uid=1000,gid=1000,mode=1770
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17.10-bookworm
+    environment:
+      POSTGRES_USER: watch_admin
+      POSTGRES_DB: watch
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets: [postgres_password, migrate_password, app_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-watch-roles.sh:ro
+    networks: [database]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U watch_admin -d watch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: watch-migrate:${RELEASE_TAG:?Set an immutable release tag}
+    build:
+      context: ../..
+      dockerfile: ops/docker/Dockerfile
+      target: migrate
+    environment:
+      NODE_ENV: production
+      DATABASE_URL_FILE: /run/secrets/migrate_database_url
+    secrets: [migrate_database_url]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [database]
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1770
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  api:
+    <<: *app
+    networks: [proxy, database, egress]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  worker:
+    <<: *app
+    command: [node, apps/api/dist/telegram/worker.js]
+    networks: [database, egress]
+    stop_grace_period: 30s
+
+  web:
+    image: watch-web:${RELEASE_TAG:?Set an immutable release tag}
+    build:
+      context: ../..
+      dockerfile: ops/docker/Dockerfile
+      target: web
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on: *app-dependencies
+    networks: [proxy]
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1770
+      - /app/apps/web/.next/cache:uid=1000,gid=1000,mode=0770
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  reverse-proxy:
+    image: caddy:2.11.4-alpine
+    environment:
+      APP_BASE_URL: ${APP_BASE_URL:?Set the real public HTTPS origin}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      proxy:
+        ipv4_address: 172.30.36.2
+      egress: {}
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+networks:
+  database:
+    internal: true
+  proxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.36.0/24
+  # API/worker need outbound Telegram, Google Sheets and object-storage access.
+  # No ports on this network are published; Caddy needs ACME outbound access.
+  egress: {}
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  postgres_password:
+    file: ../secrets/postgres_password
+  migrate_password:
+    file: ../secrets/migrate_password
+  app_password:
+    file: ../secrets/app_password
+  migrate_database_url:
+    file: ../secrets/migrate_database_url
+  app_database_url:
+    file: ../secrets/app_database_url
+  telegram_bot_token:
+    file: ../secrets/telegram_bot_token
+  telegram_webhook_secret:
+    file: ../secrets/telegram_webhook_secret
+  csrf_secret:
+    file: ../secrets/csrf_secret
+  google_service_account:
+    file: ../secrets/google_service_account
+  storage_access_key:
+    file: ../secrets/storage_access_key
+  storage_secret_key:
+    file: ../secrets/storage_secret_key

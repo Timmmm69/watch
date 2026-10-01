@@ -1,0 +1,3 @@
+ops/docker/*.sh text eol=lf
+ops/docker/Dockerfile text eol=lf
+ops/docker/Caddyfile text eol=lf
