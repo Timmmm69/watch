@@ -459,7 +459,19 @@ Implement:
 ## S14 — Payouts
 
 ### T33 — Payout request + allocation engine
-**Requires U06 payout configuration.**
+**U06 RESOLVED 2026-10-01 — implementation may proceed.**
+
+MVP payout configuration:
+- method: `MANUAL_OFF_PLATFORM`;
+- currency: current immutable `PLATFORM_CURRENCY` (BYN);
+- self-service request amount: full positive net AVAILABLE only;
+- minimum: `MIN_PAYOUT_MINOR=5000` (50 BYN);
+- no bank/card/IBAN/wallet destination fields in MVP;
+- `destination_snapshot` is NULL;
+- the application does not execute money movement;
+- no payout fee is deducted from Partner balance;
+- Admin marks PAID only after a real external transfer and records a non-secret external reference;
+- tax calculation/withholding is not automated in MVP; production legal/tax operation remains an external/U08 concern.
 
 Implement:
 - payouts
@@ -471,8 +483,10 @@ Implement:
 - deterministic FIFO allocation
 - exact allocation sum
 - rejected allocation reusability rules
+- config validation for `MIN_PAYOUT_MINOR`
+- exact BR-100..109 behavior against real PostgreSQL
 
-Do not invent bank/card/destination fields.
+Do not add payment-provider APIs or invent bank/card/destination fields.
 
 ### T34 — Payout Admin + Partner UI
 Implement:
@@ -561,7 +575,7 @@ These are not Codex design tasks. They require real business/external input.
 - **U03:** fulfilment process details. Must be resolved/defaulted before S09 production finalization.
 - **U04:** supplier/platform economics. Required for full contribution analytics.
 - **U05:** return/legal policy. Default financial hold is 14 days until changed by explicit amendment.
-- **U06:** payout method/destination model. Blocks S14.
+- **U06 — RESOLVED 2026-10-01:** MANUAL_OFF_PLATFORM, BYN, full net AVAILABLE only, `MIN_PAYOUT_MINOR=5000` (50 BYN), no stored bank/card destination, `destination_snapshot=NULL`, no automated tax/withholding. Production legal wording/ops remain under U08.
 - **U07:** hosting/domain. Cloudflare R2 is selected for product-media object storage; hosting provider/budget/domain and backup target remain unresolved and block S16 completion.
 - **U08:** production legal documents + PII retention. Blocks production onboarding/checkout and S16 completion.
 
