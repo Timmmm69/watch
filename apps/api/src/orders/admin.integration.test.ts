@@ -259,25 +259,37 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
   });
   it.each(["CANCELLED","SHIPPED"] as const)("serializes cancellation/shipment with %s committing first", async (first) => {
     await advance("CONFIRMED","FULFILLING");
-    const blocker = await pool!.connect();
-    await blocker.query("BEGIN");
-    await blocker.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE", [id]);
-    const blockerPid = (await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
-    const firstResult = service.transition(id,buyer,first).catch((error: unknown) => error);
-    // Observe the real PostgreSQL waiter before queuing the competing transition.
-    const deadline = Date.now() + 3000;
-    let waiting = false;
+    const client = await pool!.connect();
+    const firstPid = (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    let lockHeld = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const firstService = new AdminOrderService({ connect: async () => ({
+      query: async (sql: string, values?: unknown[]) => {
+        const result = await client.query(sql, values);
+        if (sql === "SELECT * FROM orders WHERE id=$1 FOR UPDATE") {
+          lockHeld = true;
+          await gate;
+        }
+        return result;
+      },
+      release: () => client.release()
+    }) } as unknown as Pool);
+    const firstResult = firstService.transition(id,buyer,first).catch((error: unknown) => error);
     let secondResult: Promise<unknown> | undefined;
     try {
-      while (Date.now() < deadline) {
-        waiting = (await pool!.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))) AS waiting", [blockerPid])).rows[0].waiting;
-        if (waiting) break;
-        await new Promise((resolve) => setTimeout(resolve,10));
-      }
-      if (waiting) secondResult = service.transition(id,buyer,first === "CANCELLED" ? "SHIPPED" : "CANCELLED").catch((error: unknown) => error);
-    } finally { await blocker.query("COMMIT"); blocker.release(); }
+      // Pause the first real transaction AFTER it owns the Order lock. PostgreSQL
+      // does not guarantee which waiter wins when an external blocker releases.
+      await expect.poll(() => lockHeld).toBe(true);
+      secondResult = service.transition(id,buyer,first === "CANCELLED" ? "SHIPPED" : "CANCELLED").catch((error: unknown) => error);
+      await expect.poll(async () => (await pool!.query(
+        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))) AS waiting", [firstPid]
+      )).rows[0].waiting).toBe(true);
+    } finally {
+      release();
+      await Promise.allSettled([firstResult, ...(secondResult ? [secondResult] : [])]);
+    }
     expect(await firstResult).toMatchObject({ status: first });
-    expect(waiting).toBe(true);
     expect(await secondResult).toMatchObject({ code: "INVALID_ORDER_TRANSITION" });
     expect((await reserve()).status).toBe(first === "CANCELLED" ? "RELEASED" : "ACTIVE");
     expect((await service.detail(id)).status).toBe(first);
