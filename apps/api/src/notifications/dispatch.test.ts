@@ -28,13 +28,26 @@ class MockPool {
   }
 }
 
-const config = { appBaseUrl: "https://app.example", supportContact: "@support", botUsername: "watch_bot" };
+const config = { appBaseUrl: "https://app.example", supportContact: "@support", botUsername: "watch_bot", adminTelegramIds: new Set(["111", "222"]) };
 
 function event(type: string, payload: Record<string, unknown>): OutboxEvent {
   return { id: "e1", type, aggregateType: "Test", aggregateId: "a1", dedupeKey: "d1", payload, attempts: 1, leaseExpiresAt: new Date() };
 }
 
 describe("dispatchEvent", () => {
+  it.each(["ORDER_CREATED", "INVENTORY_SYNC_FAILED", "PAYOUT_REQUESTED"])("binds runtime Admin IDs for %s", async (type) => {
+    const pool = new MockPool();
+    pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-T43", total_minor: 100, currency: "BYN" }]);
+    pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);
+    pool.setBySql(`SELECT title_snapshot, quantity, partner_commission_unit_snapshot_minor FROM order_items
+     WHERE order_id = $1 ORDER BY id`, [{ title_snapshot: "Watch", quantity: 1, partner_commission_unit_snapshot_minor: 10 }]);
+    await dispatchEvent(pool as unknown as Pool, event(type, { orderId: "order", runId: "run", payoutId: "payout", partnerId: "partner", amountMinor: 100, status: "REQUESTED" }),
+      { ...config, adminTelegramIds: new Set(["9007199254740993"]) }, vi.fn());
+    const selection = pool.queries.find((query) => query.sql.includes("is_admin = true"));
+    expect(selection?.params).toEqual([["9007199254740993"]]);
+    expect(selection?.sql).toContain("telegram_user_id = ANY($1::bigint[])");
+    expect(selection?.sql).toContain("is_blocked = false AND bot_can_message = true");
+  });
   it("every generated notification path has a web flow; order identities match API expectations", async () => {
     const orderId = "00000000-0000-4000-8000-000000000040";
     const pool = { query: async (sql: string) => ({ rows: sql.includes("FROM order_items")
@@ -101,7 +114,7 @@ describe("dispatchEvent", () => {
     const pool = new MockPool();
     pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1",telegram_user_id: "111" }]);
-    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE is_admin = true AND bot_can_message = true", [{ id: "u2",telegram_user_id: "222" }]);
+    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true", [{ id: "u2",telegram_user_id: "222" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool,event("PAYOUT_REQUESTED",{ payoutId: "payout",partnerId: "partner",amountMinor: 5000,status: "REQUESTED" }),config,send);
     expect(send).toHaveBeenCalledWith("111",expect.stringContaining("50.00 BYN"));
@@ -121,7 +134,7 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
     pool.setBySql(`SELECT title_snapshot, quantity, partner_commission_unit_snapshot_minor FROM order_items\n     WHERE order_id = $1 ORDER BY id`, [{ title_snapshot: "Watch", quantity: 1, partner_commission_unit_snapshot_minor: 100 }]);
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
-    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE is_admin = true AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
+    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("ORDER_CREATED", { orderId: "o1", publicNumber: "W-ABC", partnerIdSnapshot: "p1", commissionEligibleSnapshot: true }), config, send);
     expect(send).toHaveBeenCalledTimes(2);
@@ -157,7 +170,7 @@ describe("dispatchEvent", () => {
 
   it("notifies admins on INVENTORY_SYNC_FAILED", async () => {
     const pool = new MockPool();
-    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE is_admin = true AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
+    pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("INVENTORY_SYNC_FAILED", { runId: "r1", providerKey: "google_sheets" }), config, send);
     expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Ошибка синхронизации"));

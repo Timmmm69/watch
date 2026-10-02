@@ -9,6 +9,7 @@ interface DispatchConfig {
   appBaseUrl: string;
   supportContact: string;
   botUsername: string;
+  adminTelegramIds: ReadonlySet<string>;
 }
 
 interface Recipient {
@@ -74,9 +75,10 @@ async function loadBuyerRecipient(pool: Pool, orderId: string): Promise<Recipien
   return row ? { userId: row.user_id, telegramUserId: row.telegram_user_id } : null;
 }
 
-async function loadAdminRecipients(pool: Pool): Promise<Recipient[]> {
+async function loadAdminRecipients(pool: Pool, adminTelegramIds: ReadonlySet<string>): Promise<Recipient[]> {
   return (await pool.query<{ id: string; telegram_user_id: string }>(
-    "SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE is_admin = true AND bot_can_message = true"
+    "SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true",
+    [[...adminTelegramIds]]
   )).rows.map((row) => ({ userId: row.id, telegramUserId: row.telegram_user_id }));
 }
 
@@ -173,7 +175,7 @@ async function dispatchOrderCreated(
       errors.push(...await sendAll(pool, [recipient], text, send));
     }
   }
-  const admins = await loadAdminRecipients(pool);
+  const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
   if (admins.length) {
     const text = `Новый заказ ${publicNumber} (${formatMoney(summary.totalMinor, summary.currency)}). ${product}. ${orderUrl(config.appBaseUrl, orderId, "admin")}`;
     errors.push(...await sendAll(pool, admins, text, send));
@@ -229,7 +231,7 @@ async function dispatchInventorySyncFailed(
 ): Promise<Error[]> {
   const runId = typeof payload.runId === "string" ? payload.runId : null;
   if (!runId) return [];
-  const admins = await loadAdminRecipients(pool);
+  const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
   if (!admins.length) return [];
   const text = `Ошибка синхронизации запасов ${runId}. Проверьте инвентарь: ${config.appBaseUrl}/admin/inventory`;
   return sendAll(pool, admins, text, send);
@@ -292,7 +294,7 @@ async function dispatchPayout(
     errors.push(...await sendAll(pool, [recipient], text, send));
   }
   if (status === "REQUESTED") {
-    const admins = await loadAdminRecipients(pool);
+    const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
     if (admins.length) {
       const text = `Партнёр запросил выплату ${formatMoney(amountMinor, currency)}. ${config.appBaseUrl}/admin/payouts`;
       errors.push(...await sendAll(pool, admins, text, send));

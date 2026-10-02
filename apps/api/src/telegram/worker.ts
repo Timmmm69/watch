@@ -85,7 +85,8 @@ async function runOutboxLoop(): Promise<void> {
   const dispatchConfig = {
     appBaseUrl: runtime.APP_BASE_URL,
     supportContact: runtime.SUPPORT_CONTACT,
-    botUsername: runtime.TELEGRAM_BOT_USERNAME
+    botUsername: runtime.TELEGRAM_BOT_USERNAME,
+    adminTelegramIds: new Set(runtime.ADMIN_TELEGRAM_IDS)
   };
   while (running) {
     const event = await outbox.claim();
