@@ -1,0 +1,16 @@
+name: Workspace setup
+description: Install the pinned toolchain and build shared packages
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24.18.0
+    - run: npm install -g pnpm@11.20.0
+      shell: bash
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - run: pnpm db:generate
+      shell: bash
+    - run: pnpm build:packages
+      shell: bash

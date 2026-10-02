@@ -87,7 +87,7 @@ describe.skipIf(!pool)("T35 Analytics against PostgreSQL", () => {
   });
   it("uses first acceptance, historical first retained sale and consecutive full local weeks", async () => {
     await pool!.query(`INSERT INTO partner_terms_acceptances (partner_id,legal_document_id,accepted_at)
-      VALUES ($1,$2,'2026-09-01'),($1,$3,'2026-09-08')`, [partner, randomUUID(), randomUUID()]);
+      VALUES ($1,$2,'2026-09-01T00:00:00Z'),($1,$3,'2026-09-08T00:00:00Z')`, [partner, randomUUID(), randomUUID()]);
     const t = await touch();
     await order("2026-09-08T00:00:00Z", "COMPLETED", true, t);
     await order("2026-09-15T00:00:00Z", "COMPLETED", true, t);

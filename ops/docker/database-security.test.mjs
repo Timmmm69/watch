@@ -7,6 +7,9 @@ import { test } from "node:test";
 const require = createRequire(new URL("../../packages/db/package.json", import.meta.url));
 const { Pool } = require("pg");
 const databaseUrl = process.env.WATCH_SECURITY_TEST_DATABASE_URL;
+if ((process.env.CI || process.env.WATCH_REQUIRE_DB === "1") && !databaseUrl) {
+  throw new Error("DB security acceptance requires disposable WATCH_SECURITY_TEST_DATABASE_URL; it must not skip");
+}
 
 test("fresh-volume roles and migrated app grants enforce least privilege", { skip: !databaseUrl }, async () => {
   // Opt in only with a disposable, empty database named watch. This test creates

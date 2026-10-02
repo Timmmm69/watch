@@ -13,6 +13,9 @@ const require = createRequire(new URL("../../packages/db/package.json", import.m
 const { Pool } = require("pg");
 const adminUrl = process.env.WATCH_OPS_TEST_ADMIN_URL;
 const pgBin = process.env.WATCH_OPS_TEST_PG_BIN;
+if ((process.env.CI || process.env.WATCH_REQUIRE_DB === "1") && (!adminUrl || !pgBin)) {
+  throw new Error("Migration/bootstrap acceptance requires WATCH_OPS_TEST_ADMIN_URL and WATCH_OPS_TEST_PG_BIN; restore must not skip");
+}
 
 test("AT-032: fresh migrations/bootstrap, operations and encrypted restore retain data, constraints and exact migration state", { skip: !adminUrl || !pgBin, timeout: 120000 }, async () => {
   // Explicit opt-in, loopback only, new databases only. Never use a production URL.

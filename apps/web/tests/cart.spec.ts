@@ -104,6 +104,9 @@ test("Cart preserves recoverable errors and performs only one session recovery",
 });
 
 test("retained referral launch does not override in-app Cart navigation", async ({ page }) => {
+  await page.route("**/api/v1/auth/session", (route) => route.fulfill({ json: {
+    user: { firstName: "Buyer" }, csrfToken: "fixture", isAdmin: false, partner: null
+  } }));
   await page.route("https://telegram.org/js/telegram-web-app.js", (route) => route.fulfill({ contentType: "application/javascript",
     body: "window.Telegram={WebApp:{initData:'signed-referral',ready(){},expand(){}}};" }));
   await page.route("**/api/v1/auth/telegram", (route) => route.fulfill({ contentType: "application/json",

@@ -1,0 +1,161 @@
+name: CI quality gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # Test-only credentials; each job owns a disposable service container.
+  DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm typecheck
+      - run: pnpm build
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm db:migrate
+      - run: pnpm test
+      - run: node ops/scripts/check-test-report.mjs
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+      WATCH_OPS_TEST_ADMIN_URL: postgresql://watch_admin@127.0.0.1:5432/postgres
+      WATCH_OPS_TEST_PG_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm db:migrate
+      # Includes checkout/attribution races, inventory, transitions, ledger, returns,
+      # payouts and Admin block-vs-checkout. Reuse all existing real-DB suites.
+      - run: pnpm --filter @watch/api exec vitest run .integration.test.ts
+      - run: node ops/scripts/check-test-report.mjs
+      - run: pnpm --filter @watch/api build
+      - name: Install matching PostgreSQL restore client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+      # Existing integration covers fresh Prisma migrations, manifest bootstrap,
+      # readiness and encrypted restore. Required on every push/PR.
+      - run: pnpm test:restore
+  financial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm db:migrate
+      - run: pnpm test:financial
+      - run: node ops/scripts/check-test-report.mjs
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm db:migrate
+      - run: pnpm --filter @watch/api build
+      - run: pnpm --filter @watch/web build
+      - run: pnpm --filter @watch/web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - run: node ops/scripts/check-browser-report.mjs
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: watch_admin
+          POSTGRES_DB: watch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U watch_admin -d watch"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      WATCH_SECURITY_TEST_DATABASE_URL: postgresql://watch_admin@127.0.0.1:5432/watch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm test:topology
+      - run: pnpm test:db-security
+      - run: pnpm test:ops
