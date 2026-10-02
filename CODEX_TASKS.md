@@ -182,13 +182,12 @@ Implement generic MVP discovery:
 - full catalog listing
 - categories
 - search
-- brand
 - min/max price
 - availability
 - pagination
 - generic filters only
 
-Do not invent domain-specific watch attributes before U02 is resolved.
+U02 resolved: filters are category, price range and availability only; text search remains. Characteristics may be stored/displayed, but domain filters are deferred pending real catalog evidence and do not block launch.
 
 ### T13 — Partner catalog/product experience
 Implement:
@@ -274,7 +273,7 @@ Implement the source-specific adapter without redesigning T16/T17:
 - duplicate keys/malformed quantity follow existing invalid-row rules; unknown keys are reported/ignored; configured mapped variants absent from the complete snapshot become MISSING;
 - capabilities: `completeSnapshot=true`, `reservationReconciliation=NONE`;
 - do not invent or derive SOURCE_PROOF/source-version semantics from Google Sheets;
-- selected reservation reconciliation mode is `MANUAL`; T18 must not automatically CONSUME/RELEASE reservations;
+- Google Sheets sync does not mutate reservations; new SHIPPED consumes them atomically; MANUAL is retained for legacy pre-amendment remediation only;
 - technical sync cadence is 120s, max age 600s;
 - Google Sheets is inventory-only: do not import/override price, Product/Variant status, commission, settlement, attributes or media;
 - provider credentials/config are validated and never logged;
@@ -329,12 +328,12 @@ Implement:
 - atomic Order creation
 - cart clear
 
-Do not finalize production fulfillment assumptions before U03/default confirmation.
+U03 resolved: required customer name, phone, delivery address; optional comment. Checkout creates an unpaid Order; payment/delivery details agreed manually outside the platform. No Payment entity or payment-state machine.
 
 ### T22 — Checkout UI + concurrency verification
 Implement:
 - Buyer checkout UI
-- provisional manual-fulfilment fields allowed by spec
+- confirmed U03 manual-fulfilment fields
 - current Sales Terms + Privacy controls
 - cart-changed handling
 - PostgreSQL race tests
@@ -354,14 +353,16 @@ Implement:
 - Admin transition APIs/UI
 - timestamps
 - cancellation
-- shipped/delivered/delivery-failed paths
+- shipped/delivered paths; failures/refusals after SHIPPED use Return, no new DELIVERY_FAILED or backward transitions
 - system-only completion restriction
 
 ### T24 — Reservation reconciliation
 Implement:
 - reservation lifecycle matrix
 - pre-shipment release
-- post-shipment reconciliation workflow
+- atomic ACTIVE→CONSUMED at SHIPPED; retries consume once
+- Return never increases authoritative source quantity
+- legacy pre-amendment reservation remediation only
 - `SOURCE_PROOF` and/or audited `MANUAL` only as actually available
 - lock/I/O ordering
 - snapshot-match checks
@@ -418,7 +419,7 @@ Implement:
 - DELIVERED → COMPLETED worker only
 - `completion_eligible_at`
 - hold logic
-- return checks
+- REQUESTED Return blocks affected OrderItem release and prevents Order completion; unaffected items may release
 - worker indexes
 - idempotency
 - organic/zero/all-void completion cases
@@ -443,12 +444,13 @@ Implement:
 - return items
 - Admin return creation
 - relational same-Order integrity
-- return status flow
+- REQUESTED→COMPLETED | REJECTED; create for SHIPPED/DELIVERED/COMPLETED via Admin after SUPPORT_CONTACT intake
 
 ### T32 — Return completion + reversals
 Implement:
 - partial/full return completion
-- exact commission reversals
+- exact commission reversals proportional to actually returned quantity at COMPLETED
+- REJECTED after original hold expiry permits immediate affected commission availability without a new hold
 - pending/available reversal behavior
 - late paid return debt behavior
 - projection equality against ledger sum
@@ -515,7 +517,7 @@ Implement:
 - completed retained orders / active partner
 - time to first retained sale
 - partner retention
-- contribution metrics only to the extent U04 economics are resolved
+- U04 non-blocking for MVP/S11/S15; contribution margin/order, contribution after commission and contribution/active partner unavailable until sufficient economics exist; unknown never zero or estimated; new economics snapshot into new OrderItems only
 - required analytics indexes
 
 Do not invent supplier/platform economic inputs.
@@ -568,13 +570,13 @@ Implement:
 
 # External blockers / decisions
 
-These are not Codex design tasks. They require real business/external input.
+Resolved decision records are retained for traceability. Only unresolved prerequisites require further business/external input; U04 is non-blocking.
 
-- **U01 — RESOLVED 2026-09-30:** Google Sheets complete-snapshot inventory source, read-only service account, machine fields `external_key` + `stock_quantity` (`sku` optional/informational), 120s sync / 600s max age, `MANUAL` reservation reconciliation. Live credentials/access are deployment inputs, not design blockers.
-- **U02:** real catalog attribute schema. Blocks domain-specific catalog filters.
-- **U03:** fulfilment process details. Must be resolved/defaulted before S09 production finalization.
-- **U04:** supplier/platform economics. Required for full contribution analytics.
-- **U05:** return/legal policy. Default financial hold is 14 days until changed by explicit amendment.
+- **U01 — RESOLVED 2026-09-30:** Google Sheets complete-snapshot inventory source, read-only service account, machine fields `external_key` + `stock_quantity` (`sku` optional/informational), 120s sync / 600s max age, legacy-only `MANUAL` reservation remediation; new shipment consumes reservations. Live credentials/access are deployment inputs, not design blockers.
+- **U02 — RESOLVED 2026-10-02, NON-BLOCKING:** category/price-range/availability filters plus text search; domain filters deferred pending real data.
+- **U03 — RESOLVED 2026-10-02:** manual fulfilment, confirmed required checkout fields, unpaid Orders, Admin state machine, shipment consumption, post-shipment Return exceptions. No S09/launch decision gate.
+- **U04 — NON-BLOCKING:** transactional analytics may ship; economics-dependent contribution unavailable until sufficient data. Does not block MVP or S11.
+- **U05 — RESOLVED 2026-10-02:** configurable 14-calendar-day financial hold after DELIVERED; support/Admin Returns, REQUESTED/COMPLETED/REJECTED, affected-item blocks, proportional and append-only late reversals. U08 remains the separate production legal/retention gate.
 - **U06 — RESOLVED 2026-10-01:** MANUAL_OFF_PLATFORM, BYN, full net AVAILABLE only, `MIN_PAYOUT_MINOR=5000` (50 BYN), no stored bank/card destination, `destination_snapshot=NULL`, no automated tax/withholding. Production legal wording/ops remain under U08.
 - **U07:** hosting/domain. Cloudflare R2 is selected for product-media object storage; hosting provider/budget/domain and backup target remain unresolved and block S16 completion.
 - **U08:** production legal documents + PII retention. Blocks production onboarding/checkout and S16 completion.
@@ -599,3 +601,16 @@ For each task:
 7. Only after PASS move to the next task.
 
 Closely related low-risk tasks may sometimes be grouped, but auth, inventory concurrency, checkout concurrency, ledger, returns/reversals and payouts should normally remain isolated unless an explicit review determines grouping is safe.
+
+# Pending implementation alignment — MVP U02–U05 amendment (2026-10-02)
+The documentation amendment does not certify existing code or authorize code changes in the documentation task. Before claiming production conformity, update the affected slices using their existing patterns and preserve historical facts:
+
+- S04/T12: remove brand/domain filter dimensions; keep category, price range, availability and text search. Keep stored specifications/attributes.
+- S09/T21–22: confirmed required customer name, phone and delivery address, optional comment; clearly unpaid creation and manual off-platform agreement.
+- S10/T23–24: reject new DELIVERY_FAILED/backward transitions; atomically consume reservations at SHIPPED, serialize with cancellation, verify retries/stock sync and legacy remediation. Inventory source must track physical stock; do not infer fresh stock from Return completion.
+- S12/T28–30: explicit ORDER_HOLD_DAYS=14 calendar days after reliable DELIVERED; immutable hold snapshot, affected-item release blocks and unaffected-item availability; no Order completion with unresolved REQUESTED.
+- S13/T31–32: REQUESTED/COMPLETED/REJECTED and reject action, SHIPPED exceptions, ReturnItems for full/partial quantity, proportional COMPLETED reversal, expired-hold rejection release, append-only late adjustments and no local restock. Handle legacy OPEN/CANCELLED and DELIVERY_FAILED data through a separately reviewed compatibility/migration plan, preserving ledger/history.
+- S15/T35: U04 non-blocking; transactional metrics available, all specified contribution metrics unavailable without sufficient economics. Do not present partial settlement coverage as full contribution or rewrite old OrderItem snapshots.
+- S16/T45: release/operator checks verify implementation/configuration of resolved U03/U05, not repeat product decisions. Keep U07/U08, legal artifacts, SUPPORT_CONTACT, live integrations and financial gates; operational overdue thresholds are configuration, not a new U03 blocker.
+
+Targeted future acceptance: required checkout fields; no payment semantics for CONFIRMED; shipping consumption exactly once; failed shipment handled by Return without false DELIVERED; partial Return blocks only affected release; rejection after expiry does not restart hold; late paid return appends debt/reversal; Return does not restock; economics missing means unavailable.

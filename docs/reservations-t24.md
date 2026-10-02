@@ -1,5 +1,13 @@
 # Reservation reconciliation — T24
 
+## Current MVP requirements — 2026-10-02
+
+New SHIPPED transitions atomically change ACTIVE reservations to CONSUMED. Pre-shipment cancellation releases them. Return does not locally restock or release CONSUMED reservations. The snapshot-bound MANUAL contracts below are legacy pre-amendment remediation only; they do not gate new shipping.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented from FULL_BUILD_SPEC.md v1.3-final: AMD-008, BR-047–056,
 A-05/A-07, Sections 9.23, 11.8, 11.10, 14.2 and AT-072/073/077.
 Uses existing T20 reservation persistence and T23 cancellation/state machine.

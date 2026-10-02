@@ -1,5 +1,13 @@
 # System completion worker — T29
 
+## Current MVP requirements — 2026-10-02
+
+Hold expiry releases only commissions whose OrderItems have no unresolved REQUESTED Return. Unaffected items may become AVAILABLE while another is blocked; Order remains DELIVERED until all requests resolve and applicable releases complete. REJECTED after original hold expiry permits immediate availability without restarting hold. Worker locking and selection must follow amended Section 16.4; the whole-Order OPEN gate below describes earlier code.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 J-04 runs in the existing worker process at startup and every five minutes.
 It selects due DELIVERED Orders through the existing T20 partial completion
 index and uses the T27 `(order_id,status)` Return index. No schema change is needed.

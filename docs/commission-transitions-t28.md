@@ -1,5 +1,13 @@
 # Commission creation and financial transitions — T28
 
+## Current MVP requirements — 2026-10-02
+
+New post-shipment failures/refusals/returned shipments use REQUESTED→COMPLETED | REJECTED Return; no new DELIVERY_FAILED transition. SHIPPED consumes ACTIVE reservations. Hold is 14 calendar days after reliable DELIVERED. Historical delivery-failure/reconciliation handling below is legacy-only; current release blocks apply to affected OrderItems.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Source: FULL_BUILD_SPEC.md v1.3-final, BR-007/082–096A/103,
 Sections 8.1A, 9.24–9.25, 15.2/15.4 and 16.3–16.6.
 

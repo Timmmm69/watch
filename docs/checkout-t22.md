@@ -1,5 +1,13 @@
 # Checkout UI and PostgreSQL concurrency — T22
 
+## Current MVP requirements — 2026-10-02
+
+U03 checkout fields are confirmed: required customer name, phone and delivery address; optional buyer comment. No payment collection/provider integration; Order creation does not mean paid. U08 and the S12 financial gate remain.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented against `FULL_BUILD_SPEC.md` v1.3-final: B-03/B-04/B-05,
 the Section 6.5 screen-state contract, BR-060–069A and the checkout-related
 Section 20.5 concurrency/security matrix. Reuses the T21 API and T20 schema;
@@ -8,7 +16,7 @@ no migration or architecture change.
 The Cart CTA opens `/checkout` only when its lines are eligible and Cart
 mutations have completed. Checkout uses normal Telegram/DB Session bootstrap,
 Telegram BackButton/browser history and redirects an empty Cart to `/cart`.
-It shows current summary/prices, provisional recipient/phone/address/comment
+It shows current summary/prices, confirmed recipient/phone/address/comment
 fields, validation on blur/submit, focused invalid fields, loading states,
 submission progress and a sticky submit control.
 
@@ -59,7 +67,7 @@ independent Privacy refresh/failure.
 
 ## Remaining limits
 
-U03/A-005 manual-fulfilment fields remain provisional. U08 must supply final
+U03/A-005 manual-fulfilment fields are resolved. U08 must supply final
 production documents and Privacy semantics. Persistent production-like earning
 traffic is still forbidden until the S12 financial integrity gate; public launch
 also requires the later launch-critical slices/S16. Order list/detail navigation,

@@ -1,5 +1,13 @@
 # T35 — Analytics and Admin dashboard
 
+## Current MVP requirements — 2026-10-02
+
+U04 does not block MVP, S11 or S15. Transaction-derived GMV, delivered/completed orders, active sellers, productivity, conversion, cancellation/return rates, commissions, first sale and retention may ship. Contribution margin/order, contribution after partner commission and contribution/active partner are unavailable until sufficient economics exist; unknown never means zero or estimated. New economic data snapshots into new OrderItems only. A covered settlement subtotal below is a historical implementation diagnostic, not an available contribution metric. Current pending Returns are REQUESTED; reconciliation queues are legacy-only.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 `GET /api/v1/admin/dashboard` and `GET /api/v1/admin/analytics/summary?from=...&to=...`
 use current Session/Admin authorization and no-store responses. The Russian screens
 are `/admin` and `/admin/analytics`; existing Admin screens link back to them.

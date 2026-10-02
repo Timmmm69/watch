@@ -3,7 +3,7 @@
 **Project:** Telegram Partner Commerce Platform  
 **Status:** authoritative implementation specification  
 **Version:** 1.3-final  
-**Date:** 2026-09-27  
+**Date:** 2026-10-02 (MVP U02–U05 amendment)
 **Implementation status:** frozen for implementation. Application code proceeds only through an explicit vertical-slice task from Section 21; this document defines requirements but does not itself authorize an unscoped whole-project implementation.
 
 **Source-of-truth status:** this document supersedes `FULL_BUILD_SPEC_v1.2.md`, `FULL_BUILD_SPEC_v1.1.md`, `FULL_BUILD_SPEC_v1.0.md` and the previous `PRODUCT.md`, `MVP.md`, `ARCHITECTURE.md`, `DATA_MODEL.md`, `BUSINESS_RULES.md`, `BACKLOG.md`, `DECISIONS.md` as active implementation sources. The only active implementation requirements are **this document** plus Project Instructions. Older files may remain only as historical artifacts; they must be excluded from Codex implementation context or visibly marked `HISTORICAL — DO NOT USE FOR IMPLEMENTATION` by the project/tooling layer. If a tool automatically injects those files as active requirements, S00 must not start until that context is corrected.
@@ -85,6 +85,8 @@ retail revenue
 
 ## 1.4 Primary metrics
 
+Contribution metrics below remain unavailable until sufficient U04 economics exist; they do not gate MVP or S11. Transactional metrics include GMV and delivered/completed orders.
+
 - contribution margin/order;
 - contribution after partner commission;
 - active selling partners;
@@ -131,8 +133,8 @@ MLM; open marketplace; microservices; Kafka; Elasticsearch; Kubernetes; Redis wi
 
 # 3. Amendments to Foundation/v1.0
 
-## AMD-001 — `DELIVERY_FAILED`
-`SHIPPED → DELIVERY_FAILED` is a terminal failed-fulfilment outcome. It is not a consumer Return and never qualifies for delivery-based commission release.
+## AMD-001 — Post-shipment exceptions (amended 2026-10-02)
+After SHIPPED, failures, refusals and returned shipments use Return. No backward Order transition or new DELIVERY_FAILED transition. Existing DELIVERY_FAILED facts/events are historical only and never qualify for delivery-based release.
 
 ## AMD-002 — DB-backed opaque sessions
 Use random opaque session cookie tokens; store only token hash in PostgreSQL. No JWT/stateless session for MVP.
@@ -152,8 +154,8 @@ Webhook persists unique `update_id` and returns quickly; worker processes/retrie
 ## AMD-007 — System-only Order completion
 `DELIVERED→COMPLETED` is not an Admin transition. Only completion worker may perform it after hold checks and return checks.
 
-## AMD-008 — Reservation reconciliation requires explicit authority
-The v1.0 rule “successful sync after shipped_at implies CONSUMED/RELEASED” is removed. U01 must select one explicit reconciliation authority: `SOURCE_PROOF`, where the real inventory adapter proves source absorption/release and identifies the authoritative source version whose applied quantity already reflects that outcome, or audited `MANUAL`, where Admin explicitly attests the currently displayed platform sync-run snapshot already reflects the physical outcome. Terminal post-shipment reconciliation removes the ACTIVE sellable deduction only when that proof/attestation still matches the locked current InventoryItem snapshot. Otherwise the reservation remains ACTIVE and the system fails conservatively.
+## AMD-008 — Shipping consumes reservations (amended 2026-10-02)
+SHIPPED atomically consumes ACTIVE reservations. Inventory sync alone writes authoritative quantity; Return never increases it. Waiting for snapshot-bound reconciliation is superseded for new orders. Retained MANUAL/SOURCE_PROOF contracts are legacy pre-amendment remediation only, not prerequisites for new-order shipping.
 
 ## AMD-009 — Single currency MVP
 Introduce required `PLATFORM_CURRENCY` and persist it once in immutable singleton `platform_settings` at S02. Every ACTIVE Variant, Order, Commission, LedgerEntry, Payout and PayoutAllocation belongs to this one immutable currency. Runtime `PLATFORM_CURRENCY` must equal the persisted value; changing environment configuration can never reinterpret existing financial history. Multi-currency ledger/payout is NOT NOW.
@@ -334,7 +336,7 @@ Lines, quantity, price, total, issues. Actions increment/decrement/remove, conti
 Checkout disabled if any blocking line.
 
 ### B-04 Checkout
-Provisional manual-fulfilment fields: recipient name, phone, delivery address/details, optional comment, current Sales Terms acceptance control and current Privacy acknowledgement control. Summary and total. UI loads both current immutable artifacts from `/legal/:type/current`; a document change clears the affected control. The Privacy control records acknowledgement/presentation only; U08 owns final production legal wording/consent semantics.
+Required checkout fields: customer name, phone, delivery address; optional buyer comment. No online payment collection or delivery-provider integration. Checkout creates an unpaid Order; operator/supplier and buyer agree payment/delivery methods and other fulfilment details outside the platform. Current Sales Terms acceptance and Privacy acknowledgement remain required. UI loads current immutable artifacts from /legal/:type/current; document changes clear affected controls. U08 still owns production legal wording/consent semantics.
 
 Validation:
 - name 2–100 chars;
@@ -408,22 +410,22 @@ ACTIVE requires title, >=1 ACTIVE category relation, >=1 ACTIVE variant, each ac
 Create/edit/archive. Archive blocked if it would violate ACTIVE product activation rule.
 
 ### A-05 Inventory health
-SKU, source qty, active reservations, buffer, derived sellable, source status, `sourceVersion`, `lastSuccessfulSyncRunId`, last success, freshness, reservation-reconciliation state and inventory-deficit warning. `GET /admin/inventory` supplies the inventory fields; `GET /admin/orders/:id` supplies reservation IDs plus the same current snapshot identifiers for each reservation. Actions: sync now, change safety buffer. No source-quantity edit. If U01 selects `MANUAL`, unresolved reconciliation count links to the Admin Orders queue filtered by `reconciliationPending=true`. A state-valid reconcile CTA requires explicit Admin confirmation that the displayed current authoritative snapshot already reflects the physical outcome and submits that exact `expectedInventorySyncRunId`; `INVENTORY_SNAPSHOT_CHANGED` causes a mandatory detail refresh before another decision. This never edits source quantity.
+SKU, source qty, active reservations, buffer, derived sellable, source status, `sourceVersion`, `lastSuccessfulSyncRunId`, last success, freshness, reservation-reconciliation state and inventory-deficit warning. `GET /admin/inventory` supplies the inventory fields; `GET /admin/orders/:id` supplies reservation IDs plus the same current snapshot identifiers for each reservation. Reconciliation counts/CTAs in this screen are legacy pre-amendment remediation only. Actions: sync now, change safety buffer. No source-quantity edit. If U01 selects `MANUAL`, unresolved reconciliation count links to the Admin Orders queue filtered by `reconciliationPending=true`. A state-valid reconcile CTA requires explicit Admin confirmation that the displayed current authoritative snapshot already reflects the physical outcome and submits that exact `expectedInventorySyncRunId`; `INVENTORY_SNAPSHOT_CHANGED` causes a mandatory detail refresh before another decision. This never edits source quantity.
 
 ### A-06 Partners
 List status/date/order counts/balances. Detail block/unblock with reason/audit, active referral links with **disable** action, and Admin settlement-payout action for legitimate AVAILABLE balance of a BLOCKED Partner once payout configuration exists. Admin has no separate rotate endpoint/CTA in MVP: after disable, the next normal Partner referral-link get/create for that scope issues the replacement token under BR-021/036.
 
 ### A-07 Orders
-Filters status/date/number/partner plus unresolved reservation reconciliation. Detail includes fulfilment PII, snapshots, reservation ID/reconciliation metadata, attribution, commission, timeline. Only legal transition CTAs shown. In configured MANUAL mode, an ACTIVE reservation in a BR-055-eligible Order state exposes the exact reconcile CTA from A-05/Section 11.8.
+Filters status/date/number/partner plus legacy-only unresolved reservation reconciliation. Detail includes fulfilment PII, snapshots, reservation ID/reconciliation metadata, attribution, commission, timeline. Only legal transition CTAs shown. In configured MANUAL mode, an ACTIVE reservation in a BR-055-eligible Order state exposes the exact reconcile CTA from A-05/Section 11.8.
 
 ### A-08 Returns
-OPEN/COMPLETED/CANCELLED. Create from DELIVERED/COMPLETED Order. Financial-effect preview. Complete/Cancel.
+REQUESTED/COMPLETED/REJECTED. Admin creates Return from SHIPPED/DELIVERED/COMPLETED, including post-shipment failures/refusals. Financial-effect preview. Complete/Reject.
 
 ### A-09 Payouts
 REQUESTED/PAID/REJECTED. Detail partner/amount/destination snapshot/request time and payout allocations. Mark paid/reject. Admin may create an audited payout for a BLOCKED Partner's legitimate AVAILABLE balance; blocking does not forfeit earned funds.
 
 ### A-10 Analytics
-Date range: orders, retained completed orders, active sellers, conversion, delivery, cancellation, delivery failure, returns, commissions, contribution when data coverage exists. Missing settlement → N/A + coverage, never fabricated.
+Date range: GMV, delivered/completed orders, retained completed orders, active sellers, conversion, delivery, cancellation/return rates, commissions, time to first sale and retention. U04 does not block MVP, S11 or S15. Economics-dependent contribution metrics are unavailable until sufficient data exists; unknown is never zero or estimated.
 
 ---
 
@@ -490,13 +492,13 @@ Cart → Checkout → server revalidation → atomic Order + reservations + snap
 ## 7.8 Fulfilment
 `PLACED → CONFIRMED → FULFILLING → SHIPPED → DELIVERED → hold → COMPLETED`.
 
-Alternatives: pre-shipment → CANCELLED; SHIPPED → DELIVERY_FAILED.
+Alternatives: pre-shipment → CANCELLED; after SHIPPED, failure/refusal/returned shipment → Return, preserving Order history.
 
 ## 7.9 Commission
 Attributed commission-eligible OrderItem with snapshotted commission unit `>0`: Commission lifecycle PENDING → HOLD → EARNED, or VOID on full reversal. A zero-unit line keeps attribution/snapshot but creates no Commission/Ledger. Payout state is separate and represented by `Payout` + `PayoutAllocation`; returns can reverse accrued value without rewriting historical payouts.
 
 ## 7.10 Return
-DELIVERED/COMPLETED → OPEN Return → COMPLETED (ledger reversal) or CANCELLED.
+SHIPPED/DELIVERED/COMPLETED → REQUESTED Return → COMPLETED (proportional ledger reversal) or REJECTED.
 
 ## 7.11 Payout
 Positive available >= minimum → request full available → lock → Admin PAID or REJECTED.
@@ -504,7 +506,7 @@ Positive available >= minimum → request full available → lock → Admin PAID
 ---
 
 ## 7.12 Buyer manual cancellation/return request
-Buyer Order detail or `/help` → configured support contact → operator verifies Order → Admin performs allowed pre-shipment cancellation or creates Return after DELIVERED. There is no self-service cancellation/return mutation in MVP.
+Buyer Order detail or `/help` → configured support contact → operator verifies Order → Admin performs allowed pre-shipment cancellation or creates Return after SHIPPED. There is no self-service cancellation/return mutation in MVP.
 
 # 8. Stable business rules
 
@@ -569,15 +571,15 @@ Buyer Order detail or `/help` → configured support contact → operator verifi
 **BR-045** Successful Order transaction creates ACTIVE reservation.  
 **BR-046** Competing checkout serializes InventoryItems in deterministic Variant-ID order.  
 **BR-047** Pre-shipment cancellation releases ACTIVE reservation.  
-**BR-048** After SHIPPED, an ACTIVE reservation must continue to reduce `sellable` until the platform can bind the terminal reconciliation to the exact currently-applied authoritative inventory snapshot. `SOURCE_PROOF` may apply `CONSUMED` only when the proof includes a non-null `reflected_source_version` and, under the apply lock, the matching InventoryItem is `OK` and its current `source_version` equals that value. If the current snapshot is older/newer/different or the provider cannot supply a stable comparable version, keep the reservation ACTIVE; never temporarily free it against an old quantity.
-**BR-049** The same snapshot-coherence rule applies to post-shipment `RELEASED`: the proof/manual action must establish that returned stock is safely represented by the currently-applied authoritative snapshot before the ACTIVE reservation stops reducing sellable. Pre-shipment cancellation remains the explicit exception because source quantity still represents unshipped stock and the local reservation itself was the only deduction.
+**BR-048** SHIPPED means goods physically left fulfilment and were handed over for delivery. All ACTIVE reservations become CONSUMED exactly once in that Order transition transaction.
+**BR-049** Post-shipment failures/refusals/returns never reactivate or release CONSUMED reservations. Returned stock becomes sellable only when authoritative inventory source reports it again.
 **BR-050** Return completion never locally increments source quantity.  
-**BR-051** If no valid SOURCE_PROOF result or MANUAL resolution exists, reservation remains ACTIVE and Admin sees unresolved reconciliation; conservative under-selling is accepted over oversell.  
+**BR-051** Snapshot-bound MANUAL/SOURCE_PROOF reconciliation applies only to legacy pre-amendment ACTIVE post-shipment reservations. New shipping consumes reservations under BR-048 without a reconciliation gate.
 **BR-052** Inventory deficit exists when fresh `source_quantity < active_reservations + safety_buffer`; SKU is OUT_OF_STOCK and Admin gets operational warning.  
-**BR-053** No automatic stale-order cancellation before U03 defines business SLA; overdue orders are surfaced operationally.  
+**BR-053** No automatic stale-order cancellation in MVP; surface overdue orders operationally. Alert thresholds are configuration, not an unresolved U03 product decision.
 **BR-054** Inventory provider network I/O happens outside the DB mutation transaction. Before applying fetched records, sync locks/reloads each InventoryItem/Variant and verifies that the current `inventory_external_key` still equals the fetched mapping; stale mappings are skipped and reported. This serializes safely with Admin external-key changes.  
-**BR-055** Reservation reconciliation is Order-state-gated. PLACED/CONFIRMED/FULFILLING reservations remain ACTIVE; source proof/manual reconciliation may mark CONSUMED only for SHIPPED/DELIVERED/COMPLETED and RELEASED only for DELIVERY_FAILED. Pre-shipment CANCELLED releases its ACTIVE reservation atomically in the cancellation transaction, not through generic reconciliation.  
-**BR-056** U01 is resolved as `MANUAL` reconciliation for the Google Sheets adapter. `SOURCE_PROOF` remains a generic capability only for a future source that can satisfy BR-048/049 and is not enabled for Google Sheets. `MANUAL` is explicit human authority, not a timestamp heuristic: request contains reservation ID, target CONSUMED|RELEASED, reason, optional evidence reference, `expectedInventorySyncRunId`, and `confirmSnapshotReflectsOutcome=true`. Transaction locks `Order → Reservation → InventoryItem`, re-checks state/target, requires `InventoryItem.source_status=OK` and exact equality of current `last_successful_sync_run_id` to the supplied expected value, then records that snapshot identity (and current source_version if non-null), Admin identity and AuditLog atomically with the terminal reservation state. If the snapshot changed or confirmation is absent, keep reservation ACTIVE/reject; Admin must refresh and reassess. This permits MANUAL mode even when the real source has no stable version while preventing a stale local snapshot from being silently freed.
+**BR-055** PLACED/CONFIRMED/FULFILLING reservations remain ACTIVE. Pre-shipment CANCELLED releases ACTIVE reservations; SHIPPED consumes them atomically. Return does not change terminal reservations. Legacy remediation only: CONSUMED for SHIPPED/DELIVERED/COMPLETED; RELEASED for historical DELIVERY_FAILED.
+**BR-056** Legacy pre-amendment remediation only: U01 is resolved as `MANUAL` reconciliation for the Google Sheets adapter. `SOURCE_PROOF` is retained only for legacy adapter evidence contracts in Section 14 and is not enabled for Google Sheets or new-order shipment. `MANUAL` is explicit human authority, not a timestamp heuristic: request contains reservation ID, target CONSUMED|RELEASED, reason, optional evidence reference, `expectedInventorySyncRunId`, and `confirmSnapshotReflectsOutcome=true`. Transaction locks `Order → Reservation → InventoryItem`, re-checks state/target, requires `InventoryItem.source_status=OK` and exact equality of current `last_successful_sync_run_id` to the supplied expected value, then records that snapshot identity (and current source_version if non-null), Admin identity and AuditLog atomically with the terminal reservation state. If the snapshot changed or confirmation is absent, keep reservation ACTIVE/reject; Admin must refresh and reassess. This permits MANUAL mode even when the real source has no stable version while preventing a stale local snapshot from being silently freed.
 
 ## Cart / checkout
 
@@ -595,17 +597,17 @@ Buyer Order detail or `/help` → configured support contact → operator verifi
 
 ## Orders
 
-**BR-070** Business state graph: `PLACED→CONFIRMED→FULFILLING→SHIPPED→DELIVERED→COMPLETED`; pre-shipment states may →CANCELLED; `SHIPPED→DELIVERY_FAILED`.  
-**BR-071** Admin transition targets are only `CONFIRMED`, `FULFILLING`, `SHIPPED`, `DELIVERED`, `CANCELLED`, `DELIVERY_FAILED` where legal. Admin can never request `COMPLETED`.  
-**BR-072** `DELIVERED` means operator confirmed buyer delivery.  
-**BR-073** `COMPLETED` means the Order's snapshotted `completion_eligible_at` has elapsed, no OPEN Return exists, and all applicable financial release work completed.  
+**BR-070** Graph: PLACED→CONFIRMED→FULFILLING→SHIPPED→DELIVERED→COMPLETED; pre-shipment states may →CANCELLED. Post-shipment exceptions use Return. PLACED means checkout created the Order; CONFIRMED means operator contacted the buyer and confirmed proceeding, not payment receipt; FULFILLING means preparation started. No Payment entity/payment-state machine is required.
+**BR-071** Admin targets only CONFIRMED, FULFILLING, SHIPPED, DELIVERED and pre-shipment CANCELLED where legal. COMPLETED is worker-only; DELIVERY_FAILED and backward transitions are rejected.
+**BR-072** DELIVERED requires reliable operator confirmation that buyer actually received goods. Record delivered_at, which starts ORDER_HOLD_DAYS.
+**BR-073** `COMPLETED` means the Order's snapshotted `completion_eligible_at` has elapsed, no REQUESTED Return exists, and all applicable financial release work completed.
 **BR-074** Only system completion worker may perform `DELIVERED→COMPLETED`.  
 **BR-075** OrderItem commercial snapshots immutable.  
 **BR-076** Cancellation allowed only before SHIPPED.  
-**BR-077** Undelivered shipment ends DELIVERY_FAILED, not Return.  
+**BR-077** Undelivered shipments, refusals and returned shipments after SHIPPED use Return. A SHIPPED Order with a completed failed-delivery Return remains undelivered and never qualifies for delivery-based completion/release.
 **BR-078** Order fulfilment PII is separate from immutable Order and may later be redacted under U08 retention policy with AuditLog.  
 **BR-079** Entering DELIVERED snapshots `completion_eligible_at = delivered_at + current configured hold`. This timestamp is immutable after first set and is not recalculated if hold configuration later changes.  
-**BR-079A** Organic, zero-commission and fully reversed Orders still transition DELIVERED→COMPLETED after `completion_eligible_at` when no OPEN Return exists; commission release is performed only where a positive unreversed Commission exists.
+**BR-079A** Organic, zero-commission and fully reversed Orders still transition DELIVERED→COMPLETED after `completion_eligible_at` when no REQUESTED Return exists; commission release is performed only where a positive unreversed Commission exists.
 
 ## Commission / ledger
 
@@ -614,8 +616,8 @@ Buyer Order detail or `/help` → configured support contact → operator verifi
 **BR-082** At most one Commission per eligible OrderItem. An attributed commission-eligible OrderItem whose snapshotted commission unit is `0` creates no Commission and no LedgerEntry; attribution and OrderItem snapshot are still preserved.  
 **BR-083** For an eligible OrderItem with snapshotted commission unit `>0`, Commission create: state PENDING and append `+gross PENDING`.  
 **BR-084** DELIVERED: PENDING→HOLD, set eligible_at; ledger stays PENDING.  
-**BR-085** System completion: remaining net amount moves `-PENDING/+AVAILABLE`; nonzero Commission becomes EARNED.  
-**BR-086** Hold default 14 calendar days, configurable.  
+**BR-085** After hold expiry, worker releases each positive unreversed Commission with no REQUESTED Return affecting its OrderItem: -PENDING/+AVAILABLE, EARNED/available_at. Unaffected items may release while another remains blocked; Order completes only after no REQUESTED Return remains and all applicable releases are done.
+**BR-086** ORDER_HOLD_DAYS=14 calendar days after DELIVERED, configurable financial risk control. It does not define statutory or commercial consumer return rights; U08 owns legal artifacts.
 **BR-087** Full reversal while PENDING/HOLD/EARNED makes lifecycle state VOID; partial reversal keeps current lifecycle state.  
 **BR-088** Return reversal = snapshotted commission unit × completed returned quantity.  
 **BR-089** Reversal before release debits PENDING.  
@@ -643,9 +645,9 @@ Buyer Order detail or `/help` → configured support contact → operator verifi
 
 ## Returns
 
-**BR-110** Return can be created only for DELIVERED/COMPLETED Order.  
-**BR-111** `OPEN→COMPLETED` or `OPEN→CANCELLED`.  
-**BR-112** OPEN+COMPLETED return qty per OrderItem <= ordered qty.  
+**BR-110** Admin creates Return for SHIPPED/DELIVERED/COMPLETED, including undelivered shipments/refusals. Return contains all or part of an Order through ReturnItem.
+**BR-111** REQUESTED→COMPLETED | REJECTED. REJECTED has no reversal and removes that request’s release block. After original hold expiry an otherwise eligible affected Commission may become AVAILABLE immediately without a new hold.
+**BR-112** REQUESTED+COMPLETED quantity per OrderItem <= ordered quantity. REQUESTED blocks release for affected OrderItems; any unresolved Return prevents Order completion.
 **BR-113** Financial effect occurs exactly once on Return COMPLETED.  
 **BR-114** Buyer initiates return/cancellation manually through SUPPORT_CONTACT; operator/Admin executes system mutation.
 
@@ -670,7 +672,7 @@ Minimum event names used by outbox/notifications:
 - `ORDER_CREATED`;
 - `ORDER_STATUS_CHANGED`;
 - `ORDER_CANCELLED`;
-- `ORDER_DELIVERY_FAILED`;
+- `ORDER_DELIVERY_FAILED` (legacy historical event only; no new producer);
 - `COMMISSION_EARNED`;
 - `RETURN_COMPLETED`;
 - `PAYOUT_REQUESTED`;
@@ -689,9 +691,9 @@ Each Event has `dedupe_key` and payload version `v:1`. Consumers must ignore unk
 | Order is created in PLACED | `ORDER_CREATED` only; do not also emit `ORDER_STATUS_CHANGED` for initial PLACED | `order:{orderId}:created` | `v,orderId,publicNumber,partnerIdSnapshot?,commissionEligibleSnapshot` |
 | Order transition to CONFIRMED/FULFILLING/SHIPPED/DELIVERED/COMPLETED | `ORDER_STATUS_CHANGED` only | `order:{orderId}:status:{toStatus}` | `v,orderId,publicNumber,fromStatus,toStatus` |
 | Legal transition to CANCELLED | `ORDER_STATUS_CHANGED` **and** `ORDER_CANCELLED` | generic key above + `order:{orderId}:cancelled` | generic status payload; specific payload `v,orderId,publicNumber,partnerIdSnapshot?` |
-| `SHIPPED→DELIVERY_FAILED` | `ORDER_STATUS_CHANGED` **and** `ORDER_DELIVERY_FAILED` | generic key above + `order:{orderId}:delivery_failed` | generic status payload; specific payload `v,orderId,publicNumber,partnerIdSnapshot?` |
-| One Commission first becomes EARNED during completion | one `COMMISSION_EARNED` per Commission | `commission:{commissionId}:earned` | `v,commissionId,partnerId,orderId,amountMinor` where `amountMinor` is the exact positive amount moved `PENDING→AVAILABLE` for that Commission in this completion transaction after prior reversals; it is not gross unless gross equals the released remainder |
-| Return `OPEN→COMPLETED` | `RETURN_COMPLETED` only | `return:{returnId}:completed` | `v,returnId,orderId,partnerIdSnapshot?,commissionReversalMinor` |
+| Legacy historical `SHIPPED→DELIVERY_FAILED` only (no new producer) | `ORDER_STATUS_CHANGED` **and** `ORDER_DELIVERY_FAILED` | generic key above + `order:{orderId}:delivery_failed` | generic status payload; specific payload `v,orderId,publicNumber,partnerIdSnapshot?` |
+| One Commission first becomes EARNED at eligible release (worker or expired-hold rejection) | one `COMMISSION_EARNED` per Commission | `commission:{commissionId}:earned` | `v,commissionId,partnerId,orderId,amountMinor` where `amountMinor` is the exact positive amount moved `PENDING→AVAILABLE` for that Commission in this release transaction after prior reversals; it is not gross unless gross equals the released remainder |
+| Return `REQUESTED→COMPLETED` | `RETURN_COMPLETED` only | `return:{returnId}:completed` | `v,returnId,orderId,partnerIdSnapshot?,commissionReversalMinor` |
 | Payout created REQUESTED, whether self-service or Admin settlement | `PAYOUT_REQUESTED` only | `payout:{payoutId}:requested` | `v,payoutId,partnerId,amountMinor,status` |
 | Payout `REQUESTED→PAID` | `PAYOUT_PAID` only | `payout:{payoutId}:paid` | `v,payoutId,partnerId,amountMinor,status` |
 | Payout `REQUESTED→REJECTED` | `PAYOUT_REJECTED` only | `payout:{payoutId}:rejected` | `v,payoutId,partnerId,amountMinor,status` |
@@ -705,8 +707,8 @@ No producer may invent an additional generic/specific combination. Every listed 
 |---|---|---|---|---|
 | N-001 | PARTNER_ACTIVATED | Partner | bot_can_message | onboarding success + open dashboard |
 | N-002 | ORDER_CREATED | Partner | attributed + bot_can_message | order number, product summary, pending commission if positive; otherwise explicit zero/no commission |
-| N-003 | ORDER_STATUS_CHANGED | Buyer | `bot_can_message` AND `toStatus ∈ {CONFIRMED,SHIPPED,DELIVERED,CANCELLED,DELIVERY_FAILED}` | order number + safe status label |
-| N-004 | ORDER_CANCELLED/DELIVERY_FAILED | Partner | attributed + bot_can_message | order number + commission impact |
+| N-003 | ORDER_STATUS_CHANGED | Buyer | `bot_can_message` AND `toStatus ∈ {CONFIRMED,SHIPPED,DELIVERED,CANCELLED}` | order number + safe status label |
+| N-004 | ORDER_CANCELLED (DELIVERY_FAILED historical replay only) | Partner | attributed + bot_can_message | order number + commission impact |
 | N-005 | COMMISSION_EARNED | Partner | bot_can_message | amount + available balance |
 | N-006 | RETURN_COMPLETED | Partner | commission affected + bot_can_message | order + reversal amount |
 | N-007 | PAYOUT_REQUESTED | Partner | bot_can_message | amount + REQUESTED |
@@ -748,14 +750,15 @@ AssetStatus ACTIVE|ARCHIVED
 InventorySourceStatus UNINITIALIZED|OK|MISSING|INVALID
 InventorySyncRunStatus RUNNING|SUCCESS|PARTIAL|FAILED
 ReferralLinkStatus ACTIVE|DISABLED
-OrderStatus PLACED|CONFIRMED|FULFILLING|SHIPPED|DELIVERED|COMPLETED|CANCELLED|DELIVERY_FAILED
+OrderStatus PLACED|CONFIRMED|FULFILLING|SHIPPED|DELIVERED|COMPLETED|CANCELLED
+Legacy persisted DELIVERY_FAILED is historical only; no new transition targets it.
 ReservationStatus ACTIVE|RELEASED|CONSUMED
 ReservationReconciliationMethod SOURCE_PROOF|MANUAL
 CommissionState PENDING|HOLD|EARNED|VOID
 LedgerBucket PENDING|AVAILABLE|PAYOUT_LOCKED
 LedgerEntryType COMMISSION_CREATE|COMMISSION_RELEASE|COMMISSION_REVERSAL|PAYOUT_LOCK|PAYOUT_PAID|PAYOUT_REJECT
 PayoutStatus REQUESTED|PAID|REJECTED
-ReturnStatus OPEN|COMPLETED|CANCELLED
+ReturnStatus REQUESTED|COMPLETED|REJECTED
 TelegramUpdateStatus PENDING|PROCESSING|PROCESSED|FAILED
 EventProcessingStatus PENDING|PROCESSING|PROCESSED|FAILED
 LegalDocumentType PARTNER_TERMS|SALES_TERMS|PRIVACY
@@ -835,7 +838,7 @@ Public number generation: `W-` + 12 Crockford Base32 characters from cryptograph
 `id uuid PK`; `order_id uuid NOT NULL FK orders RESTRICT`; `variant_id uuid NOT NULL FK product_variants RESTRICT`; snapshots: SKU/title/attributes; `quantity int>0`; `unit_price_minor int>=0`; `partner_commission_unit_snapshot_minor int>=0`; `supplier_settlement_unit_snapshot_minor int NULL`; `line_total_minor int>=0`. Unique `(order_id,variant_id)` and UNIQUE `(id,order_id)` for composite FKs.
 
 ## 9.23 `inventory_reservations`
-`id uuid PK`; `order_id uuid NOT NULL`; `variant_id uuid NOT NULL`; `quantity int>0`; `status`; `reconciliation_method ReservationReconciliationMethod NULL`; `reconciliation_reference varchar(500) NULL`; `reconciliation_source_version varchar(200) NULL`; `reconciliation_inventory_sync_run_id uuid NULL FK inventory_sync_runs RESTRICT`; `reconciled_by_admin_user_id uuid NULL FK users RESTRICT`; `reconciled_at NULL`; `created_at`; `released_at NULL`; `consumed_at NULL`. Composite FK `(order_id,variant_id)→order_items(order_id,variant_id)`. Unique `(order_id,variant_id)`. Index `(variant_id,status)` and `(status,order_id)`. Automatic pre-shipment cancellation release leaves reconciliation evidence NULL. SOURCE_PROOF stores the exact matching InventoryItem `source_version` and current `last_successful_sync_run_id`; MANUAL stores the exact current `last_successful_sync_run_id` snapshot identity (and current source_version when non-null) that the Admin explicitly attested already reflects the terminal physical outcome. MANUAL also records Admin identity.
+`id uuid PK`; `order_id uuid NOT NULL`; `variant_id uuid NOT NULL`; `quantity int>0`; `status`; `reconciliation_method ReservationReconciliationMethod NULL`; `reconciliation_reference varchar(500) NULL`; `reconciliation_source_version varchar(200) NULL`; `reconciliation_inventory_sync_run_id uuid NULL FK inventory_sync_runs RESTRICT`; `reconciled_by_admin_user_id uuid NULL FK users RESTRICT`; `reconciled_at NULL`; `created_at`; `released_at NULL`; `consumed_at NULL`. Composite FK `(order_id,variant_id)→order_items(order_id,variant_id)`. Unique `(order_id,variant_id)`. Index `(variant_id,status)` and `(status,order_id)`. Automatic pre-shipment cancellation release and SHIPPED consumption leave reconciliation evidence NULL. Following proof/manual metadata is legacy remediation only. SOURCE_PROOF stores the exact matching InventoryItem `source_version` and current `last_successful_sync_run_id`; MANUAL stores the exact current `last_successful_sync_run_id` snapshot identity (and current source_version when non-null) that the Admin explicitly attested already reflects the terminal physical outcome. MANUAL also records Admin identity.
 
 ## 9.24 `commissions`
 `id uuid PK`; `partner_id uuid NOT NULL FK partners RESTRICT`; `order_id uuid NOT NULL`; `order_item_id uuid NOT NULL`; `quantity int>0`; `unit_amount_minor int>0`; `gross_amount_minor int>0`; `reversed_amount_minor int NOT NULL default 0`; `state CommissionState`; `eligible_at NULL`; `available_at NULL`; timestamps. Composite FK `(order_item_id,order_id)→order_items(id,order_id)`; composite FK `(order_id,partner_id)→orders(id,partner_id_snapshot)`; `order_item_id UNIQUE`; add UNIQUE `(id,partner_id)`; DB CHECK `0<=reversed_amount_minor<=gross_amount_minor`; DB CHECK `gross_amount_minor::bigint = unit_amount_minor::bigint * quantity::bigint`. Zero-commission OrderItems intentionally have no Commission. Index Partner/state/date and Order.
@@ -989,7 +992,7 @@ Under Partner lock:
 Authenticated User; ACTIVE categories.
 
 ### GET `/api/v1/catalog/products`
-Query `q,category,brand,minPriceMinor,maxPriceMinor,availability,page,limit` plus U02-approved filters. All amounts in PLATFORM_CURRENCY. Base Buyer projection contains STOREFRONT assets only. If current User has a Partner, each product card additionally contains `partnerView` with current commission range and referral eligibility/read-only reason; ordinary non-Partner responses omit `partnerView` entirely.
+Query `q,category,minPriceMinor,maxPriceMinor,availability,page,limit`. Filters: category, price range, availability only; text search remains. Brand/specifications/variant attributes may be stored/displayed but are not filter dimensions. Watch/domain filters deferred until real catalog data demonstrates useful attributes. Amounts in PLATFORM_CURRENCY. Buyer projection contains STOREFRONT assets; Partner users additionally receive partnerView with commission range and eligibility/read-only reason.
 
 ### GET `/api/v1/catalog/products/:slug`
 ACTIVE Product/Variants only. Base Buyer projection contains STOREFRONT assets and never PARTNER_CONTENT. If current User has a Partner, response additionally contains `partnerView`: per-Variant `commissionUnitMinor`, referral eligibility/read-only reason, and ACTIVE PARTNER_CONTENT assets. A Partner for whom BR-007 `partnerProgramMutationAllowed=false` may still read selling-kit data under read permissions, but referral-link get/create remains denied; archived referral bootstrap may render unavailable landing but normal direct non-ACTIVE read is 404.
@@ -1051,7 +1054,7 @@ DB-backed aggregates only:
 - overdue/action-required Orders;
 - failed/PARTIAL/stale inventory runs/items;
 - inventory deficits;
-- OPEN Returns;
+- REQUESTED Returns;
 - REQUESTED Payouts;
 - retry-exhausted/FAILED TelegramUpdate/Event counts.
 
@@ -1071,8 +1074,10 @@ Assets remain streamed; IMAGE file bytes must be <=`MAX_IMAGE_UPLOAD_BYTES`, VID
 
 ## 11.8 Admin inventory
 
+Reservation reconcile endpoint/targets below are legacy pre-amendment remediation only. New Orders never await this endpoint.
+
 ### GET `/api/v1/admin/inventory`
-Returns per Variant: source quantity/status, `sourceVersion`, `lastSuccessfulSyncAt`, `lastSuccessfulSyncRunId`, active reservations, buffer, sellable/freshness, deficit flag and reconciliation-pending count. `lastSuccessfulSyncRunId` is the optimistic-concurrency token used by MANUAL reconciliation; clients must not derive it from timestamps.
+Returns per Variant: source quantity/status, `sourceVersion`, `lastSuccessfulSyncAt`, `lastSuccessfulSyncRunId`, active reservations, buffer, sellable/freshness, deficit flag and reconciliation-pending count (legacy remediation only). `lastSuccessfulSyncRunId` is the optimistic-concurrency token used by MANUAL reconciliation; clients must not derive it from timestamps.
 
 ### POST `/api/v1/admin/inventory/sync`
 This endpoint **executes the same inventory-sync orchestration synchronously inside this HTTP request**; it does not enqueue a durable job and does not merely signal the worker. It checks out the dedicated PostgreSQL connection required by Section 14.2 and first attempts the session advisory lock on it. If unavailable, return `SYNC_ALREADY_RUNNING` with HTTP 409 and `details.runSummary`, where `runSummary` is the latest visible RUNNING SyncRun summary or `null`. `null` is valid only for the short race where the lock owner has acquired the advisory lock but has not yet committed phase-A RUNNING row; the caller must treat either form as “sync in progress” and may refresh `/admin/inventory/sync-runs`. Do not start another run.
@@ -1107,20 +1112,20 @@ Admin settlement payout for ACTIVE or BLOCKED Partner. Requires U06 destination/
 ## 11.10 Admin Orders
 
 ### GET `/api/v1/admin/orders`
-Filters include status/date/number/partner plus `overdue=true` and `reconciliationPending=true`. The reconciliation filter returns Orders having at least one ACTIVE reservation whose current Order state permits/awaits SOURCE_PROOF or MANUAL reconciliation; Order detail supplies reservation IDs and exact allowed targets.
+Filters include status/date/number/partner plus `overdue=true` and `reconciliationPending=true`. The reconciliation filter returns Orders having at least one ACTIVE reservation whose current Order state permits/awaits legacy pre-amendment SOURCE_PROOF or MANUAL remediation; Order detail supplies reservation IDs and exact allowed targets.
 
 ### GET `/api/v1/admin/orders/:id`
 Full fulfilment details if retained, attribution, Commission and payout-allocation summary. For every reservation, return reservation ID/status/reconciliation metadata plus current matching InventoryItem `{sourceStatus,sourceVersion,lastSuccessfulSyncAt,lastSuccessfulSyncRunId}` and the state-valid MANUAL targets. These inventory fields are a read snapshot only; the reconcile mutation still requires `expectedInventorySyncRunId` and re-checks it under lock.
 
 ### POST `/api/v1/admin/orders/:id/transition`
-Allowed `toStatus` values only: CONFIRMED, FULFILLING, SHIPPED, DELIVERED, CANCELLED, DELIVERY_FAILED where state graph permits. `COMPLETED` is rejected with `SYSTEM_TRANSITION_ONLY` even though it is a graph edge.
+Allowed toStatus: CONFIRMED, FULFILLING, SHIPPED, DELIVERED, pre-shipment CANCELLED where legal. COMPLETED is worker-only; DELIVERY_FAILED and backward transitions are rejected.
 
-Transaction follows global lock order. For a pre-shipment `→CANCELLED` that has Partner Commissions, preliminarily read immutable Partner snapshot, then lock `Partner → Order → Reservations → Commissions`; organic/no-Commission cancellation starts at Order. It releases ACTIVE reservations and reverses remaining PENDING commission exactly once in the same transaction; generic reconciliation cannot consume pre-shipment states. `→SHIPPED` does not itself consume reservation. `SHIPPED→DELIVERY_FAILED` leaves ACTIVE reservation conservative until SOURCE_PROOF or enabled MANUAL reconciliation proves release. `→DELIVERED` locks Order (and existing Commissions after Order), sets `delivered_at` and immutable `completion_eligible_at=delivered_at+current hold`; when Commissions exist it also moves PENDING→HOLD and sets each `eligible_at` to the exact same timestamp. Same-target already-achieved transition is idempotent success where semantically safe.
+Transaction follows global lock order. For a pre-shipment `→CANCELLED` that has Partner Commissions, preliminarily read immutable Partner snapshot, then lock `Partner → Order → Reservations → Commissions`; organic/no-Commission cancellation starts at Order. It releases ACTIVE reservations and reverses remaining PENDING commission exactly once in the same transaction; generic reconciliation cannot consume pre-shipment states. `→SHIPPED` locks Order→Reservations and consumes ACTIVE reservations atomically. Post-shipment exceptions create Return; no DELIVERY_FAILED transition or reservation release. `→DELIVERED` locks Order (and existing Commissions after Order), sets `delivered_at` and immutable `completion_eligible_at=delivered_at+current hold`; when Commissions exist it also moves PENDING→HOLD and sets each `eligible_at` to the exact same timestamp. Same-target already-achieved transition is idempotent success where semantically safe.
 
 ## 11.11 Returns
 
-### GET/POST `/api/v1/admin/returns`, GET detail, complete/cancel
-Create only DELIVERED/COMPLETED. `return_items.order_id` is server-derived and DB-composite constrained. Completion preliminarily reads immutable Order/Partner identity, then locks `Partner(if attributed) → Order → affected OrderItems → affected Commissions → Return`, re-checks Return OPEN/quantities and applies exact reversal once. Repeat complete returns current result. This order also serializes with Order completion because Return creation itself locks Order.
+### GET/POST `/api/v1/admin/returns`, GET detail, complete/reject
+Create for SHIPPED/DELIVERED/COMPLETED. `return_items.order_id` is server-derived and DB-composite constrained. Completion preliminarily reads immutable Order/Partner identity, then locks `Partner(if attributed) → Order → affected OrderItems → affected Commissions → Return`, re-checks Return REQUESTED/quantities and applies exact reversal once. Repeat complete returns current result. This order also serializes with Order completion because Return creation itself locks Order.
 
 ## 11.12 Payouts
 
@@ -1160,7 +1165,7 @@ Common auth/CSRF/error-envelope rules from Section 10 apply. All list responses 
 | GET `/partner/payouts` | Partner | page/status | payouts + own allocations | read-only | PARTNER_REQUIRED |
 | POST `/partner/payouts` | Partner with BR-007 `partnerProgramMutationAllowed=true` | U06 destination + Idempotency-Key | Payout | Partner lock; re-check BR-007 then allocation/ledger tx | PARTNER_BLOCKED, TERMS_REACCEPT_REQUIRED, PAYOUT_CONFIGURATION_MISSING, PAYOUT_NOT_AVAILABLE, PAYOUT_BELOW_MINIMUM, PAYOUT_ALREADY_PENDING, IDEMPOTENCY_CONFLICT |
 | GET `/catalog/categories` | Auth User | none | ACTIVE categories `(sort_order,id)` | read-only | AUTH_REQUIRED |
-| GET `/catalog/products` | Auth User | q<=100, category, brand, min/max>=0, availability, page/limit | Buyer cards; Partner users additionally receive defined `partnerView` | read-only | VALIDATION_ERROR |
+| GET `/catalog/products` | Auth User | q<=100, category, min/max>=0, availability, page/limit | Buyer cards; Partner users additionally receive defined `partnerView` | read-only | VALIDATION_ERROR |
 | GET `/catalog/products/:slug` | Auth User | slug | Buyer detail; Partner users additionally receive commission/referral/PARTNER_CONTENT `partnerView` | read-only | NOT_FOUND |
 | GET `/cart` | Auth User | none | current Cart projection | lazy Cart creation allowed | AUTH_REQUIRED |
 | PUT `/cart/items/:variantId` | Auth User | quantity 1..99 | Cart | Cart lock; max 100 distinct lines; no reservation | PRODUCT_NOT_ACTIVE, VARIANT_NOT_ACTIVE, CART_LINE_LIMIT_EXCEEDED, OUT_OF_STOCK, INVENTORY_STALE, INVENTORY_UNKNOWN |
@@ -1205,10 +1210,10 @@ This matrix is authoritative for endpoints that earlier sections describe narrat
 | GET `/admin/orders/:id` | Admin | UUID | full order projection including reservation IDs, state-valid reconcile targets and current sourceVersion/lastSuccessfulSyncRunId per reservation | none | NOT_FOUND |
 | POST `/admin/orders/:id/transition` | Admin | `toStatus`, note<=500 | Order | Order/Partner locks as applicable, state machine, Event, Audit; same target safe no-op | INVALID_ORDER_TRANSITION, SYSTEM_TRANSITION_ONLY |
 | GET `/admin/returns` | Admin | status/order/page | Return summaries | none | - |
-| POST `/admin/returns` | Admin | orderId, reason 1..1000, nonempty items qty>0 | OPEN Return | lock order/items; quantity recheck; tx + Audit | RETURN_NOT_ALLOWED, RETURN_QUANTITY_EXCEEDED |
+| POST `/admin/returns` | Admin | orderId, reason 1..1000, nonempty items qty>0 | REQUESTED Return | lock order/items; quantity recheck; tx + Audit | RETURN_NOT_ALLOWED, RETURN_QUANTITY_EXCEEDED |
 | GET `/admin/returns/:id` | Admin | UUID | Return detail | none | NOT_FOUND |
 | POST `/admin/returns/:id/complete` | Admin | optional note | COMPLETED Return | Partner→Order→OrderItems→Commissions→Return; reversal once, Event/Audit; repeat = current | RETURN_QUANTITY_EXCEEDED, INTERNAL_INVARIANT_VIOLATION |
-| POST `/admin/returns/:id/cancel` | Admin | optional note | CANCELLED Return | OPEN only; tx + Audit; repeat = current | RETURN_NOT_ALLOWED |
+| POST `/admin/returns/:id/reject` | Admin | optional note | REJECTED Return | REQUESTED only; Order/item/Commission locks as needed, tx + Audit; repeat=current; expired hold permits affected release without restart | RETURN_NOT_ALLOWED |
 | GET `/admin/payouts` | Admin | status/partner/page | payouts | none | - |
 | GET `/admin/payouts/:id` | Admin | UUID | payout + allocations | none | NOT_FOUND |
 | POST `/admin/payouts/:id/transition` | Admin | target PAID/REJECTED, note?, externalReference? | Payout | Partner→Payout locks; deterministic ledger; processed_by admin; Audit | PAYOUT_ALREADY_FINALIZED |
@@ -1245,11 +1250,11 @@ List ordering defaults are deterministic: Categories `(sort_order,id)`; Catalog 
 **INV-022** Checkout for same Variant serializes on InventoryItem.  
 **INV-023** No Order reserves more than sellable quantity under locks.  
 **INV-024** Admin never writes source_quantity.  
-**INV-025** Reservation after shipment is never consumed/released solely from elapsed time or a generic successful sync.  
+**INV-025** SHIPPED consumes ACTIVE reservations atomically; elapsed time or generic sync alone never changes reservation state.
 **INV-026** `active_reservations+safety_buffer>source_quantity` is surfaced as deficit and never produces positive sellable.  
 **INV-027** A fetched inventory record may update a Variant only if its external key still matches under DB lock; external-key mutation racing sync cannot apply stale-source quantity.  
 **INV-028** ACTIVE reservation cannot be CONSUMED while Order is PLACED/CONFIRMED/FULFILLING, and cannot be generic-reconciled during pre-shipment cancellation.  
-**INV-029** Post-shipment reservation reconciliation is exactly once, state-valid and either SOURCE_PROOF-backed or audited MANUAL per U01.
+**INV-029** Shipping consumption is exactly once; Return never increases source quantity or changes CONSUMED reservations. Snapshot-bound remediation is legacy-only.
 
 ## Order / cart / attribution
 **INV-030** One `(buyer,idempotency_key)` creates at most one Order; same request retry returns it.  
@@ -1257,7 +1262,7 @@ List ordering defaults are deterministic: Categories `(sort_order,id)`; Catalog 
 **INV-032** Referral touch creation and checkout serialize on Buyer/User row.  
 **INV-033** OrderItem snapshots never change.  
 **INV-034** Admin cannot transition an Order to COMPLETED.  
-**INV-035** Only completion worker may transition DELIVERED→COMPLETED after immutable `completion_eligible_at` has elapsed and no OPEN Return exists.  
+**INV-035** Only completion worker may transition DELIVERED→COMPLETED after immutable `completion_eligible_at` has elapsed and no REQUESTED Return exists.
 **INV-036** Attribution snapshot never changes after Order creation.  
 **INV-037** Self-referral creates no Commission.  
 **INV-038** BLOCKED Partner creates no new Commission.  
@@ -1285,7 +1290,7 @@ List ordering defaults are deterministic: Categories `(sort_order,id)`; Catalog 
 **INV-059D** Ledger entry type, bucket and sign must satisfy the DB semantic matrix; LedgerEntry UPDATE/DELETE is DB-rejected unconditionally.
 
 ## Returns / relational integrity
-**INV-060** OPEN+COMPLETED return qty never exceeds ordered qty.  
+**INV-060** REQUESTED+COMPLETED return qty never exceeds ordered qty.
 **INV-061** Return financial effect exactly once.  
 **INV-062** ReturnItem Order must equal both Return Order and OrderItem Order.  
 **INV-063** ProductAsset Variant, when set, belongs to same Product.
@@ -1358,6 +1363,8 @@ Bot send failure never rolls back transaction. Definitive block/cannot-message s
 # 14. Inventory subsystem
 
 ## 14.1 Provider contract
+
+Reservation-proof capability and phases D/E below are retained for legacy pre-amendment remediation only. Google Sheets has no proof capability; new shipping follows BR-048.
 
 ```text
 InventoryProvider
@@ -1457,7 +1464,7 @@ U01 is resolved for MVP without changing the generic inventory architecture:
 - because the worksheet is a complete snapshot, a configured mapped Variant absent from the fetched snapshot becomes MISSING, never implicit zero;
 - adapter capabilities are `completeSnapshot=true` and `reservationReconciliation=NONE`;
 - the Google Sheets adapter does not claim a stable comparable source version for physical-outcome proof; normalized `sourceVersion` may be NULL;
-- reservation reconciliation mode is `MANUAL` using the existing audited sync-run-bound Admin flow. No automatic SOURCE_PROOF reconciliation is permitted for this adapter;
+- legacy pre-amendment reservation remediation uses `MANUAL` through the audited sync-run-bound Admin flow; new SHIPPED consumes reservations atomically. No automatic SOURCE_PROOF reconciliation is permitted for this adapter;
 - technical cadence is 120 seconds with max inventory age 600 seconds;
 - all sales in other channels must update the authoritative Sheet as part of normal sale handling. If that operational discipline cannot be maintained, the source must be changed or the safety-buffer policy explicitly amended before production traffic;
 - Google Sheets is inventory-only authority. It MUST NOT override `product_variants.price_minor`, Product/Variant status, partner commission, supplier settlement, catalog attributes or product media;
@@ -1519,8 +1526,8 @@ Admin price/commission/status/archive mutation and checkout lock the same Produc
 ## 15.8 Referral-state mutation vs touch
 Touch creation re-checks Partner/terms, ReferralLink and scoped Product after their locks. Partner block, link disable or Product archive that commits first prevents the new touch; a touch that commits first remains valid historical attribution according to normal later checkout eligibility rules.
 
-## 15.9 Cancellation vs reservation reconciliation
-Pre-shipment cancellation and any reconciliation apply first serialize on `Order → Reservation`. Cancellation releases an ACTIVE reservation under those locks and stops; it does not acquire InventoryItem. A state-valid post-shipment reconciliation, after owning `Order → Reservation`, then acquires the matching InventoryItem and re-checks the required source-version/sync-run snapshot before terminal mutation. Reconciliation is forbidden for PLACED/CONFIRMED/FULFILLING, so it cannot consume a reservation immediately before legal pre-shipment cancellation; SHIPPED ends cancellation eligibility before CONSUMED becomes an allowed target. Stock sync never acquires Order/Reservation, and no operation holding InventoryItem may later acquire Order/Reservation.
+## 15.9 Cancellation vs shipping / legacy reservation reconciliation
+Shipping and pre-shipment cancellation serialize on Order→Reservation: whichever commits first determines the valid state and terminal reservation status. Return never releases CONSUMED reservations. Legacy remediation only: pre-shipment cancellation and any reconciliation apply first serialize on `Order → Reservation`. Cancellation releases an ACTIVE reservation under those locks and stops; it does not acquire InventoryItem. A state-valid post-shipment reconciliation, after owning `Order → Reservation`, then acquires the matching InventoryItem and re-checks the required source-version/sync-run snapshot before terminal mutation. Reconciliation is forbidden for PLACED/CONFIRMED/FULFILLING, so it cannot consume a reservation immediately before legal pre-shipment cancellation; SHIPPED ends cancellation eligibility before CONSUMED becomes an allowed target. Stock sync never acquires Order/Reservation, and no operation holding InventoryItem may later acquire Order/Reservation.
 
 ## 15.10 Retry
 Server may bounded-retry deadlock/transient DB failures. Never auto-retry business conflicts.
@@ -1536,22 +1543,18 @@ All ledger, commission, payout and allocation amounts are PLATFORM_CURRENCY mino
 `pending = SUM(PENDING ledger)`; `available = SUM(AVAILABLE ledger)`; `payout_locked = SUM(PAYOUT_LOCKED ledger)`.
 
 ## 16.3 Commission lifecycle
-For commission-eligible OrderItems with unit commission `>0`: PENDING on Order create; HOLD on DELIVERED; EARNED when system completion releases positive unreversed amount; VOID when fully reversed. Zero-unit OrderItems have no Commission. Partial reversal does not change lifecycle state except a later full reversal changes it to VOID.
+For commission-eligible OrderItems with unit commission `>0`: PENDING on Order create; HOLD on DELIVERED; EARNED when eligible release under Section 16.4 moves positive unreversed amount to AVAILABLE, independently of final Order completion; VOID when fully reversed. Zero-unit OrderItems have no Commission. Partial reversal does not change lifecycle state except a later full reversal changes it to VOID.
 
 There is no Commission PAYOUT_PENDING/PAID state.
 
 ## 16.4 Completion worker
-Order eligibility:
-- Order status DELIVERED;
-- `completion_eligible_at IS NOT NULL AND completion_eligible_at<=now()`;
-- no OPEN Return.
+Select DELIVERED Orders with immutable completion_eligible_at<=now() through the partial completion index. Pre-read immutable Partner identity; lock Partner (if attributed)→Order→affected OrderItems→Commissions and re-check eligibility/ReturnItems. Release each positive unreversed non-VOID Commission only when no REQUESTED Return affects its OrderItem. Append exact -PENDING/+AVAILABLE once, EARNED/available_at; VOID never releases. Unaffected items can release while another is blocked. Order becomes COMPLETED only after no REQUESTED Return remains and all applicable releases are done, including organic/zero/all-VOID Orders. eligible_at stays original hold expiry; available_at is actual release time. REJECTED after expiry permits immediate release without a new hold, using the same primitive under these locks or the next worker run. Admin cannot force Order completion. SHIPPED failures never acquire delivered_at merely to run completion; completed Returns reverse their PENDING commissions.
 
-The worker selects due Orders through the partial completion index. For an attributed Order it preliminarily reads Partner ID, then locks `Partner→Order→Commissions`; for organic Order it locks Order→Commissions. It re-checks Order predicates under lock. For each positive unreversed non-VOID Commission, it appends exact `-PENDING/+AVAILABLE`, sets EARNED/available_at; fully reversed Commission remains VOID. It then transitions the Order to COMPLETED in the same transaction even if the Order is organic, has only zero-commission items, or all Commissions are VOID. `available_at` is the actual release time; `eligible_at` equals the Order's snapshotted `completion_eligible_at`. Admin cannot invoke this transition.
-
-## 16.5 Cancellation/delivery failure
+## 16.5 Pre-shipment cancellation / legacy delivery failure
 Before release, reverse remaining PENDING exactly once. Fully reversed Commission→VOID. Reservation handled separately by inventory rules.
 
 ## 16.6 Return reversal
+A Return reaches COMPLETED only for the actually returned quantity represented by its ReturnItems. No reversal at REQUESTED or REJECTED. This includes failed/refused shipments after SHIPPED; they debit PENDING without manufacturing delivery. Returned stock becomes sellable only through authoritative inventory reporting.
 `reversal = order_item.commission_unit_snapshot * newly-completed returned qty`.
 - PENDING/HOLD → append negative COMMISSION_REVERSAL in PENDING;
 - EARNED (regardless requested/paid payouts) → append negative COMMISSION_REVERSAL in AVAILABLE.
@@ -1667,10 +1670,10 @@ Aggregation timestamps stored UTC; business timezone configurable.
 **M-005A Orders per referral touch:** count of Orders attributed to denominator touch IDs before each touch expiry / denominator touch count. This is a productivity ratio and may exceed 1; it is not called conversion.  
 **M-006 Order→delivered:** cohort Orders created in period that reach DELIVERED/COMPLETED / Orders created in period.  
 **M-007 Cancellation rate:** CANCELLED / created Orders cohort.  
-**M-008 Delivery-failure rate:** DELIVERY_FAILED / Orders reaching SHIPPED.  
+**M-008 Delivery-failure rate:** Orders with completed failed-delivery/refusal Returns / Orders reaching SHIPPED. Historical DELIVERY_FAILED may be reported separately, never created by new transitions.
 **M-009 Return rate:** Orders with >=1 COMPLETED Return / Orders reaching DELIVERED.  
 **M-010 Net Partner commission:** accrued commission minus completed reversals.  
-**M-011 Contribution after commission:** only covered OrderItems with supplier settlement snapshot; show data coverage, never fabricate missing costs.  
+**M-011 Contribution metrics:** contribution margin/order, contribution after partner commission and contribution/active partner unavailable until sufficient supplier settlement/cost and platform variable-cost data exists. Unknown stays NULL/N/A, never zero or estimated. New economics snapshot into new OrderItems; historical snapshots are never rewritten.
 **M-012 Time to first sale:** earliest Partner Terms acceptance (`MIN(partner_terms_acceptances.accepted_at)`) → first retained COMPLETED Order for that Partner with `commission_eligible_snapshot=true`.  
 **M-013 Partner retention:** weekly M-003 active selling Partners present in both N and N+1 / M-003 active selling Partners in N.
 
@@ -1740,7 +1743,7 @@ Same lease/retry defaults as Telegram inbox. Financial handlers remain idempoten
 Scheduled worker calls the same synchronous `run inventory sync` domain orchestration used by `POST /admin/inventory/sync`; there is no separate inventory-sync queue/PENDING job in MVP. It uses the same dedicated-connection/session-advisory-lock discipline from Section 14.2. A new lock holder recovers stale RUNNING rows exactly under Section 14.4 (`PARTIAL` if committed stock from that run is evidenced by InventoryItem `last_successful_sync_run_id`, otherwise `FAILED`). Stock apply follows Section 14. Reservation reconciliation is SOURCE_PROOF-backed or audited MANUAL according to U01/config; no generic timestamp/sync-success inference. If phase-F finalization cannot commit, the scheduled execution logs the infrastructure failure, leaves already committed InventoryItem state unchanged and the SyncRun `RUNNING`, releases the advisory lock, and relies on the next scheduled execution/next lock holder to perform stale recovery; it does not create a second retry queue or rewrite stock.
 
 ### J-04 Order completion/commission release
-Every 5 min. Query `status=DELIVERED AND completion_eligible_at<=now()` via partial index. Only actor allowed to move DELIVERED→COMPLETED. Re-check snapshotted eligibility time and OPEN Return under locks; release positive commissions if any, but organic/zero-commission/all-VOID Orders still complete.
+Every 5 min. Query `status=DELIVERED AND completion_eligible_at<=now()` via partial index. Only actor allowed to move DELIVERED→COMPLETED. Re-check snapshotted eligibility and REQUESTED ReturnItems under locks; release only unblocked positive commissions under Section 16.4. Complete Order only with no unresolved REQUESTED and all applicable releases done, including organic/zero/all-VOID Orders.
 
 ### J-05 Session cleanup
 Daily cleanup expires/removes Sessions according to Session retention and deletes `telegram_updates` whose `received_at` exceeds the configured raw-update retention, which must be <=30 days. TelegramUpdate deletion is allowed because durable business/audit effects live in their own domain tables/outbox/audit records, not in the raw transport inbox.
@@ -1798,6 +1801,7 @@ Fastify injection + test DB; auth, ownership, exact Partner Terms predicate, che
 Signed fixtures: valid/wrong/stale/missing user, duplicate query keys, canonical replay with reordered query parameters, different startapp tokens, existing session same/different validated User. Webhook secret/dedupe/lease recovery.
 
 ## 20.5 Mandatory concurrency/security consistency tests
+Tests mentioning MANUAL/SOURCE_PROOF here and acceptance criteria below apply only to legacy pre-amendment remediation. New shipping must instead verify atomic consumption/idempotency, shipping↔cancellation serialization and no Return restock.
 1. two Buyers last unit → one Order;
 2. same Order idempotency key concurrent → both resolve to same Order;
 3. same key different canonical fingerprint → one Order + deterministic conflict;
@@ -1855,8 +1859,8 @@ Playwright with seeded real DB Session, never production test-auth endpoint. Cri
 **AT-013** network retry same idempotency returns same Order.  
 **AT-014** price change requires reconfirmation.  
 **AT-015** Admin cannot set COMPLETED.  
-**AT-016** worker cannot complete before hold or with OPEN Return.  
-**AT-017** DELIVERY_FAILED never releases commission.  
+**AT-016** worker cannot complete before hold or with REQUESTED Return.
+**AT-017** Undelivered SHIPPED exceptions use Return and never falsely set delivered_at or release commission; historical DELIVERY_FAILED never releases.
 **AT-018** reservation is not consumed merely because a later sync succeeds.  
 **AT-019** provider proof can reconcile reservation exactly once.  
 **AT-020** PENDING→HOLD→EARNED exact ledger.  
@@ -1901,7 +1905,7 @@ Playwright with seeded real DB Session, never production test-auth endpoint. Cri
 **AT-059** DB rejects AttributionTouch whose `partner_id` differs from its ReferralLink owner.  
 **AT-060** no domain Event payload/log/error contains fulfilment PII, payout destination, raw Telegram auth/profile payload or secrets; fulfilment redaction leaves no outbox PII copy.  
 **AT-061** checkout cannot create Order unless current SALES_TERMS/PRIVACY IDs are supplied, `salesTermsAccepted=true` and `privacyAcknowledged=true`; successful Order persists both legal IDs plus Sales Terms acceptance and Privacy acknowledgement timestamps, without treating Privacy acknowledgement as legal consent before U08.  
-**AT-062** producer matrix is exact: PLACED emits ORDER_CREATED only; normal transitions emit ORDER_STATUS_CHANGED; CANCELLED and DELIVERY_FAILED each emit generic+their specific event; all event dedupe keys prevent duplicate rows.  
+**AT-062** producer matrix is exact: PLACED emits ORDER_CREATED only; normal transitions emit ORDER_STATUS_CHANGED; CANCELLED emits generic+specific event; no new DELIVERY_FAILED producer; all event dedupe keys prevent duplicate rows.
 **AT-063** Admin Partner detail offers disable only; disabling then normal Partner get/create yields the replacement token without an Admin rotate endpoint.  
 **AT-064** IMAGE exact 10 MiB and VIDEO exact 50 MiB are accepted when MIME-valid; max+1 is rejected before Asset persistence and no durable orphan is intentionally left.  
 **AT-065** public reverse proxy routes `/health` and `/ready` to Fastify and readiness failure is observable through the public origin.  
@@ -1913,7 +1917,7 @@ Playwright with seeded real DB Session, never production test-auth endpoint. Cri
 **AT-071** production deployment exposes only reverse-proxy application ports 80/443; any SSH management port is separately restricted and no API/web/worker/PostgreSQL container port is public.  
 **AT-072** MANUAL reconciliation with a stale `expectedInventorySyncRunId` returns `INVENTORY_SNAPSHOT_CHANGED` (HTTP 409), leaves reservation/source state unchanged and causes Admin UI to refresh the current snapshot before another decision.  
 **AT-073** Admin inventory/order-detail projections expose reservation ID plus `sourceVersion` and `lastSuccessfulSyncRunId` required for MANUAL optimistic concurrency.  
-**AT-074** `ORDER_STATUS_CHANGED` may be produced for FULFILLING/COMPLETED but Buyer N-003 notification is sent only for CONFIRMED/SHIPPED/DELIVERED/CANCELLED/DELIVERY_FAILED; `COMMISSION_EARNED.amountMinor` equals the actual release delta.  
+**AT-074** `ORDER_STATUS_CHANGED` may be produced for FULFILLING/COMPLETED but Buyer N-003 notification is sent only for CONFIRMED/SHIPPED/DELIVERED/CANCELLED; `COMMISSION_EARNED.amountMinor` equals the actual release delta.
 **AT-075** fresh production install performs migrations, required currency/Supplier/legal bootstrap/verification, then starts processes and passes readiness; normal deploy performs the same idempotent required init/verification after migration and before process start.  
 **AT-076** raw `telegram_updates.payload` has a hard maximum 30-day retention; daily cleanup removes rows older than the configured <=30-day limit regardless of status.  
 **AT-077** reconciliation uses `Order→Reservation→InventoryItem`; cancellation uses `Order→Reservation`; inventory provider I/O occurs only outside business-row transactions, with stock-apply committed before proof calls and final SyncRun status committed afterward.  
@@ -1952,7 +1956,7 @@ Must include shared active-product invariant helper and external-key reset seman
 Adds `product_assets` composite Product/Variant integrity, object storage/text assets and storefront gallery. S03 implements the shared IMAGE 10 MiB / VIDEO 50 MiB / multipart 55 MiB limits with streamed byte counting, MIME validation and orphan cleanup behavior from Sections 11/17. S03 is the first slice allowed to satisfy the full ACTIVE Product invariant and publish a Product into Buyer/Partner catalog; activation tests cover image/category/variant requirements and exact upload boundary/max+1 cases end-to-end.
 
 ## S04 — Catalog discovery
-Generic category/brand/price/availability/search. U02 needed only for domain-specific filters.
+MVP category/price-range/availability filters plus text search. U02 resolved; watch/domain filters deferred pending real catalog evidence, not launch blockers.
 
 ## S05 — Partner selling kit
 Partner shell + catalog/product assets and current per-SKU commission display through role-aware catalog `partnerView`; Buyer projection excludes PARTNER_CONTENT/partner commission fields. Do **not** fake later dashboard data: generic referral-link widget arrives in S06, recent attributed Orders in S11, and pending/available/recent Commission widgets in S12.
@@ -1961,33 +1965,33 @@ Partner shell + catalog/product assets and current per-SKU commission display th
 DB referral_links/attribution_touches, including UNIQUE `(referral_links.id,partner_id)` and composite FK `(attribution_touches.referral_link_id,partner_id)→referral_links(id,partner_id)` so cross-Partner link/touch rows are DB-impossible. Must implement ACTIVE-link rotation semantics, canonical replay fingerprint, top-level auth launch rule, exact BR-007 Partner Terms predicate and touch lock path `Buyer→Partner→ReferralLink→Product(if scoped)` with blocked/terms/self/disabled/archive re-checks. Wire P-01 generic referral-link widget. Prepare disable/block/archive/touch-integrity race tests; full referral↔checkout test arrives S09.
 
 ## S07 — Real inventory synchronization
-U01 is resolved: the real MVP source is Google Sheets with complete-snapshot semantics and audited `MANUAL` reservation reconciliation. Google Sheets has no SOURCE_PROOF authority and must not invent a stable proof version. Generic interfaces/fake tests may exist earlier; S07 production completion requires the real Google Sheets adapter, source-specific config/readiness, schema validation and successful live access to the configured Sheet. S07 implements stock sync, deficit/health/advisory lock/stale run handling, the provider contract and one shared synchronous sync orchestration used directly by both scheduler and Admin sync endpoint. The orchestration follows the explicit Section 14 transaction phases: run-start TX commit → provider fetch outside row-lock TX → stock-apply TX commit → provider proof calls outside row-lock TX → per-reservation reconcile TXs → SyncRun-finalize/Event TX commit. In the selected MANUAL mode there are no provider proof calls that mutate reservations. Reservation rows do not exist yet; snapshot-coherent post-shipment manual action is wired in S10 after S09 creates Orders/Reservations.
+U01 is resolved: MVP source is Google Sheets with complete-snapshot semantics. Audited MANUAL remediation is legacy-only; new shipping consumes reservations. Google Sheets has no SOURCE_PROOF authority and must not invent a stable proof version. Generic interfaces/fake tests may exist earlier; S07 production completion requires the real Google Sheets adapter, source-specific config/readiness, schema validation and successful live access to the configured Sheet. S07 implements stock sync, deficit/health/advisory lock/stale run handling, the provider contract and one shared synchronous sync orchestration used directly by both scheduler and Admin sync endpoint. The orchestration follows the explicit Section 14 transaction phases: run-start TX commit → provider fetch outside row-lock TX → stock-apply TX commit → provider proof calls outside row-lock TX → per-reservation reconcile TXs → SyncRun-finalize/Event TX commit. In the selected MANUAL mode there are no provider proof calls that mutate reservations. Reservation rows do not exist yet; S10 wires atomic SHIPPED consumption after S09 creates Orders/Reservations; snapshot-bound manual actions are legacy-only.
 
 ## S08 — Cart
 DB carts/cart_items; every mutation locks Cart; max 100 distinct lines; live inventory/pricing projection.
 Depends on S07 for production semantics.
 
 ## S09 — Atomic checkout + Order
-Requires S06/S07/S08 and U03 confirmation/default. Development checkout may be exercised in test/dev, but persistent production-like earning traffic remains forbidden until S12; public launch still waits for the later launch-critical slices/S16. Order public-number generation and attribution composite integrity are included. DB orders, fulfillment_details, order_items, reservations, events. Checkout lock order Buyer→Partner→Cart→Products→Variants→InventoryItems; re-read commercial values after locks. Require current Sales/Privacy IDs + `salesTermsAccepted=true` + `privacyAcknowledged=true` and persist Sales acceptance / Privacy acknowledgement timestamps; Product/Variant becoming non-ACTIVE at checkout returns stable `CART_CHANGED/ITEM_UNAVAILABLE`. Enforce max lines/checked aggregate total. Idempotency re-check before Cart. Event payload follows the no-PII allowlist and ORDER_CREATED producer rule. When S09 introduces InventoryReservation, it also augments the existing Admin Variant external-key mutation with BR-019B so ACTIVE reservations block key changes. Composite FKs.
+Requires S06/S07/S08; U03 manual fulfilment is resolved. Development checkout may be exercised in test/dev, but persistent production-like earning traffic remains forbidden until S12; public launch still waits for the later launch-critical slices/S16. Order public-number generation and attribution composite integrity are included. DB orders, fulfillment_details, order_items, reservations, events. Checkout lock order Buyer→Partner→Cart→Products→Variants→InventoryItems; re-read commercial values after locks. Require current Sales/Privacy IDs + `salesTermsAccepted=true` + `privacyAcknowledged=true` and persist Sales acceptance / Privacy acknowledgement timestamps; Product/Variant becoming non-ACTIVE at checkout returns stable `CART_CHANGED/ITEM_UNAVAILABLE`. Enforce max lines/checked aggregate total. Idempotency re-check before Cart. Event payload follows the no-PII allowlist and ORDER_CREATED producer rule. When S09 introduces InventoryReservation, it also augments the existing Admin Variant external-key mutation with BR-019B so ACTIVE reservations block key changes. Composite FKs.
 
 ## S10 — Admin fulfilment state machine
-Admin order UI/transitions, DELIVERY_FAILED, cancellation, overdue flags and immutable `completion_eligible_at` snapshot on DELIVERED. COMPLETED endpoint forbidden/system-only. Wire Order→Reservation cancellation serialization and, after S09 reservations exist, SOURCE_PROOF apply or MANUAL audited reconciliation action selected by U01. At this slice there are no Commission rows yet: S10 implements order/reservation effects only; S12 later augments DELIVERED/CANCELLED/DELIVERY_FAILED transitions with Commission/Ledger effects in the same transaction.
+Admin order UI/transitions, pre-shipment cancellation, atomic SHIPPED consumption, overdue flags and immutable completion_eligible_at on DELIVERED. COMPLETED worker-only. Post-shipment exceptions use S13 Returns. S12 adds financial effects atomically. Snapshot-bound remediation is legacy-only.
 
 ## S11 — Partner Order views + Bot notifications
 PII-redacted projections; leased outbox; Buyer support CTA. Wire P-01 recent attributed Order widget. This slice also wires the notification/outbox hooks for earlier domain paths such as `PARTNER_ACTIVATED` and `INVENTORY_SYNC_FAILED`; no pre-S11 notification delivery is promised. Financial dashboard widgets still wait for S12.
 
 ## S12 — Commission + immutable ledger + system completion
 S12 additionally enforces BR-096A: every reversal ledger append and `Commission.reversed_amount_minor` increment are one atomic idempotent transaction, and integration tests assert exact equality to reversal ledger sum. Completion emits `ORDER_STATUS_CHANGED(COMPLETED)` and one `COMMISSION_EARNED` per Commission that first becomes EARNED using the Section 8.1A dedupe keys. S11 outbox consumers rely only on the Section 8.1A safe non-PII payloads.
-DB commissions/ledger plus same-Partner composite financial integrity. Also create the `returns` **foundation table and `(order_id,status)` index now**, with no Return mutation UI/API yet, because the S12 completion worker must be able to query `NOT EXISTS OPEN Return` without depending on a future schema. Wire Commission creation into Order transaction only for eligible positive-unit lines; zero-unit lines create no Commission/Ledger. Extend the existing S10 DELIVERED/CANCELLED/DELIVERY_FAILED transition service so Commission/HOLD/reversal effects occur atomically with the Order transition. Add DB gross equality, ledger type/bucket/sign CHECK matrix and unconditional LedgerEntry UPDATE/DELETE rejection trigger. If persistent pre-S12 attributed Orders exist, run reviewed backfill; otherwise require clean non-production data before production launch. Commission lifecycle PENDING/HOLD/EARNED/VOID. Worker-only completion uses Order `completion_eligible_at`, checks the now-present returns table, and completes organic/zero/all-VOID Orders. Wire P-01/P-06 pending/available/recent Commission projections from ledger; payout allocation-derived locked/paid Commission fields are added only in S14. Ledger invariants/concurrency.
+DB commissions/ledger plus same-Partner composite financial integrity. Also create the `returns` **foundation table and `(order_id,status)` index now**, with no Return mutation UI/API yet, because the S12 completion worker must be able to query `NOT EXISTS REQUESTED Return` without depending on a future schema. Wire Commission creation into Order transaction only for eligible positive-unit lines; zero-unit lines create no Commission/Ledger. Extend the existing S10 DELIVERED/CANCELLED transition service and S13 Return completion so Commission/HOLD/reversal effects occur atomically with the respective Order or Return transition. Add DB gross equality, ledger type/bucket/sign CHECK matrix and unconditional LedgerEntry UPDATE/DELETE rejection trigger. If persistent pre-S12 attributed Orders exist, run reviewed backfill; otherwise require clean non-production data before production launch. Commission lifecycle PENDING/HOLD/EARNED/VOID. Worker-only completion uses Order `completion_eligible_at`, checks the now-present returns table, and completes organic/zero/all-VOID Orders. Wire P-01/P-06 pending/available/recent Commission projections from ledger; payout allocation-derived locked/paid Commission fields are added only in S14. Ledger invariants/concurrency.
 
 ## S13 — Returns + reversals
-`returns` already exists from S12 solely for completion correctness. S13 adds `return_items`, Admin Return create/detail/complete/cancel flow, the `(status,created_at,id)` Admin queue index, manual Buyer support path integration, partial/late reversal and open-return completion block tests.
+`returns` already exists from S12 solely for completion correctness. S13 adds `return_items`, Admin Return create/detail/complete/reject flow, the `(status,created_at,id)` Admin queue index, manual Buyer support path integration, partial/late reversal and REQUESTED affected-item release/Order completion block tests.
 
 ## S14 — Payout + allocations
 Requires U06. DB payouts/payout_allocations. Exact FIFO allocation, negative AVAILABLE scenarios, Admin settlement payout for BLOCKED Partner, deterministic retry/terminal actions. Extend Partner earnings projection with `lockedAmountMinor`/`paidAmountMinor` from allocations.
 
 ## S15 — Analytics + Admin dashboard
-Dashboard DB-backed operational aggregates and corrected Section 18 metrics: distinct-touch conversion, orders/touch and commission-eligible active-seller semantics. Migration includes Orders `(attribution_touch_id,created_at)` specifically for M-005/M-005A; do not add speculative analytics indexes beyond observed queries. Full contribution requires U04.
+Dashboard DB-backed operational aggregates and corrected Section 18 metrics: distinct-touch conversion, orders/touch and commission-eligible active-seller semantics. Migration includes Orders `(attribution_touch_id,created_at)` specifically for M-005/M-005A; do not add speculative analytics indexes beyond observed queries. U04 non-blocking for MVP, S11 and S15; contribution unavailable pending sufficient economics.
 
 ## S16 — Production hardening/deployment
 Requires U07 and production U08. Compose/network/firewall/SSH/trustProxy/non-root/secrets, rate limits, backups/restore, webhook config, real Telegram smoke, inventory outage smoke. Reverse proxy explicitly routes `/api/*`, `/health`, `/ready` to Fastify; public smoke hits both health routes through the external origin. Only reverse-proxy 80/443 are public application/data-plane ports; any management SSH port is separately restricted per Section 17. Proxy multipart limit is >=55 MiB. Deployment distinguishes fresh install from upgrade. Fresh install: one-shot migrations → required idempotent bootstrap/init/verification for installed slices (platform currency, sole Supplier, production current LegalDocuments/config) → API/web/worker start → readiness → normal traffic. Upgrade: quiesce old DB writers → one-shot migrations → the same required idempotent bootstrap/init/verification → API/web/worker start → readiness → normal traffic. Application processes never run migrations or bootstrap scripts implicitly. S16 also enables the hard <=30-day TelegramUpdate raw-payload retention cleanup.
@@ -1999,20 +2003,21 @@ Requires U07 and production U08. Compose/network/firewall/SSH/trustProxy/non-roo
 ## U01 — Authoritative inventory source — RESOLVED 2026-09-30
 MVP source is Google Sheets with read-only Google service-account access and complete-snapshot semantics. Required machine columns are `external_key` and `stock_quantity`; `sku` is recommended only for operator readability. `external_key` maps to `product_variants.inventory_external_key`; `stock_quantity` is the only business value imported from the Sheet. Sync cadence is 120s and max age is 600s. Other sales channels must update this authoritative Sheet as part of normal sale handling.
 
-Reservation reconciliation is **MANUAL** using the audited `last_successful_sync_run_id`-bound flow already defined in this specification. The Google Sheets adapter exposes no SOURCE_PROOF capability and must not fabricate a stable comparable source version. Google Sheets is not authority for price, catalog status, commissions, settlement, attributes or media.
+Legacy pre-amendment reservation remediation is **MANUAL** using the audited `last_successful_sync_run_id`-bound flow already defined in this specification. The Google Sheets adapter exposes no SOURCE_PROOF capability and must not fabricate a stable comparable source version. Google Sheets is not authority for price, catalog status, commissions, settlement, attributes or media.
 
 Cloudflare R2 is selected separately for product IMAGE/VIDEO object storage; it is not part of U01 inventory authority. Production/live inventory verification still requires real spreadsheet/worksheet identifiers, service-account credentials and Sheet sharing permission.
 
-## U02 — Real catalog attribute schema
-Blocks only domain-specific filters/attributes, not generic catalog.
+## U02 — Catalog filters — RESOLVED 2026-10-02, NOT A LAUNCH BLOCKER
+MVP filters: category, price range, availability; text search remains. Watch/domain filters deferred until real catalog data identifies useful attributes. Product.specifications and variant attributes may store characteristics without becoming filter dimensions.
 
-## U03 — Fulfilment operating process
-Before S09 finalization confirm contact fields, delivery method, payment path, who confirms states, operational SLA/overdue thresholds and whether/when an unfulfilled reservation can ever be operationally cancelled. Current assumption: manual operator fulfilment, no online platform payment.
+## U03 — Checkout and manual fulfilment — RESOLVED 2026-10-02
+No online payment collection or delivery-provider integration. Required customer name, phone, delivery address; optional buyer comment. Checkout creates an unpaid Order. Operator/supplier and buyer agree payment/delivery methods and other fulfilment details outside the platform; Admin drives BR-070–079 state machine. SHIPPED consumes ACTIVE reservations. Post-shipment failures/refusals/returned shipments use Returns. No Payment entity/payment-state machine. No launch/S09 product-decision gate remains.
 
-## U04 — Supplier/platform economicsNeeded for full contribution analytics: settlement/cost and variable platform-paid fees.
+## U04 — Supplier economics — NON-BLOCKING
+Does not block MVP, S11 or transactional S15 analytics. GMV, completed/delivered orders, active selling partners, completed orders/active partner, click→order, order→delivered, cancellation/return rate, partner commissions, time to first sale and retention are derivable from transactions. Contribution margin/order, contribution after partner commission and contribution/active partner remain unavailable until sufficient economics exist; unknown never means zero or estimated. New economics snapshot into new OrderItems only.
 
-## U05 — Return/legal policy
-Needed for legal text, retention and final hold value. Generic Return engine can exist; default financial hold remains 14 days until changed.
+## U05 — Returns and financial hold — RESOLVED 2026-10-02
+ORDER_HOLD_DAYS=14 calendar days after DELIVERED, configurable financial risk control independent of consumer return rights. Buyer contacts SUPPORT_CONTACT; Admin creates/processes REQUESTED→COMPLETED | REJECTED with all/partial ReturnItems. COMPLETED reverses commission proportional to actually returned quantity. REQUESTED blocks affected OrderItem release. REJECTED after original hold expiry permits immediate availability without a new hold. Late returns append reversals/adjustments; historical entries never change. Returned inventory sellable only when authoritative source reports it. U08 legal artifacts/retention remain separate production prerequisites.
 
 ## U06 — Payout method — RESOLVED 2026-10-01
 MVP payout is **MANUAL_OFF_PLATFORM** and supports only the current immutable `PLATFORM_CURRENCY` (BYN) for Belarus-based Partner operations.
@@ -2046,12 +2051,12 @@ Need Partner Terms, Sales Terms, Privacy notice, reacceptance requirements, supp
 **A-002** One `PLATFORM_CURRENCY` is chosen before S02 initialization, persisted exactly once in immutable `platform_settings`, and cannot change for this MVP database; exact code is still an external business choice until that initialization.  
 **A-003** No online platform payment integration MVP.  
 **A-004** Admin/operator controls fulfilment states.  
-**A-005** Provisional checkout fields: recipient name, phone, address/details, comment.  
+**A-005** Resolved U03: required customer name, phone, delivery address; optional buyer comment; manual payment/delivery agreement outside platform.
 **A-006** Fixed commission per SKU/unit.  
 **A-007** Last-click attribution 30 days.  
-**A-008** Financial hold default 14 days after DELIVERED.  
+**A-008** Resolved U05: ORDER_HOLD_DAYS=14 calendar days after DELIVERED, configurable financial risk control, not consumer return rights.
 **A-009** Real inventory source can be adapted into complete snapshot semantics or equivalent adapter materialization.  
-**A-010** U01 selects audited MANUAL reconciliation for the Google Sheets adapter. MANUAL binds Admin's explicit physical-outcome attestation to the exact current `last_successful_sync_run_id`; until that state-valid action succeeds, the reservation remains ACTIVE. A later timestamp, Google Sheets modification time or generic successful sync is never proof by itself.  
+**A-010** Legacy pre-amendment remediation only; new shipping follows BR-048. U01 selects audited MANUAL reconciliation for the Google Sheets adapter. MANUAL binds Admin's explicit physical-outcome attestation to the exact current `last_successful_sync_run_id`; until that state-valid action succeeds, the reservation remains ACTIVE. A later timestamp, Google Sheets modification time or generic successful sync is never proof by itself.
 **A-011** Public product media may be public-read.  
 **A-012** One API instance makes in-memory rate limits acceptable.  
 **A-013** Admin uses Telegram-authenticated Admin surface.  
@@ -2064,12 +2069,12 @@ Need Partner Terms, Sales Terms, Privacy notice, reacceptance requirements, supp
 
 Before S02 currency initialization: choose exact `PLATFORM_CURRENCY`; S02 persists it once in `platform_settings` and it is immutable thereafter.
 Before production S01: U08 Partner Terms artifact/reacceptance policy.
-Before S04 domain-specific filters: U02.
-Before S07 completion: U01 is already resolved as Google Sheets complete snapshot + `MANUAL`; completion now requires the real adapter/config and successful live Sheet access, not another product decision.
-Before S09 production behavior: confirm U03 or accept provisional manual-fulfilment fields/process.
-Before production S12 release timing: confirm U05 hold value or explicitly accept 14d.
+S04: U02 resolved; category/price/availability plus search only. Domain filters deferred pending real data, not launch gates.
+Before S07 completion: U01 is already resolved as Google Sheets complete snapshot (`MANUAL` legacy remediation only); completion now requires the real adapter/config and successful live Sheet access, not another product decision.
+S09: U03 resolved. U08 legal and S12 financial traffic gates still apply.
+S12: U05 resolved; configure ORDER_HOLD_DAYS=14 and affected-item REQUESTED blocks. No repeat product approval required.
 Before S14: U06 is resolved as MANUAL_OFF_PLATFORM, full AVAILABLE payout, 50 BYN minimum, no stored destination fields. T33/T34 may implement this model; production use still requires U08 legal wording/operational compliance.
-Before complete S15 contribution: U04.
+S11/S15: U04 non-blocking; transactional metrics available, contribution unavailable pending sufficient economics.
 Before S16: U07 + production U08.
 
 ---
@@ -2086,23 +2091,25 @@ Without inventing supplier/payout data:
 - S06;
 - S07 source-specific implementation for the resolved Google Sheets + MANUAL decision; production/live verification requires real Sheet credentials/access.
 
-Do not ask Codex to guess U03/U06/U08 or any deployment credential/value.
+Do not ask Codex to guess unresolved U08 or any deployment credential/value.
 
 ---
 
 # 26. Must not be completed without external data
 
 - production inventory launch without real configured Google Sheet access, service-account credentials/sharing and successful live verification;
-- source-specific category/watch filters without U02;
-- final checkout/fulfilment semantics if U03 differs from assumption;
+- domain filters remain deferred until real catalog evidence supports a separate scope decision;
+- U03 resolved; production checkout still requires U08 and the S12 financial gate;
 - automated payout-provider integration or storage of bank/card destination data is NOT part of the resolved U06 MVP; production payout use still requires U08 legal wording/operational compliance;
-- complete contribution claims without U04;
+- contribution metrics remain unavailable until sufficient U04 economics exist; this does not block MVP/S11/S15 transactional analytics;
 - production legal launch/PII retention without U08;
 - production deployment without U07.
 
 ---
 
-# 27. Consistency review v1.3
+# 27. Historical consistency review v1.3
+
+PASS statements below describe the pre-amendment review. Current product requirements are the amended sections above and Section 29, not these historical findings.
 
 ## Product ↔ UX
 PASS. Manual Buyer cancellation/return path, zero-commission display, Terms reacceptance and blocked/stale/out-of-stock states are explicit.
@@ -2142,7 +2149,7 @@ PASS at specification level: this document + Project Instructions are the only a
 
 ---
 
-## 27.1 Preserved v1.2 pre-Codex audit additions
+## 27.1 Historical v1.3 audit — Preserved v1.2 pre-Codex audit additions
 
 A second independent consistency pass found and closed these omissions from v1.1:
 - v1.1 was not fully self-contained because Admin catalog API referenced v1.0; all active API requirements now live here;
@@ -2162,7 +2169,7 @@ A second independent consistency pass found and closed these omissions from v1.1
 
 Residual unknowns are only the external blockers in Section 22, not architectural decisions left to Codex.
 
-## 27.2 v1.3 corrective consistency pass
+## 27.2 Historical v1.3 corrective consistency pass
 
 - **Concurrency:** PASS. Checkout shares Product/Variant locks with Admin mutation; touch shares Partner/ReferralLink/Product locks with Admin state changes; cancellation and reservation reconciliation serialize on Order→Reservation.
 - **Money:** PASS. Zero commission cannot create zero ledger rows; Commission gross equality and ledger type/bucket/sign semantics are DB-enforced; ledger rows are DB-immutable; completion timing is snapshotted per Order.
@@ -2174,9 +2181,9 @@ Residual unknowns are only the external blockers in Section 22, not architectura
 
 ## 27.3 Final implementation constraints
 
-The following constraints remain authoritative together: persisted immutable platform currency; snapshot-coherent post-shipment reservation reconciliation; no external-key mutation with ACTIVE reservation; one Partner Terms predicate; ReferralLink↔AttributionTouch same-Partner DB FK; non-PII Event payloads and exact producer matrix; explicit checkout legal acceptance evidence; fixed media limits; public health routing; touch-analytics index; absolute opaque-session TTL with no SESSION_SECRET; synchronous Admin inventory sync; checkout inactive-item `CART_CHANGED`; atomic Commission reversal projection; and management-plane SSH clarification.
+The following constraints remain authoritative together: persisted immutable platform currency; atomic shipment consumption and legacy-only snapshot-bound remediation; no external-key mutation with ACTIVE reservation; one Partner Terms predicate; ReferralLink↔AttributionTouch same-Partner DB FK; non-PII Event payloads and exact producer matrix; explicit checkout legal acceptance evidence; fixed media limits; public health routing; touch-analytics index; absolute opaque-session TTL with no SESSION_SECRET; synchronous Admin inventory sync; checkout inactive-item `CART_CHANGED`; atomic Commission reversal projection; and management-plane SSH clarification.
 
-No new product feature, Redis/queue service, payment/delivery integration or supplier capability is implied. U01/U02/U03/U04/U05/U06/U07/U08 remain external decisions with their existing slice gates. If U01 cannot provide stable source-version identity for SOURCE_PROOF terminal reconciliation, choose the already-supported MANUAL mode rather than weakening the snapshot-coherent reconciliation requirements in BR-048/BR-049 and Section 14.
+No Redis/queue service, payment/delivery integration or new supplier capability is implied. U01/U02/U03/U05/U06 resolved; U04 non-blocking; U07/U08 retain production gates. Shipping consumes reservations; retained snapshot-bound contracts are legacy pre-amendment remediation only.
 
 # 28. Final implementation order
 
@@ -2190,13 +2197,13 @@ S05 Partner selling kit
 S06 Referral + attribution
 S07 Real inventory sync              ← requires U01
 S08 Cart
-S09 Atomic checkout/orders           ← U03 confirmation/default
+S09 Atomic checkout/orders           ← U03 resolved: manual fulfilment
 S10 Fulfilment state machine
 S11 Partner orders/notifications
 S12 Commission + ledger/completion
 S13 Returns/reversals
 S14 Payout + allocations             ← requires U06
-S15 Analytics/dashboard              ← full contribution needs U04
+S15 Analytics/dashboard              ← U04 non-blocking; contribution unavailable pending data
 S16 Production hardening             ← U07 + U08
 ```
 
@@ -2209,3 +2216,14 @@ Before every slice:
 6. implement one slice;
 7. run tests;
 8. amend this specification explicitly if implementation uncovers a necessary design change.
+
+# 29. MVP amendment U02–U05 — 2026-10-02
+This replaces earlier provisional fulfilment/hold decisions and launch gates. Section 22 records U02/U03/U05 resolved and U04 non-blocking. Earlier PASS statements are the v1.3 audit, not verification of amended implementation. Documentation-only amendment: implementation alignment and tests remain pending in CODEX_TASKS.md. Existing database facts, ledger entries and payout history must not be rewritten. U07, U08, live source access and financial/release checks remain production gates.
+
+## 29.1 Document consistency check — 2026-10-02
+- Decisions ↔ slice gates: U02/U03/U05 resolved; U04 non-blocking for MVP/S11/S15. U07/U08 and technical production gates remain.
+- Catalog UX ↔ API ↔ task queue: category/price-range/availability filters and text search only; specifications/attributes may still be stored.
+- Order ↔ inventory ↔ Return: confirmed unpaid manual fulfilment; atomic SHIPPED consumption; post-shipment exceptions via Return; authoritative-source-only restock.
+- Return ↔ ledger ↔ completion: REQUESTED/COMPLETED/REJECTED, affected-item release blocks, Order-level completion check, original 14-calendar-day hold and append-only proportional reversals.
+- Analytics ↔ snapshots: transaction-derived metrics available; missing economics unavailable, never zero; new economics snapshot into new OrderItems only.
+Relative document links and changed-line whitespace checks pass. Release/operator checklists attest implementation and runtime configuration of resolved U03/U05; they do not reopen product decisions. Historical implementation notes are explicitly separated from current requirements. Application conformity, migrations, concurrency and live operations remain unverified by this documentation-only task and are queued in CODEX_TASKS.md.

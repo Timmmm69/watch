@@ -1,5 +1,13 @@
 # T42 — Admin Catalog and Inventory
 
+## Current MVP requirements — 2026-10-02
+
+New SHIPPED consumes ACTIVE reservations atomically; Return never increments source quantity. Pending reconciliation links/CTAs below are legacy pre-amendment remediation only. Catalog characteristics remain stored/displayed; MVP filtering is category, price range and availability plus text search.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented only T42 over the existing CatalogService, AssetService and synchronous inventory orchestration. Pre-existing T39–T41 changes are retained.
 
 ## Operational screens

@@ -1,5 +1,13 @@
 # Partner earnings and S12 financial gate — T30
 
+## Current MVP requirements — 2026-10-02
+
+U05 is resolved: ORDER_HOLD_DAYS=14 calendar days after DELIVERED; REQUESTED blocks affected-item release and expired-hold REJECTED permits immediate availability. No repeat hold approval/default acceptance. U08 and other production prerequisites remain.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Source: FULL_BUILD_SPEC.md v1.3-final, P-01/P-06, GET partner/earnings,
 BR-080–096A, 16.9 and S12. Existing T27–T29 financial writes and architecture
 are reused. No Return or Payout workflow is introduced.
@@ -56,4 +64,4 @@ tests, workspace typecheck/build and diff whitespace check passed. Missing TEST_
 correctly fails the financial command. No production database, live Telegram,
 Google Sheets or payout provider was exercised. S12 is the financial integrity
 gate, not public-launch authorization; later launch-critical slices, S16/external
-prerequisites and U05 hold confirmation/default acceptance still apply.
+prerequisites still apply; U05 hold is resolved at 14 calendar days after DELIVERED.

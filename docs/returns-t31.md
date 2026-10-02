@@ -1,5 +1,13 @@
 # Return workflow foundation — T31
 
+## Current MVP requirements — 2026-10-02
+
+Current Return lifecycle: REQUESTED→COMPLETED | REJECTED, created/processed by Admin for SHIPPED/DELIVERED/COMPLETED after buyer contacts SUPPORT_CONTACT. Full/partial ReturnItems; post-shipment failures/refusals use this workflow. REQUESTED blocks affected-item commission release and Order completion; REJECTED after original hold expiry removes the block without a new hold. OPEN/CANCELLED, cancel endpoint and delivered-only eligibility below are historical implementation facts requiring alignment, not current requirements.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented against FULL_BUILD_SPEC.md v1.3-final: BR-110–114, INV-060/062,
 Sections 7.10, 9.28–9.29, 11.11, 11.15 and 15.2 lock discipline. Reuses T23
 Admin Orders, T27–T29 persistence and T29 completion checks. Financial

@@ -1,5 +1,13 @@
 # T32 — Return completion + reversals
 
+## Current MVP requirements — 2026-10-02
+
+COMPLETED reverses snapshotted commission proportional to actually returned quantity, exactly once. REQUESTED blocks affected OrderItem release; REJECTED after expiry permits immediate availability. Late returns append reversal/adjustment entries, including AVAILABLE debt after payout; historical entries are never rewritten. Return completion does not restock authoritative inventory. OPEN terminology below is the pre-amendment implementation snapshot.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented against FULL_BUILD_SPEC.md v1.3-final Sections 8 (BR-050,
 BR-087–096A, BR-103, BR-110–113, event producer matrix), 11.11 and 16.6.
 

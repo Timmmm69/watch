@@ -1,5 +1,13 @@
 # Atomic checkout — T21
 
+## Current MVP requirements — 2026-10-02
+
+U03 is resolved: required customer name, phone, delivery address; optional buyer comment. Checkout creates an unpaid Order, with manual off-platform payment/delivery agreement. U08 legal and S12 financial gates remain; no repeat U03 approval.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented against `FULL_BUILD_SPEC.md` v1.3-final, BR-007/022–030/040–046/
 060–069A, sections 6.2 B-04, 9.20–9.23, 10, 11.5, 15 and the ORDER_CREATED
 producer matrix. Uses the existing T20 persistence and public-number helper;
@@ -76,9 +84,9 @@ checked against real PostgreSQL.
 
 ## Scope and limitations
 
-The provisional manual-fulfilment fields follow A-005/U03 and do not finalize
-delivery/payment/state-confirmation/SLA policy. Production legal wording and
-Privacy semantics remain U08 decisions. Persistent production-like earning
+Manual fulfilment and checkout fields are confirmed by U03. Delivery/payment
+details are agreed outside the platform; operator alert thresholds are configuration.
+Production legal wording and Privacy semantics remain U08 decisions. Persistent production-like earning
 traffic is forbidden until the S12 financial integrity gate; public launch also
 requires the later launch-critical slices and S16.
 

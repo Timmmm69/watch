@@ -1,5 +1,13 @@
 # Admin Order state machine — T23
 
+## Current MVP requirements — 2026-10-02
+
+Current Order graph is PLACED→CONFIRMED→FULFILLING→SHIPPED→DELIVERED→COMPLETED, with cancellation only before SHIPPED. CONFIRMED means contacted/confirmed, not paid. SHIPPED consumes ACTIVE reservations atomically; post-shipment exceptions use Return. DELIVERED requires reliable receipt confirmation and records delivered_at. ORDER_HOLD_DAYS=14 calendar days is resolved financial risk control; operational alert thresholds are configuration. DELIVERY_FAILED and reservation retention described below are pre-amendment implementation facts, not current requirements.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Implemented against FULL_BUILD_SPEC.md v1.3-final: A-07, BR-070–079,
 BR-055 cancellation effects, BR-121, Section 8.1A producer matrix,
 Sections 9.1, 11 Admin Orders API and 15.2/15.9 lock discipline.
@@ -29,7 +37,7 @@ InventoryItem or modify source quantities. Shipment, delivery and delivery
 failure retain ACTIVE reservations for the separate T24 reconciliation task.
 State timestamps are captured after lock acquisition and written once.
 Delivery snapshots completion eligibility with ORDER_HOLD_DAYS (default 14,
-provisional U05/A-008); configuration changes or retries never rewrite it.
+resolved U05/A-008); configuration changes or retries never rewrite it.
 
 Order, reservation effects, exact producer-matrix Events and Admin AuditLog
 commit together. Generic status Events contain only IDs, public number and
@@ -39,7 +47,7 @@ Optional API `note` is validated to 500 characters but intentionally not copied
 to immutable Event/Audit metadata or stored elsewhere: free text may contain
 fulfilment PII. The UI does not collect transition notes.
 
-ORDER_OVERDUE_SECONDS is optional until U03 supplies an operational SLA.
+ORDER_OVERDUE_SECONDS is an operational alert threshold, not an unresolved U03 product gate.
 When configured, it marks PLACED/CONFIRMED/FULFILLING/SHIPPED Orders after
 that many seconds in their current state. Without configuration there are no
 overdue flags; overdue never triggers automatic cancellation.
@@ -77,6 +85,6 @@ permission denial and bounded Session recovery.
 T24 reservation reconciliation mutation/CTA, T25 Buyer/Partner views,
 T26 notification delivery and S12 Commission/Ledger/system completion are
 not implemented. No placeholder financial rows or release worker exists.
-U03 fields/SLA and U05 final hold remain provisional; U08 and the S12 financial
+U03 fields/manual fulfilment and U05 14-calendar-day hold are resolved; U08 and the S12 financial
 gate still block production-like earning traffic/public launch as documented
 in the preceding checkout tasks.

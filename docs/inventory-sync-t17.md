@@ -1,5 +1,13 @@
 # Safe inventory sync (T17)
 
+## Current MVP requirements — 2026-10-02
+
+Stock sync remains sole authority for source quantity. New shipping consumes reservations atomically under U03; Return never restocks locally. Any reservation-proof/MANUAL reconciliation described below applies only to legacy pre-amendment reservations.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 `InventorySyncOrchestrator.run()` is the shared synchronous domain operation for
 Admin sync and J-03. It checks out one physical PostgreSQL session, takes the
 platform advisory lock, recovers interrupted runs, commits run-start + Audit,

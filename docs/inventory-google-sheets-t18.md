@@ -1,5 +1,13 @@
 # Google Sheets inventory (T18 / resolved U01)
 
+## Current MVP requirements — 2026-10-02
+
+Google Sheets remains authoritative for stock quantity. New SHIPPED consumes reservations atomically; sync does not mutate them, and completed Return never locally increases stock. MANUAL snapshot-bound reconciliation below is legacy pre-amendment remediation only.
+
+Authority: [FULL_BUILD_SPEC.md](../FULL_BUILD_SPEC.md), amended Sections 8, 16 and 22. Implementation alignment is pending in [CODEX_TASKS.md](../CODEX_TASKS.md); this documentation change does not claim code conformity.
+
+## Implementation snapshot before the U02–U05 amendment
+
 Google Sheets is authoritative only for physical quantity. Set
 `INVENTORY_PROVIDER=google_sheets`, `GOOGLE_SHEETS_SPREADSHEET_ID`,
 `GOOGLE_SHEETS_WORKSHEET_NAME`, and `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64`
