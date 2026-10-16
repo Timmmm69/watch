@@ -43,7 +43,7 @@ security проверки, backup/recovery и externalNetwork. `NODE_ENV=product
    `fresh` теперь означает такую же закрытую подготовку, без открытия traffic.
 2. Provision/import CLI из того же image выполняйте с `WATCH_CLOSED_ACCEPTANCE=1`
    **в окружении Compose**, например:
-   `WATCH_CLOSED_ACCEPTANCE=1 docker compose --env-file /secure/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml run --rm --no-deps api node apps/api/dist/operations/cli.js config`.
+   `WATCH_CONFIG_FILE=/secure/production.env WATCH_CLOSED_ACCEPTANCE=1 docker compose --env-file /secure/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml run --rm --no-deps api node apps/api/dist/operations/cli.js config`.
    Используйте те же Compose project, secrets и read-only bootstrap/import mounts.
 3. После явного импорта: `node ops/scripts/deploy.mjs stage`. API/web/worker
    работают во внутренней сети, public reverse-proxy остаётся остановленным.
@@ -60,6 +60,10 @@ security проверки, backup/recovery и externalNetwork. `NODE_ENV=product
    и проверяет readiness. Pending proof блокирует opening даже после здорового
    private stage. Ошибка preflight останавливает proxy/writers до исправления.
 
+Public proxy entrypoint отказывается запускать listener при любом непустом
+closed marker, включая прямой Compose-вызов. Upgrade явно переопределяет marker
+пустым значением даже при его наличии в env-файле; runtime затем требует полный
+approval. Не обходите entrypoint/dependencies и не меняйте Compose для открытия.
 Ручной `docker compose up reverse-proxy` не является разрешённым launch-путём.
 Не сохраняйте closed marker как постоянный обход final approval.
 

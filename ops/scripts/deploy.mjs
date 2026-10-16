@@ -9,7 +9,8 @@ export async function deploy(mode, run = compose, smoke = productionSmoke, servi
   const closedPreparation = mode === "prepare" || mode === "stage" || mode === "fresh";
   const previousClosedAcceptance = process.env.WATCH_CLOSED_ACCEPTANCE;
   if (closedPreparation) process.env.WATCH_CLOSED_ACCEPTANCE = "1";
-  else delete process.env.WATCH_CLOSED_ACCEPTANCE;
+  // An explicit blank also overrides a stale closed marker in Compose --env-file.
+  else process.env.WATCH_CLOSED_ACCEPTANCE = "";
   try {
     const config = JSON.parse(await run(["config", "--format", "json"]));
     if (!/^watch-api:[a-f0-9]{40}$/.test(config.services.api.image)) throw new Error("RELEASE_TAG must be the reviewed commit SHA");

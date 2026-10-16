@@ -394,3 +394,42 @@ production host-loss restore, реальные переводы остаются
 до полного approval итогового SHA/config и отдельного решения владельца.
 Точный candidate SHA, source archive/hashes и evidence hashes — в новом manifest;
 это не production approval. Deployment требует чистого clone этого SHA.
+
+## 2026-10-17 — дополнительное review перед main
+
+По поручению владельца выполнены независимые static review commerce/finance/
+notifications и production ops, затем расширена локальная приёмка. В бизнес-пути
+новых подтверждённых дефектов не найдено. До отправки исправлены дополнительные
+ошибки инфраструктуры и проверок:
+
+- CI ранее не задавал native fixture URLs/не создавал watch_t46..48: новые tests
+  пропускались, а strict report gate отклонял run. Общий setup теперь создаёт
+  только явно заданные loopback disposable DB, не сбрасывает существующие, а CI
+  выполняет native suites и T46 schema acceptance. Добавлены safety/replay tests.
+- Прямая команда Compose в runbook теперь явно задаёт WATCH_CONFIG_FILE:
+  --env-file сам по себе не выбирает service env_file. Проверен resolved config.
+- Upgrade явно задаёт пустой WATCH_CLOSED_ACCEPTANCE, чтобы переопределить даже
+  stale marker из env-файла. Иначе pending proof мог ошибочно пройти final gate.
+  Public proxy entrypoint также отказывается запускать listener с непустым marker.
+  Это не защита от администратора хоста, намеренно меняющего Compose/entrypoint.
+- Финансовые test fixtures случайно генерировали UUID reference с 12 цифрами
+  подряд; действующий PII guard правильно отклонял такую строку. Reference в
+  analytics/browser/restore fixtures разделён на короткие блоки по существующему
+  money-test pattern. Production reference validation не ослаблена.
+- Полный browser run обнаружил старую checkout fixture с частичной схемой и
+  TRUNCATE истории. Теперь каждый test применяет все миграции в собственной схеме;
+  сохранены сценарии legacy checkout и retry. Assertions приведены к действующим
+  правилам CONSUMED после shipment и Return-only для отказа после отправки.
+
+Итоговые logs/report/SHA: `outputs/t52-premerge/`. Прежние packages T52/review/fixes
+остаются историческими и не переписываются под новый SHA. Перед интеграцией main
+сохранены raw working files, patches и manifest в ignored
+`.local-postgres-test/pre-main-20261017`; пользовательские изменения также будут
+сохранены отдельным stash. Merge/push разрешены владельцем, запуск продаж — нет.
+
+Проверены full Chromium 112/112 без skip/flaky, typecheck/build, полный API 610/610
+и config 49/49, ops 24/24, topology 6/6, schema 9/9, повторный encrypted isolated
+restore 1/1. Database setup/replay проверен на новом disposable кластере 55454,
+затем он остановлен. Docker Linux engine остаётся недоступным: live Compose/image
+startup и остальные реальные production proof остаются до открытия продаж.
+Remote CI после push — отдельный результат, фиксируемый в новом evidence package.

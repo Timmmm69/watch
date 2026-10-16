@@ -57,7 +57,7 @@ async function seedNativeRelease(pool, actor, docs) {
   const orders=new AdminOrderService(pool,0), completion=new OrderCompletionWorker(pool), money=new OrderMoneyService(pool);
   for(const state of ["CONFIRMED","FULFILLING","SHIPPED","DELIVERED"]) await orders.transition(order.id,actor,state);
   assert.equal(await completion.completeOrder(order.id),false);
-  const fact=(amountMinor,kind="RECEIPT",extra={})=>({operationKey:randomUUID(),reference:`TEST:${randomUUID()}`,occurredAt:new Date().toISOString(),
+  const fact=(amountMinor,kind="RECEIPT",extra={})=>({operationKey:randomUUID(),reference:`TEST:${randomUUID().slice(0,8)}:${randomUUID().slice(0,8)}`,occurredAt:new Date().toISOString(),
     reason:"TEST ONLY verified fact",confirmed:true,kind,amountMinor,...extra});
   const receipt=fact(43500);
   await money.record(order.id,actor,receipt,"money"); await money.record(order.id,actor,receipt,"money");

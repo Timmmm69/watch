@@ -166,13 +166,17 @@ services:
   reverse-proxy:
     logging: *logging
     image: caddy:2.11.4-alpine
+    entrypoint: ["/bin/sh", "/usr/local/bin/watch-proxy-entrypoint.sh"]
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     environment:
       APP_BASE_URL: ${APP_BASE_URL:?Set the real public HTTPS origin}
+      WATCH_CLOSED_ACCEPTANCE: ${WATCH_CLOSED_ACCEPTANCE:-}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxy-entrypoint.sh:/usr/local/bin/watch-proxy-entrypoint.sh:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:

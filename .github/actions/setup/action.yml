@@ -14,3 +14,7 @@ runs:
       shell: bash
     - run: pnpm build:packages
       shell: bash
+    - name: Prepare disposable native test databases
+      if: ${{ env.WATCH_NATIVE_TEST_ADMIN_URL != '' }}
+      run: node ops/scripts/prepare-native-test-databases.mjs
+      shell: bash

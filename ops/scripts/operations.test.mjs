@@ -56,7 +56,7 @@ test("closed preparation scopes pending-live-proof access to prepare/stage and r
 
     const upgrade = runner();
     await assert.rejects(deployWithPreflight("upgrade", upgrade.run, undefined, undefined, async () => {
-      assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, undefined);
+      assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "");
       throw new Error("Production approval is missing final acceptance evidence");
     }), /final acceptance/);
     assert.equal(upgrade.calls.some((args) => args[0] === "up" && args.at(-1) === "reverse-proxy"), false);

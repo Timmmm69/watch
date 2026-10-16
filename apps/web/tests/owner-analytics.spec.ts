@@ -19,7 +19,7 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
   });
   test.afterEach(async({page})=>{await page.close();await f?.close();});
   async function complete() { const m=new OrderMoneyService(f.pool);
-    await m.record(id,f.owners[2]!.user,{operationKey:randomUUID(),reference:`TEST:${randomUUID()}`,kind:"RECEIPT",amountMinor:29000,
+    await m.record(id,f.owners[2]!.user,{operationKey:randomUUID(),reference:`TEST:${randomUUID().slice(0,8)}:${randomUUID().slice(0,8)}`,kind:"RECEIPT",amountMinor:29000,
       occurredAt:"2026-10-01T00:00:00+03:00",reason:"TEST ONLY",confirmed:true},"money");
     await m.record(id,f.owners[2]!.user,{operationKey:randomUUID(),expenseEntryCount:0,reviewedTotalMinor:0,reason:"TEST ONLY",confirmed:true},"review");
     await new OrderCompletionWorker(f.pool).completeOrder(id);

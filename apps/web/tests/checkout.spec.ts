@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { Pool } from "pg";
@@ -24,24 +24,26 @@ async function telegram(page: Page) {
 
 test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
   test.skip(!process.env.TEST_DATABASE_URL, "Requires migrated TEST_DATABASE_URL and free API port 3001");
-  const schema = `checkout_ui_${randomUUID().replaceAll("-", "")}`;
+  const migrationsDir = resolve(__dirname, "../../../packages/db/prisma/migrations");
   const buyer = randomUUID(), product = randomUUID(), variant = randomUUID(), supplier = randomUUID();
   const token = randomBytes(32).toString("base64url");
   const originalSales = { id: randomUUID(), version: randomUUID() };
   const privacy = { id: randomUUID(), version: randomUUID() };
   const docs = { SALES_TERMS: originalSales, PRIVACY: privacy };
   const currency = process.env.TEST_PLATFORM_CURRENCY ?? "BYN";
-  let pool: Pool, app: ReturnType<typeof createApp>;
-  test.beforeAll(async () => {
+  let schema: string, pool: Pool, app: ReturnType<typeof createApp>;
+  test.beforeEach(async ({ page }) => {
+    schema = `checkout_ui_${randomUUID().replaceAll("-", "")}`;
     pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema},public` });
     await pool.query(`CREATE SCHEMA ${schema}`);
-    for (const table of ["users", "sessions", "partners", "partner_terms_acceptances", "legal_documents", "platform_settings",
-      "suppliers", "products", "product_variants", "inventory_items", "inventory_sync_runs", "attribution_touches", "events", "audit_logs"]) {
-      await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
+    const migrations = (await readdir(migrationsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && /^\d/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    for (const migration of migrations) {
+      await pool.query(await readFile(resolve(migrationsDir, migration, "migration.sql"), "utf8"));
     }
-    for (const migration of ["20260930100000_cart", "20260930110000_orders"]) {
-      await pool.query(await readFile(resolve(__dirname, `../../../packages/db/prisma/migrations/${migration}/migration.sql`), "utf8"));
-    }
+    docs.SALES_TERMS = originalSales;
     await pool.query("INSERT INTO platform_settings (singleton_id,platform_currency) VALUES (1,$1)", [currency]);
     await pool.query("INSERT INTO users (id,telegram_user_id,first_name,is_admin) VALUES ($1,$2,'Buyer',true)", [buyer, String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]);
     await pool.query("INSERT INTO sessions (id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,now()+interval '1 hour')", [randomUUID(), buyer, hashSessionToken(token)]);
@@ -59,18 +61,19 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       orderViews: new OrderViewService(pool, "@support"),
       cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
     await app.listen({ host: "127.0.0.1", port: 3001 });
-  });
-  test.beforeEach(async ({ page }) => {
-    docs.SALES_TERMS = originalSales;
-    await pool.query("TRUNCATE carts,orders,events,audit_logs CASCADE");
-    await pool.query("UPDATE products SET status='ACTIVE'");
-    await pool.query("UPDATE product_variants SET price_minor=1000");
     await new CartService(pool, currency).put(buyer, variant, 1);
     await telegram(page);
     await page.context().addCookies([{ name: "watch_session", value: token, domain: "127.0.0.1", path: "/" }]);
   });
-  test.afterAll(async () => { await app?.close(); if (pool) { await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await pool.end(); } });
-  for (const outcome of ["delivered","cancelled","failed"] as const) test(`Admin real Session transitions Order to ${outcome}`, async ({ page }) => {
+  test.afterEach(async () => {
+    app.server.closeAllConnections();
+    await app.close();
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.end();
+  });
+  for (const outcome of ["delivered","cancelled","failed"] as const) test(
+    outcome === "failed" ? "post-shipment failure is handled through Return, not an Order transition" : `Admin real Session transitions Order to ${outcome}`,
+    async ({ page }) => {
     const order = (await new CheckoutService(pool,currency,docs).checkout(buyer,randomUUID(), {
       items: [{ variantId: variant,quantity: 1,expectedUnitPriceMinor: 1000 }],recipientName: "<script>private</script>",phone: "375291234567",address: "Минск",
       comment: "",salesTermsDocumentId: docs.SALES_TERMS.id,privacyDocumentId: docs.PRIVACY.id,salesTermsAccepted: true,privacyAcknowledged: true
@@ -100,15 +103,18 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       }
       await act("Подтвердить заказ"); await act("Начать сборку"); await act("Подтвердить отправку");
       await expect(page.getByRole("button", { name: "Отменить заказ",exact: true })).toHaveCount(0);
-      await act(outcome === "delivered" ? "Подтвердить доставку покупателю" : "Зафиксировать недоставку");
+      if (outcome === "delivered") await act("Подтвердить доставку покупателю");
+      else await expect(page.getByRole("button", { name: "Зафиксировать недоставку", exact: true })).toHaveCount(0);
     }
     const row = (await pool.query("SELECT * FROM orders WHERE id=$1", [order.id])).rows[0];
-    expect(row.status).toBe({ delivered: "DELIVERED",cancelled: "CANCELLED",failed: "DELIVERY_FAILED" }[outcome]);
-    expect((await pool.query("SELECT status FROM inventory_reservations WHERE order_id=$1", [order.id])).rows[0].status).toBe(outcome === "cancelled" ? "RELEASED" : "ACTIVE");
+    expect(row.status).toBe({ delivered: "DELIVERED",cancelled: "CANCELLED",failed: "SHIPPED" }[outcome]);
+    expect((await pool.query("SELECT status FROM inventory_reservations WHERE order_id=$1", [order.id])).rows[0].status)
+      .toBe(outcome === "cancelled" ? "RELEASED" : "CONSUMED");
     await expect(page.getByRole("button", { name: /Завершить/ })).toHaveCount(0);
     await page.reload();
     await expect(page.getByRole("heading", { name: order.publicNumber })).toBeVisible();
-    expect((await pool.query("SELECT count(*)::int AS count FROM audit_logs")).rows[0].count).toBe(outcome === "cancelled" ? 1 : 4);
+    expect((await pool.query("SELECT count(*)::int AS count FROM audit_logs")).rows[0].count)
+      .toBe(outcome === "cancelled" ? 1 : outcome === "failed" ? 3 : 4);
   });
   test("Cart → checkout → lost successful response → same-key replay creates one Order", async ({ page }) => {
     await page.goto("/cart");

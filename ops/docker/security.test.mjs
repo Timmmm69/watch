@@ -26,6 +26,32 @@ test("native Compose removes Google secrets and routes the config overlay", () =
   } finally {unlinkSync(file);rmdirSync(directory);}
 });
 
+test("direct closed-acceptance Compose command uses its selected config as the service env file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "watch-closed-compose-"));
+  const file = join(directory, "closed.env");
+  try {
+    writeFileSync(file, readFileSync("ops/docker/production.env.example", "utf8")
+      .replace("SUPPORT_CONTACT=replace-with-reviewed-support-contact", "SUPPORT_CONTACT=@closed_acceptance_support") + "\nWATCH_CLOSED_ACCEPTANCE=1\n");
+    const result = spawnSync("docker", ["compose", "--env-file", file, "-f", "ops/docker/compose.production.yml", "-f", "ops/docker/compose.native.yml", "config", "--format", "json"], {
+      encoding: "utf8", env: { ...process.env, WATCH_CONFIG_FILE: file, WATCH_CLOSED_ACCEPTANCE: "1" }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(result.stdout);
+    assert.equal(config.services.api.environment.SUPPORT_CONTACT, "@closed_acceptance_support");
+    assert.equal(config.services.api.environment.WATCH_CLOSED_ACCEPTANCE, "1");
+    assert.equal(config.services["reverse-proxy"].environment.WATCH_CLOSED_ACCEPTANCE, "1");
+    assert.deepEqual(config.services["reverse-proxy"].entrypoint, ["/bin/sh", "/usr/local/bin/watch-proxy-entrypoint.sh"]);
+    // Upgrade must override even a closed marker stored in the selected env file.
+    const final = spawnSync("docker", ["compose", "--env-file", file, "-f", "ops/docker/compose.production.yml", "-f", "ops/docker/compose.native.yml", "config", "--format", "json"], {
+      encoding: "utf8", env: { ...process.env, WATCH_CONFIG_FILE: file, WATCH_CLOSED_ACCEPTANCE: "" }
+    });
+    assert.equal(final.status, 0, final.stderr);
+    const opened = JSON.parse(final.stdout);
+    assert.equal(opened.services.api.environment.WATCH_CLOSED_ACCEPTANCE, "");
+    assert.equal(opened.services["reverse-proxy"].environment.WATCH_CLOSED_ACCEPTANCE, "");
+  } finally { unlinkSync(file); rmdirSync(directory); }
+});
+
 test("production Compose isolates services, secrets and migration ordering", () => {
   const result = spawnSync("docker", ["compose", "--env-file", "ops/docker/production.env.example", "-f", "ops/docker/compose.production.yml", "config", "--format", "json"], {
     encoding: "utf8", env: { ...process.env, WATCH_CONFIG_FILE: "production.env.example" }
@@ -106,4 +132,16 @@ test("runtime secrets are read as data and empty/conflicting files fail closed",
     unlinkSync(secretFile);
     rmdirSync(directory);
   }
+});
+
+test("public proxy entrypoint refuses closed acceptance before running any listener", () => {
+  const shell = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "sh";
+  const run = (marker) => spawnSync(shell, ["ops/docker/proxy-entrypoint.sh", process.execPath.replaceAll("\\", "/"), "-p", "12345"], {
+    encoding: "utf8", env: { ...process.env, WATCH_CLOSED_ACCEPTANCE: marker }
+  });
+  for (const marker of ["1", "true"]) {
+    const blocked = run(marker); assert.equal(blocked.status, 1); assert.match(blocked.stderr, /disabled during closed acceptance/);
+    assert.doesNotMatch(blocked.stdout, /12345/);
+  }
+  const final = run(""); assert.equal(final.status, 0); assert.match(final.stdout, /12345/);
 });

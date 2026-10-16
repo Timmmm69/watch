@@ -22,7 +22,7 @@ async function place(q=1,r=14500,owner=0) {
 async function deliver(id:string,hold=0) { const admin=new AdminOrderService(f.pool,hold);
   for(const target of ["CONFIRMED","FULFILLING","SHIPPED","DELIVERED"] as const) await admin.transition(id,actor(),target); }
 async function fact(id:string,amountMinor:number,kind="RECEIPT",mode:"money"|"expense"="money",extra:object={}) {
-  return money().record(id,actor(),{operationKey:randomUUID(),reference:`TEST:${randomUUID()}`,amountMinor,kind,
+  return money().record(id,actor(),{operationKey:randomUUID(),reference:`TEST:${randomUUID().slice(0,8)}:${randomUUID().slice(0,8)}`,amountMinor,kind,
     occurredAt:"2026-10-01T00:00:00+03:00",reason:"TEST ONLY",confirmed:true,...extra},mode);
 }
 async function review(id:string) { const d=await money().detail(id); await money().record(id,actor(),{operationKey:randomUUID(),
