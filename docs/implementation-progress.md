@@ -438,3 +438,7 @@ Linux CI выявил несовместимость `!reset null` внутри 
 с Compose v2: native overlay сохранял унаследованный Google credential pointer.
 Теперь явная пустая строка переопределяет base/env_file; Google secret по-прежнему
 не монтируется. Regression проверяет resolved config обоих production overlays.
+
+Remote dependency audit обнаружил advisories в Next.js 16.3.7 и source-map-js
+1.2.1. Обновлены Next.js до 16.3.8 и transitive parser до 1.2.2 с точным lockfile;
+production audit после обновления: 0 vulnerabilities. Проверки не отключались.
