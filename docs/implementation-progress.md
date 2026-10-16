@@ -433,3 +433,8 @@ restore 1/1. Database setup/replay проверен на новом disposable �
 затем он остановлен. Docker Linux engine остаётся недоступным: live Compose/image
 startup и остальные реальные production proof остаются до открытия продаж.
 Remote CI после push — отдельный результат, фиксируемый в новом evidence package.
+
+Linux CI выявил несовместимость `!reset null` внутри environment YAML anchor
+с Compose v2: native overlay сохранял унаследованный Google credential pointer.
+Теперь явная пустая строка переопределяет base/env_file; Google secret по-прежнему
+не монтируется. Regression проверяет resolved config обоих production overlays.

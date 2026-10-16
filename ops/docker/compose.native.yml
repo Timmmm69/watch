@@ -2,7 +2,8 @@
 # Compose !override replaces the secret list instead of merging it with Google.
 x-native: &native
   environment:
-    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE: !reset null
+    # Explicit empty override also disables inherited env_file values on Compose v2.
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE: ""
   secrets: !override
     - app_database_url
     - telegram_bot_token

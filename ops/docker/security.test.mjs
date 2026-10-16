@@ -20,7 +20,7 @@ test("native Compose removes Google secrets and routes the config overlay", () =
     const config=JSON.parse(result.stdout);
     for(const name of ["api","worker","bootstrap"]) {
       assert.equal(config.services[name].secrets.some(s=>s.source==="google_service_account"),false);
-      assert.equal(config.services[name].environment.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE,undefined);
+      assert.equal(config.services[name].environment.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE,"");
     }
     assert.equal(config.secrets.google_service_account,undefined);
   } finally {unlinkSync(file);rmdirSync(directory);}
