@@ -58,7 +58,7 @@ export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string
           }} />
         </section>
         <section aria-label="Материалы" className="space-y-4"><h2 className="text-xl">Материалы</h2>
-          <p>IMAGE: JPEG/PNG/WebP до 10 MiB. VIDEO: MP4/WebM до 50 MiB. Остатки поступают только из Google Sheet.</p>
+          <p>IMAGE: JPEG/PNG/WebP до 10 MiB. VIDEO: MP4/WebM до 50 MiB. В native-режиме остатки ведутся журналом приложения.</p>
           <AssetCreateForm variants={product.variants} mutate={api.mutate} save={async (type, form) => {
             if (type === "TEXT") {
               await api.request(`/api/v1/admin/products/${product.id}/assets/text`, "POST", {
@@ -92,6 +92,7 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element); const status = String(form.get("status"));
     void mutate(async () => {
       await save({ ...(variant ? { status, safetyBuffer: Number(form.get("safetyBuffer")) } : { sku: String(form.get("sku")) }),
+        ...(form.get("dropshipPriceMinor") === "" ? {} : { dropshipPriceMinor: Number(form.get("dropshipPriceMinor")) }),
         attributes: jsonObject(form.get("attributes")), priceMinor: Number(form.get("priceMinor")),
         partnerCommissionUnitMinor: Number(form.get("commission")), supplierSettlementUnitMinor: form.get("settlement") === "" ? null : Number(form.get("settlement")),
         inventoryExternalKey: String(form.get("externalKey")) });
@@ -102,7 +103,9 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     <h3>{variant ? `${variant.sku} · ${variant.status} · ${variant.currency}` : "Новый вариант DRAFT"}</h3>
     <Field label="SKU"><input className={inputClass} name="sku" required maxLength={100} readOnly={!!variant} defaultValue={variant?.sku} /></Field>
     <Field label="Атрибуты (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
-    <Field label="Цена (minor)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
+    <Field label="Цена для дропшиппера D (minor)"><input className={inputClass} name="dropshipPriceMinor" type="number" min={0} max={2000000000} step={1} required={variant?.dropshipPriceMinor != null} defaultValue={variant?.dropshipPriceMinor ?? ""} /></Field>
+    <p>D применяется к новым заказам. При изменении дропшиппер подтверждает новый расчёт; оформленные заказы сохраняют свои цены.</p>
+    <Field label="Legacy цена (minor)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
     <Field label="Комиссия (minor)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
     <Field label="Расчёт с поставщиком (minor, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
     <Field label="Внешний ключ остатков"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>

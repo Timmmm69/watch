@@ -5,7 +5,33 @@ production запуск BLOCKED внешними входами и proof.** T52 
 завершённой для реальных продаж. Production-БД, реальные переводы, таблица и её
 доступы не менялись, публичные продажи не открывались.
 
-## Конкретный кандидат
+## Исправления после review 7d912d3 — 2026-10-17
+
+Новый локальный кандидат: `codex/t52-review-fixes`; точный SHA и hashes нового
+пакета находятся в `outputs/t52-fixes/release-candidate.json`. Исходный
+`outputs/t52-review` относится только к `7d912d3193bb94fcc9af4880c0d642a4cc9067e7`
+и не используется как подтверждение исправлений. Main и его пользовательские
+изменения сохранены. Merge/push и открытие продаж не выполнялись.
+
+- Admin contract/service/DTO/UI получили отдельную `dropshipPriceMinor` (D).
+  Legacy `priceMinor` сохраняет прежний смысл. D допускает целые 0…2 000 000 000
+  копеек. Новый расчёт после изменения D требует подтверждения; старые Order,
+  reservation/commission snapshots сохраняются.
+- Закрытая подготовка и приёмка допускают честные pending live evidence для
+  inventoryLive/nativeWorkflow/telegramDevice; публичное открытие требует полного
+  approval. SHA/config/legal/PII/security/backup gates сохраняются. Конкретные
+  команды и восстановление после сбоя: [launch checklist](production-launch-t45.md).
+- Native status notifications идут оформляющему владельцу Partner с partner URL;
+  legacy Buyer получает прежний buyer URL. Получателю Telegram не требуется,
+  его имя/телефон/адрес не включаются в эти сообщения. Текст создания заказа
+  больше не ссылается на реферальную ссылку; retry/dedupe не менялись.
+
+Текущая «Инвентаризация» A2:I4 содержит **TEST-INV-001..003**: это тестовые строки,
+не реальные остатки. В production их не импортировать. Старое описание пустой
+таблицы ниже — исторический результат прежней проверки, не её текущее состояние.
+Свежие результаты и непроверенные внешние gates: `outputs/t52-fixes/REPORT.md`.
+
+## Исходный кандидат 7d912d3 (историческая проверка)
 
 Пакет: `outputs/t52/release-candidate.json`, `source-candidate.zip`, `evidence/`.
 JSON содержит candidate commit, base HEAD, dirty status, точные SHA-256 исходников, общий

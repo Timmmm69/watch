@@ -24,7 +24,9 @@
 docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml run --rm --no-deps api node apps/api/dist/operations/cli.js provision-admin '<Telegram ID>' '<настоящее имя>' '<безопасный reference>'
 ```
 
-5. Выполнить CLI **того же release image**, примонтировав CSV/photos read-only
+5. До final approval задайте `WATCH_CLOSED_ACCEPTANCE=1` в окружении Compose
+   ([закрытая подготовка](production-launch-t45.md)); сохраняйте NODE_ENV=production
+   и честные pending live proof. Выполнить CLI **того же release image**, примонтировав CSV/photos read-only
    (например /run/import) и используя runtime-secrets entrypoint/app DB role:
 
 ```sh
@@ -54,3 +56,6 @@ read-only credential. CSV не требует Google credentials.
 Legacy stock автоматически не переносится: сначала разобрать ACTIVE резервы и
 пересчитать товар. После старта поступления/коррекции/оценка — через
 [существующий журнал/CLI](native-inventory-t47.md), не повторной инициализацией.
+
+Текущие TEST-INV-001..003 в A2:I4 — только тестовые строки. Они не являются
+актом реального склада; в production их не импортировать.

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createPrivateKey } from "node:crypto";
 import { isIP } from "node:net";
 import { isProductionValue, isPublicProductionUrl, isProductionSupportContact, isProductionStorageEndpoint, readProductionApprovalWithDigest, type ProductionApproval } from "./production.js";
-export { productionApprovalSchema, readProductionApproval, assertApprovedLegalArtifact } from "./production.js";
+export { productionApprovalSchema, readProductionApproval, assertApprovedLegalArtifact, assertProductionApprovalAcceptance } from "./production.js";
 export type { ProductionApproval } from "./production.js";
 
 export interface GoogleSheetsServiceAccount {
@@ -57,6 +57,8 @@ export const apiRuntimeConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   RELEASE_TAG: z.string().optional(),
   WATCH_PRODUCTION_APPROVAL_FILE: z.string().optional(),
+  // Explicit private prepare/stage or bootstrap/import CLI policy; never authorizes traffic.
+  WATCH_CLOSED_ACCEPTANCE: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
   // Only individual proxy addresses are accepted; no wildcard/CIDR/hop-count trust.
   API_TRUSTED_PROXY_IP: z.string().refine((value) => isIP(value) !== 0, "API_TRUSTED_PROXY_IP must be an exact IP address").optional(),
   APP_BASE_URL: z.url(),
@@ -181,7 +183,7 @@ export function loadApiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ApiR
     GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64:undefined,
   } : env);
   if (runtime.NODE_ENV !== "production") return runtime;
-  const { approval, sha256 } = readProductionApprovalWithDigest(runtime.WATCH_PRODUCTION_APPROVAL_FILE);
+  const { approval, sha256 } = readProductionApprovalWithDigest(runtime.WATCH_PRODUCTION_APPROVAL_FILE, runtime.WATCH_CLOSED_ACCEPTANCE === "1");
   if (!env.ORDER_HOLD_DAYS || !env.ORDER_OVERDUE_SECONDS) throw new Error("Production requires explicit ORDER_HOLD_DAYS and ORDER_OVERDUE_SECONDS");
   const bindings = [
     [runtime.INVENTORY_PROVIDER, approval.operatingModel.inventoryProvider],

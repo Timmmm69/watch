@@ -30,10 +30,55 @@ test("release source must match image SHA and be clean before any build or stop"
   assert.deepEqual(calls,[["config","--format","json"],["ps","--all","--format","json"]]);
 });
 
-test("failed production approval preflight performs no DB writes or service stops", async () => {
+test("failed production approval preflight closes public traffic before any DB writes", async () => {
   const { calls, run } = runner();
   await assert.rejects(deployWithPreflight("upgrade", run, undefined, undefined, async () => { throw new Error("Missing approval"); }), /Missing approval/);
-  assert.deepEqual(calls, [["config", "--format", "json"], ["ps", "--all", "--format", "json"], ["build", "migrate", "api", "web"]]);
+  assert.deepEqual(calls, [["config", "--format", "json"], ["ps", "--all", "--format", "json"], ["build", "migrate", "api", "web"],
+    ["stop", "--timeout", "120", "reverse-proxy", "worker", "api", "web"], ["stop", "reverse-proxy"], ["stop", "--timeout", "120", "worker", "api", "web"]]);
+});
+
+test("closed preparation scopes pending-live-proof access to prepare/stage and restores it after a retry", async () => {
+  const previous = process.env.WATCH_CLOSED_ACCEPTANCE;
+  process.env.WATCH_CLOSED_ACCEPTANCE = "external";
+  try {
+    const failed = runner((args) => args.at(-1) === "bootstrap");
+    await assert.rejects(deployWithPreflight("prepare", failed.run, undefined, undefined, async () => {
+      assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "1");
+    }));
+    assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "external");
+
+    const staged = runner();
+    await deployWithPreflight("stage", staged.run, undefined, undefined, async () => {
+      assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "1");
+    });
+    assert.equal(staged.calls.some((args) => args[0] === "up" && args.at(-1) === "reverse-proxy"), false);
+    assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "external");
+
+    const upgrade = runner();
+    await assert.rejects(deployWithPreflight("upgrade", upgrade.run, undefined, undefined, async () => {
+      assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, undefined);
+      throw new Error("Production approval is missing final acceptance evidence");
+    }), /final acceptance/);
+    assert.equal(upgrade.calls.some((args) => args[0] === "up" && args.at(-1) === "reverse-proxy"), false);
+  } finally {
+    if (previous === undefined) delete process.env.WATCH_CLOSED_ACCEPTANCE;
+    else process.env.WATCH_CLOSED_ACCEPTANCE = previous;
+  }
+});
+
+for (const failedGate of ["migrate", "bootstrap"]) test(`stage resumes an interrupted closed preparation after ${failedGate} fails`, async () => {
+  const interrupted = runner((args) => args.at(-1) === failedGate && args.includes("--exit-code-from"));
+  await assert.rejects(deployWithPreflight("prepare", interrupted.run, undefined, undefined, async () => {
+    assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "1");
+  }));
+
+  const resumed = runner();
+  await deployWithPreflight("stage", resumed.run, undefined, undefined, async () => {
+    assert.equal(process.env.WATCH_CLOSED_ACCEPTANCE, "1");
+  });
+  assert.ok(resumed.calls.some((args) => args.at(-1) === "migrate"));
+  assert.ok(resumed.calls.some((args) => args.at(-1) === "bootstrap"));
+  assert.equal(resumed.calls.some((args) => args[0] === "up" && args.at(-1) === "reverse-proxy"), false);
 });
 
 test("launch preflight binds every image, origin, read-only mount and real backup configuration", async () => {

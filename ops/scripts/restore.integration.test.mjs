@@ -140,7 +140,7 @@ test("AT-032: fresh migrations/bootstrap, operations and encrypted restore retai
     const env = {
       NODE_ENV: "production", DATABASE_URL: appUrl.toString(), APP_BASE_URL: "https://watch.company.org", API_TRUSTED_PROXY_IP: "172.30.36.2",
       RELEASE_TAG: "0123456789abcdef0123456789abcdef01234567", ORDER_HOLD_DAYS: "14", ORDER_OVERDUE_SECONDS: "3600",
-      WATCH_PRODUCTION_APPROVAL_FILE: join(directory, "approval.json"),
+      WATCH_PRODUCTION_APPROVAL_FILE: join(directory, "approval.json"), WATCH_CLOSED_ACCEPTANCE: "1",
       PLATFORM_CURRENCY: "BYN", TELEGRAM_BOT_TOKEN: "123:fixture_token", TELEGRAM_BOT_USERNAME: "watch_bot", TELEGRAM_WEBHOOK_SECRET: "a".repeat(32),
       CSRF_SECRET: randomBytes(32).toString("base64url"), ADMIN_TELEGRAM_IDS: "42", SUPPORT_CONTACT: "@watch_support",
       INVENTORY_PROVIDER: "native",
@@ -151,9 +151,16 @@ test("AT-032: fresh migrations/bootstrap, operations and encrypted restore retai
       LEGAL_PRIVACY_ID: docs[2].id, LEGAL_PRIVACY_VERSION: docs[2].version
     };
     const { productionApprovalFixture, fixturePolicy } = await import("./fixtures/production-approval.mjs");
-    await writeFile(env.WATCH_PRODUCTION_APPROVAL_FILE, JSON.stringify(productionApprovalFixture(env)));
+    const pendingApproval = productionApprovalFixture(env);
+    for (const name of ["inventoryLive", "nativeWorkflow", "telegramDevice"]) pendingApproval.acceptance[name].passed = false;
+    await writeFile(env.WATCH_PRODUCTION_APPROVAL_FILE, JSON.stringify(pendingApproval));
     await writeFile(join(directory, "pii-policy.md"), fixturePolicy);
+    assert.throws(() => loadApiRuntimeConfig({ ...env, WATCH_CLOSED_ACCEPTANCE: undefined }), /approval/);
     const runtime = loadApiRuntimeConfig(env);
+    const cli = (...args) => spawnSync(process.execPath, ["apps/api/dist/operations/cli.js", ...args], {
+      cwd: root, env: { ...process.env, ...env }, encoding: "utf8"
+    });
+    assert.equal(cli("config").status, 0, "Production CLI must permit honest pending live proof only in closed acceptance");
     let actor; const event = randomUUID();
     let nativeHistory;
     const api = createApp({ checkReadiness: () => verifyInstalledRelease(appPool, runtime) });
@@ -163,8 +170,10 @@ test("AT-032: fresh migrations/bootstrap, operations and encrypted restore retai
       await assert.rejects(bootstrapRelease(appPool, runtime, manifestFile), /PII policy hash mismatch/);
       assert.equal((await appPool.query("SELECT count(*)::int AS n FROM legal_documents")).rows[0].n, 0);
       await writeFile(join(directory, "pii-policy.md"), fixturePolicy);
-      await bootstrapRelease(appPool, runtime, manifestFile);
-      await bootstrapRelease(appPool, runtime, manifestFile);
+      const firstBootstrap = cli("bootstrap", manifestFile);
+      assert.equal(firstBootstrap.status, 0, firstBootstrap.stdout + firstBootstrap.stderr);
+      const replayBootstrap = cli("bootstrap", manifestFile);
+      assert.equal(replayBootstrap.status, 0, replayBootstrap.stdout + replayBootstrap.stderr);
       // Bootstrap cannot manufacture opening stock; readiness stays closed until explicit import.
       assert.equal((await api.inject({ method: "GET", url: "/ready" })).statusCode, 503);
       await assert.rejects(provisionBootstrapAdmin(appPool,runtime,"43","Test","TEST:owner-verified"));
@@ -173,6 +182,10 @@ test("AT-032: fresh migrations/bootstrap, operations and encrypted restore retai
       assert.equal((await appPool.query("SELECT count(*)::int AS n FROM sessions")).rows[0].n,0);
       nativeHistory = await seedNativeRelease(appPool, actor, docs);
       assert.equal((await api.inject({ method: "GET", url: "/ready" })).statusCode, 200);
+      const privateVerify = cli("verify");
+      assert.equal(privateVerify.status, 0, privateVerify.stdout + privateVerify.stderr);
+      assert.throws(() => loadApiRuntimeConfig({ ...env, WATCH_CLOSED_ACCEPTANCE: undefined }), /approval/,
+        "A healthy private stage must not authorize public startup without full live proof");
       await assert.rejects(verifyInstalledRelease(appPool, {...runtime,INVENTORY_PROVIDER:"google_sheets"}), /NATIVE_AUTHORITY/);
       assert.equal((await appPool.query("SELECT count(*)::int AS n FROM suppliers")).rows[0].n, 1);
       await assert.rejects(verifyInstalledRelease(appPool, { ...runtime, PLATFORM_CURRENCY: "USD" }), /mismatch/);

@@ -422,6 +422,7 @@ export const adminVariantCreateRequestSchema = z.object({
   sku: z.string().min(1).max(100),
   attributes: jsonRecord.default({}),
   priceMinor: moneyMinor,
+  dropshipPriceMinor: z.number().int().min(0).max(MAX_ORDER_TOTAL_MINOR).optional(),
   partnerCommissionUnitMinor: moneyMinor,
   supplierSettlementUnitMinor: moneyMinor.nullable().optional(),
   inventoryExternalKey: z.string().min(1).max(200)
@@ -430,6 +431,7 @@ export const adminVariantCreateRequestSchema = z.object({
 export const adminVariantPatchRequestSchema = z.object({
   attributes: jsonRecord.optional(),
   priceMinor: moneyMinor.optional(),
+  dropshipPriceMinor: z.number().int().min(0).max(MAX_ORDER_TOTAL_MINOR).optional(),
   partnerCommissionUnitMinor: moneyMinor.optional(),
   supplierSettlementUnitMinor: moneyMinor.nullable().optional(),
   inventoryExternalKey: z.string().min(1).max(200).optional(),

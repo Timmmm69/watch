@@ -66,13 +66,21 @@ async function loadPartnerRecipient(pool: Pool, partnerId: string): Promise<Reci
   return row ? { userId: row.user_id, telegramUserId: row.telegram_user_id } : null;
 }
 
-async function loadBuyerRecipient(pool: Pool, orderId: string): Promise<Recipient | null> {
-  const row = (await pool.query<{ user_id: string; telegram_user_id: string }>(
-    `SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id
+async function loadOrderStatusRecipient(pool: Pool, orderId: string): Promise<(Recipient & { role: "buyer" | "partner" }) | null> {
+  const row = (await pool.query<{ user_id: string; telegram_user_id: string; role: "buyer" | "partner" }>(
+    `SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'buyer'::text AS role
      FROM orders o JOIN users u ON u.id = o.buyer_user_id
-     WHERE o.id = $1 AND u.bot_can_message = true`, [orderId]
+     WHERE o.id = $1 AND u.bot_can_message = true
+     UNION ALL
+     SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'partner'::text AS role
+     FROM orders o
+     JOIN partners p ON p.id = o.partner_id_snapshot
+     JOIN users u ON u.id = p.user_id AND u.id = o.creator_user_id
+     WHERE o.id = $1 AND o.buyer_user_id IS NULL AND o.origin = 'DROPSHIPPER'
+       AND o.economic_regime = 'DROPSHIP_MARKUP' AND u.bot_can_message = true
+     LIMIT 1`, [orderId]
   )).rows[0];
-  return row ? { userId: row.user_id, telegramUserId: row.telegram_user_id } : null;
+  return row ? { userId: row.user_id, telegramUserId: row.telegram_user_id, role: row.role } : null;
 }
 
 async function loadAdminRecipients(pool: Pool, adminTelegramIds: ReadonlySet<string>): Promise<Recipient[]> {
@@ -166,7 +174,7 @@ async function dispatchOrderCreated(
     const recipient = await loadPartnerRecipient(pool, payload.partnerIdSnapshot);
     if (recipient) {
       const text = [
-        `Новый заказ ${publicNumber} по вашей ссылке.`,
+        `Новый заказ ${publicNumber}.`,
         `Товар: ${product}.`,
         `Сумма: ${formatMoney(summary.totalMinor, summary.currency)}.`,
         pendingCommissionText(summary),
@@ -192,11 +200,11 @@ async function dispatchOrderStatusChanged(
   const orderId = typeof payload.orderId === "string" ? payload.orderId : null;
   const toStatus = typeof payload.toStatus === "string" ? payload.toStatus : null;
   if (!orderId || !toStatus || !BUYER_NOTIFICATION_STATUSES.has(toStatus)) return [];
-  const recipient = await loadBuyerRecipient(pool, orderId);
+  const recipient = await loadOrderStatusRecipient(pool, orderId);
   if (!recipient) return [];
   const publicNumber = typeof payload.publicNumber === "string" ? payload.publicNumber : (await loadOrderSummary(pool, orderId))?.publicNumber;
   if (!publicNumber) return [];
-  const text = `Заказ ${publicNumber}: ${statusLabel(toStatus)}. Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, "buyer")}`;
+  const text = `Заказ ${publicNumber}: ${statusLabel(toStatus)}. Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, recipient.role)}`;
   return sendAll(pool, [recipient], text, send);
 }
 

@@ -35,7 +35,7 @@ export function isProductionSupportContact(value: string): boolean {
 }
 const hash = z.string().regex(/^[a-f0-9]{64}$/).refine((value) => !/^([a-f0-9])\1+$/.test(value));
 const artifact = z.object({ id: z.uuid(), version: text, sha256: hash, reviewedBy: text, productionApproved: z.literal(true) }).strict();
-const evidence = z.object({ passed: z.literal(true), report: text, sha256: hash }).strict();
+const evidence = z.object({ passed: z.boolean(), report: text, sha256: hash }).strict();
 
 // An operator attestation binds approved inputs; it never substitutes for real-device smoke evidence.
 export const productionApprovalSchema = z.object({
@@ -87,15 +87,30 @@ export const productionApprovalSchema = z.object({
 
 export type ProductionApproval = z.infer<typeof productionApprovalSchema>;
 
-export function readProductionApproval(file: string | undefined): ProductionApproval {
-  return readProductionApprovalWithDigest(file).approval;
+const closedPreparationPendingEvidence = new Set(["inventoryLive", "nativeWorkflow", "telegramDevice"]);
+const acceptanceEvidenceNames = ["t39ThroughT44", "migrations", "financial", "inventoryLive", "nativeWorkflow", "telegramDevice", "encryptedBackupRestore", "externalNetwork"] as const;
+
+export function assertProductionApprovalAcceptance(approval: ProductionApproval, closedPreparation = false): void {
+  for (const name of acceptanceEvidenceNames) {
+    const evidence = approval.acceptance[name];
+    if (!evidence && approval.operatingModel.inventoryProvider === "google_sheets" && name === "nativeWorkflow") continue;
+    if (!evidence?.passed && !(closedPreparation && closedPreparationPendingEvidence.has(name))) {
+      throw new Error("Production approval is missing final acceptance evidence");
+    }
+  }
 }
 
-export function readProductionApprovalWithDigest(file: string | undefined): { approval: ProductionApproval; sha256: string } {
+export function readProductionApproval(file: string | undefined, closedPreparation = false): ProductionApproval {
+  return readProductionApprovalWithDigest(file, closedPreparation).approval;
+}
+
+export function readProductionApprovalWithDigest(file: string | undefined, closedPreparation = false): { approval: ProductionApproval; sha256: string } {
   if (!file || !isAbsolute(file)) throw new Error("Production requires absolute WATCH_PRODUCTION_APPROVAL_FILE");
   try {
     const bytes = readFileSync(file);
-    return { approval: productionApprovalSchema.parse(JSON.parse(bytes.toString("utf8"))), sha256: createHash("sha256").update(bytes).digest("hex") };
+    const approval = productionApprovalSchema.parse(JSON.parse(bytes.toString("utf8")));
+    assertProductionApprovalAcceptance(approval, closedPreparation);
+    return { approval, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
   catch { throw new Error("Production approval is missing, invalid or contains unapproved inputs"); }
 }

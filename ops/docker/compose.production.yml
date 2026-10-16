@@ -19,6 +19,7 @@ x-app: &app
     API_PORT: "3001"
     API_TRUSTED_PROXY_IP: 172.30.36.2
     WATCH_PRODUCTION_APPROVAL_FILE: /run/production-approval.json
+    WATCH_CLOSED_ACCEPTANCE: ${WATCH_CLOSED_ACCEPTANCE:-}
     DATABASE_URL_FILE: /run/secrets/app_database_url
     TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
     TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret

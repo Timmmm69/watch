@@ -139,16 +139,50 @@ describe("dispatchEvent", () => {
     await dispatchEvent(pool as unknown as Pool, event("ORDER_CREATED", { orderId: "o1", publicNumber: "W-ABC", partnerIdSnapshot: "p1", commissionEligibleSnapshot: true }), config, send);
     expect(send).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Новый заказ W-ABC"));
+    expect(send).toHaveBeenCalledWith("111", expect.not.stringContaining("по вашей ссылке"));
     expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Новый заказ W-ABC"));
   });
 
   it.each(["CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"])("notifies buyer on ORDER_STATUS_CHANGED to %s", async (toStatus) => {
     const pool = new MockPool();
-    pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM orders o JOIN users u ON u.id = o.buyer_user_id\n     WHERE o.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
+    pool.setBySql(`SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'buyer'::text AS role
+     FROM orders o JOIN users u ON u.id = o.buyer_user_id
+     WHERE o.id = $1 AND u.bot_can_message = true
+     UNION ALL
+     SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'partner'::text AS role
+     FROM orders o
+     JOIN partners p ON p.id = o.partner_id_snapshot
+     JOIN users u ON u.id = p.user_id AND u.id = o.creator_user_id
+     WHERE o.id = $1 AND o.buyer_user_id IS NULL AND o.origin = 'DROPSHIPPER'
+       AND o.economic_regime = 'DROPSHIP_MARKUP' AND u.bot_can_message = true
+     LIMIT 1`, [{ user_id: "u1", telegram_user_id: "111", role: "buyer" }]);
     pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("ORDER_STATUS_CHANGED", { orderId: "o1", publicNumber: "W-ABC", fromStatus: "PLACED", toStatus }), config, send);
     expect(send).toHaveBeenCalledWith("111", expect.stringContaining(toStatus === "CONFIRMED" ? "подтверждён" : toStatus === "SHIPPED" ? "отправлен" : toStatus === "DELIVERED" ? "доставлен" : toStatus === "CANCELLED" ? "отменён" : "не доставлен"));
+    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("/orders/W-ABC"));
+  });
+
+  it.each(["CONFIRMED", "SHIPPED", "DELIVERED"])("notifies the owning Partner, not a native recipient, on DROPSHIP_MARKUP ORDER_STATUS_CHANGED to %s", async (toStatus) => {
+    const pool = new MockPool();
+    pool.setBySql(`SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'buyer'::text AS role
+     FROM orders o JOIN users u ON u.id = o.buyer_user_id
+     WHERE o.id = $1 AND u.bot_can_message = true
+     UNION ALL
+     SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id, 'partner'::text AS role
+     FROM orders o
+     JOIN partners p ON p.id = o.partner_id_snapshot
+     JOIN users u ON u.id = p.user_id AND u.id = o.creator_user_id
+     WHERE o.id = $1 AND o.buyer_user_id IS NULL AND o.origin = 'DROPSHIPPER'
+       AND o.economic_regime = 'DROPSHIP_MARKUP' AND u.bot_can_message = true
+     LIMIT 1`, [{ user_id: "partner-user", telegram_user_id: "222", role: "partner" }]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    await dispatchEvent(pool as unknown as Pool, event("ORDER_STATUS_CHANGED", { orderId: "native-order", publicNumber: "W-NATIVE", fromStatus: "PLACED", toStatus }), config, send);
+    expect(send).toHaveBeenCalledExactlyOnceWith("222", expect.stringContaining("/partner/orders/W-NATIVE"));
+    const message = String(send.mock.calls[0]![1]);
+    expect(message).toContain(toStatus === "CONFIRMED" ? "подтверждён" : toStatus === "SHIPPED" ? "отправлен" : "доставлен");
+    expect(message).not.toContain("Получатель");
+    expect(message).not.toContain("Private");
   });
 
   it("does not notify buyer on FULFILLING ORDER_STATUS_CHANGED", async () => {

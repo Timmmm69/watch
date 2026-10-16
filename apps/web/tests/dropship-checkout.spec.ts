@@ -6,7 +6,7 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
   test.describe.configure({ mode: "serial" });
   let fixture: Awaited<ReturnType<typeof dropshipFixture>>;
   test.beforeEach(async ({ page }) => {
-    fixture = await dropshipFixture();
+    fixture = await dropshipFixture(10, "800.02", true);
     await fixture.app.listen({ host: "127.0.0.1", port: 3001 });
     await page.route("https://telegram.org/js/telegram-web-app.js", (route) => route.fulfill({ contentType: "application/javascript", body: "" }));
     await page.context().addCookies([{ name: "watch_session", value: fixture.owners[0]!.token, domain: "127.0.0.1", path: "/" }]);
@@ -70,7 +70,8 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
   test("changed D requires a visible recalculation and explicit confirmation, retaining recipient and R", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await form(page); await fill(page);
-    await fixture.pool.query("UPDATE product_variants SET dropship_price_minor=12000");
+    const changed = await fixture.app.inject({ method: "PATCH", url: `/api/v1/admin/variants/${fixture.variant}`, headers: fixture.owners[2]!.headers, payload: { dropshipPriceMinor: 12000 } });
+    expect(changed.statusCode).toBe(200);
     await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "Цена дропу изменилась" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Предварительный расчёт" })).toContainText("Предполагаемая наценка: 25.00 BYN");
@@ -82,6 +83,20 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
     await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Предполагаемая наценка: 25.00 BYN");
     expect((await fixture.pool.query("SELECT dropship_unit_price_minor FROM order_items")).rows[0].dropship_unit_price_minor).toBe(12000);
+  });
+
+  test("Admin form edits D independently and reloads the persisted value", async ({ page }) => {
+    await page.context().addCookies([{ name: "watch_session", value: fixture.owners[2]!.token, domain: "127.0.0.1", path: "/" }]);
+    await page.goto(`/admin/products/${fixture.product}`);
+    const variant = page.getByRole("form", { name: "Вариант TEST-T48", exact: true });
+    await expect(variant.getByLabel("Цена для дропшиппера D (minor)")).toHaveValue("10000");
+    await variant.getByLabel("Цена для дропшиппера D (minor)").fill("12000");
+    await variant.getByRole("button", { name: "Сохранить вариант" }).click();
+    await expect(page.getByRole("status")).toContainText("Вариант сохранён");
+    await page.reload();
+    await expect(variant.getByLabel("Цена для дропшиппера D (minor)")).toHaveValue("12000");
+    await expect(variant.getByLabel("Legacy цена (minor)")).toHaveValue("10000");
+    expect((await fixture.pool.query("SELECT price_minor,dropship_price_minor FROM product_variants")).rows[0]).toEqual({ price_minor: 10000, dropship_price_minor: 12000 });
   });
 
   test("a lost committed response retries with the same key without another order/reservation", async ({ page }) => {

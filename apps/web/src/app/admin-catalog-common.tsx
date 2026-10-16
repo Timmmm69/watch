@@ -8,7 +8,7 @@ export const inputClass = "w-full rounded border border-slate-600 bg-slate-900 p
 export const buttonClass = "min-h-11 rounded border border-slate-600 px-3 py-2 disabled:opacity-40";
 export type PageData<T> = { items: T[]; page: number; limit: number; total: number };
 export type Category = { id: string; name: string; slug: string; sortOrder: number; status: string; updatedAt: string };
-export type Variant = { id: string; sku: string; status: string; attributes: Record<string, unknown>; priceMinor: number;
+export type Variant = { id: string; sku: string; status: string; attributes: Record<string, unknown>; priceMinor: number; dropshipPriceMinor: number | null;
   currency: string; partnerCommissionUnitMinor: number; supplierSettlementUnitMinor: number | null; inventoryExternalKey: string;
   updatedAt: string; inventory: { safetyBuffer: number } | null };
 export type Asset = { id: string; type: string; purpose: string; status: string; text: string | null; mediaUrl: string | null;

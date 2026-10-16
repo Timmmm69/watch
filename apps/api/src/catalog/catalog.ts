@@ -88,6 +88,7 @@ export interface Variant {
   sku: string;
   attributes: Record<string, unknown>;
   priceMinor: number;
+  dropshipPriceMinor: number | null;
   currency: string;
   partnerCommissionUnitMinor: number;
   supplierSettlementUnitMinor: number | null;
@@ -126,6 +127,7 @@ export interface VariantCreateInput {
   sku: string;
   attributes?: Record<string, unknown> | undefined;
   priceMinor: number;
+  dropshipPriceMinor?: number | undefined;
   partnerCommissionUnitMinor: number;
   supplierSettlementUnitMinor?: number | null | undefined;
   inventoryExternalKey: string;
@@ -134,6 +136,7 @@ export interface VariantCreateInput {
 export interface VariantUpdateInput {
   attributes?: Record<string, unknown> | undefined;
   priceMinor?: number | undefined;
+  dropshipPriceMinor?: number | undefined;
   partnerCommissionUnitMinor?: number | undefined;
   supplierSettlementUnitMinor?: number | null | undefined;
   inventoryExternalKey?: string | undefined;
@@ -274,6 +277,7 @@ interface VariantRow {
   sku: string;
   attributes: Record<string, unknown>;
   price_minor: number;
+  dropship_price_minor: number | null;
   currency: string;
   partner_commission_unit_minor: number;
   supplier_settlement_unit_minor: number | null;
@@ -440,7 +444,7 @@ function mapProduct(row: ProductRow): ProductSummary {
 function mapVariant(row: VariantRow): Variant {
   return {
     id: row.id, productId: row.product_id, sku: row.sku, attributes: row.attributes,
-    priceMinor: row.price_minor, currency: row.currency,
+    priceMinor: row.price_minor, dropshipPriceMinor: row.dropship_price_minor, currency: row.currency,
     partnerCommissionUnitMinor: row.partner_commission_unit_minor,
     supplierSettlementUnitMinor: row.supplier_settlement_unit_minor,
     inventoryExternalKey: row.inventory_external_key, status: row.status,
@@ -951,13 +955,13 @@ export class CatalogService {
       const product = await this.lockProduct(client, productId);
       const inserted = await client.query<VariantRow>(
         `INSERT INTO product_variants
-           (id, product_id, sku, attributes, price_minor, currency, partner_commission_unit_minor, supplier_settlement_unit_minor, inventory_external_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (id, product_id, sku, attributes, price_minor, currency, partner_commission_unit_minor, supplier_settlement_unit_minor, inventory_external_key, dropship_price_minor)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           randomUUID(), productId, input.sku, input.attributes ?? {}, input.priceMinor,
           this.platformCurrency, input.partnerCommissionUnitMinor, settlement,
-          input.inventoryExternalKey
+          input.inventoryExternalKey, input.dropshipPriceMinor ?? null
         ]
       );
       const variant = inserted.rows[0];
@@ -1026,6 +1030,7 @@ export class CatalogService {
       };
       if (input.attributes !== undefined) apply("attributes", input.attributes);
       if (input.priceMinor !== undefined) apply("price_minor", input.priceMinor);
+      if (input.dropshipPriceMinor !== undefined) apply("dropship_price_minor", input.dropshipPriceMinor);
       if (input.partnerCommissionUnitMinor !== undefined) {
         apply("partner_commission_unit_minor", input.partnerCommissionUnitMinor);
       }
@@ -1083,6 +1088,8 @@ export class CatalogService {
       await this.audit(client, actorUserId, "admin.variant.update", "variant", variantId, {
         productId,
         status: input.status ?? null,
+        dropshipPriceMinorBefore: variant.dropship_price_minor,
+        dropshipPriceMinorAfter: updated.dropship_price_minor,
         inventoryExternalKeyChanged: input.inventoryExternalKey !== undefined
       });
       return { ...mapVariant(updated), inventory: mapInventory(inventoryRow) };

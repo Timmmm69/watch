@@ -28,6 +28,41 @@ JSON связывает SHA/config/legal hashes и references, но не про�
 `WATCH_PRODUCTION_APPROVAL_PATH` — абсолютный файл, read-only mount
 `/run/production-approval.json`; runtime WATCH_PRODUCTION_APPROVAL_FILE указывает туда.
 
+## Закрытая подготовка и final approval
+
+`prepare`, `stage` и безопасный alias `fresh` запускаются с
+`WATCH_CLOSED_ACCEPTANCE=1` внутри Compose API/worker/bootstrap. Они допускают
+только `passed=false` для `inventoryLive`, `nativeWorkflow`, `telegramDevice`.
+Для незавершённого proof сохраните честный отчёт о pending состоянии, его reference
+и SHA-256; не выдавайте план за успешную приёмку. Все остальные gates остаются
+обязательными: exact source SHA/clean checkout, config/legal/PII, финансовые и
+security проверки, backup/recovery и externalNetwork. `NODE_ENV=production`
+сохраняется; `NODE_ENV=test` для подготовки недопустим.
+
+1. Из чистого checkout нужного SHA: `node ops/scripts/deploy.mjs prepare`.
+   `fresh` теперь означает такую же закрытую подготовку, без открытия traffic.
+2. Provision/import CLI из того же image выполняйте с `WATCH_CLOSED_ACCEPTANCE=1`
+   **в окружении Compose**, например:
+   `WATCH_CLOSED_ACCEPTANCE=1 docker compose --env-file /secure/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml run --rm --no-deps api node apps/api/dist/operations/cli.js config`.
+   Используйте те же Compose project, secrets и read-only bootstrap/import mounts.
+3. После явного импорта: `node ops/scripts/deploy.mjs stage`. API/web/worker
+   работают во внутренней сети, public reverse-proxy остаётся остановленным.
+   Разрешённый закрытый доступ для приёмки организуется отдельно; не публикуйте
+   API/DB/web порты. Closed marker — политика оператора, не замена сетевой изоляции.
+4. Если prepare прерван после создания volume/миграций, не удаляйте данные и
+   не повторяйте fresh. Исправьте причину и выполните `stage`: миграции/bootstrap
+   идемпотентно продолжатся. Если склад ещё не импортирован, readiness останется
+   закрытой; завершите provision/import тем же CLI и повторите `stage`.
+5. По итогам настоящих live proof обновите approval для того же SHA/config и
+   отдельно получите решение владельца открыть продажи. Только
+   `node ops/scripts/deploy.mjs upgrade` может открыть public proxy: команда
+   очищает closed marker, заново требует полный approval, пересоздаёт services
+   и проверяет readiness. Pending proof блокирует opening даже после здорового
+   private stage. Ошибка preflight останавливает proxy/writers до исправления.
+
+Ручной `docker compose up reverse-proxy` не является разрешённым launch-путём.
+Не сохраняйте closed marker как постоянный обход final approval.
+
 ## A. Release и конфигурация
 
 - [ ] Source-кандидат зафиксирован полным Git SHA; build/миграции/проверки повторены

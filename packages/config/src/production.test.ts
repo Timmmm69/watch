@@ -46,6 +46,30 @@ describe("production launch gate", () => {
     publish({...native,operatingModel:{...native.operatingModel,termsCoverRecipientData:false}});
     expect(() => loadApiRuntimeConfig({...env,INVENTORY_PROVIDER:"native"})).toThrow();
   });
+  it("permits only pending live proof while a production preparation remains closed", () => {
+    const nativeEnv = { ...env, INVENTORY_PROVIDER: "native", GOOGLE_SHEETS_SPREADSHEET_ID: undefined,
+      GOOGLE_SHEETS_WORKSHEET_NAME: undefined, GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: undefined };
+    const pending = productionApprovalFixture(nativeEnv);
+    for (const name of ["inventoryLive", "nativeWorkflow", "telegramDevice"] as const) {
+      pending.acceptance[name] = { ...pending.acceptance[name], passed: false };
+    }
+    publish(pending);
+    expect(() => loadApiRuntimeConfig(nativeEnv)).toThrow();
+    expect(() => loadApiRuntimeConfig({ ...nativeEnv, WATCH_CLOSED_ACCEPTANCE: "" })).toThrow();
+    expect(loadApiRuntimeConfig({ ...nativeEnv, WATCH_CLOSED_ACCEPTANCE: "1" }).productionApproval?.releaseSha).toBe(nativeEnv.RELEASE_TAG);
+    const closed = { ...nativeEnv, WATCH_CLOSED_ACCEPTANCE: "1" };
+    for (const name of ["t39ThroughT44", "migrations", "financial", "encryptedBackupRestore", "externalNetwork"] as const) {
+      publish({ ...pending, acceptance: { ...pending.acceptance, [name]: { ...pending.acceptance[name], passed: false } } });
+      expect(() => loadApiRuntimeConfig(closed)).toThrow();
+    }
+    for (const invalid of [
+      { ...pending, pii: { ...pending.pii, approved: false } },
+      { ...pending, legal: { ...pending.legal, PRIVACY: { ...pending.legal.PRIVACY, productionApproved: false } } },
+    ]) { publish(invalid); expect(() => loadApiRuntimeConfig(closed)).toThrow(); }
+    publish(pending);
+    expect(() => loadApiRuntimeConfig({ ...closed, RELEASE_TAG: "fedcba9876543210fedcba9876543210fedcba98" })).toThrow(/differs/);
+    expect(() => loadApiRuntimeConfig({ ...nativeEnv, WATCH_CLOSED_ACCEPTANCE: "true" })).toThrow();
+  });
   it("accepts Beget storage only when the production approval matches", () => {
     const beget = { ...env, OBJECT_STORAGE_ENDPOINT: "https://s3.ru1.storage.beget.cloud", OBJECT_STORAGE_REGION: "ru1" };
     publish(productionApprovalFixture(beget));

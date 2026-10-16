@@ -337,3 +337,60 @@ Production, реальный Google import/физический склад, фа
 Подготовлены [release и точный перечень недостающего](release-t52.md), [первый импорт](initial-import-t52.md), [инструкция владельцу](owner-guide-t52.md), [дропшипперу](dropshipper-guide-t52.md), [актуальный checklist](production-launch-t45.md); T36/T37–T38 приведены к native. **T52 не закрыта как production-complete; продажи не открывать до оставшихся live gates и решения владельца.**
 
 Дополнительная граница: Docker Desktop Linux engine недоступен, попытка запуска не восстановила Docker API. Production images build и реальный Compose startup не выполнены; pnpm build и Compose config/topology проверены. Повторить container build/smoke на доступном engine до запуска.
+
+## 2026-10-17 — исправления review T52 (исходный SHA 7d912d3)
+
+Работа выполнена в отдельном worktree `codex/t52-review-fixes` от
+`7d912d3193bb94fcc9af4880c0d642a4cc9067e7`. Main остался на
+`91fcf46a41f3146159dcd7a52f444bc174f6b573`; все 310 исходных пользовательских
+source-файлов побайтно совпали с проверенным baseline. Merge/push не выполнялись.
+
+Сначала отдельно воспроизведены все три дефекта на исходном commit через настоящий
+Session/Admin/CSRF API и dispatch/config. Новый пакет: `outputs/t52-fixes/`;
+старый `outputs/t52-review/` не изменялся и не считается proof нового кода.
+
+- **P1 D:** отдельное `dropshipPriceMinor` в create/patch contract, service, DTO и
+  Admin-форме; целые 0…2 000 000 000. Legacy price/commission/settlement сохраняют
+  прежний смысл. API tests проверяют Admin/CSRF, денежные пределы, независимость
+  D от legacy price, PRICE_CHANGED, явное подтверждение, replay и неизменность
+  старых OrderItem/reservation snapshots. Browser проверяет форму и reload.
+- **P1 approval:** prepare/stage/fresh — закрытая подготовка с честными pending
+  inventoryLive/nativeWorkflow/telegramDevice. Все остальные gates сохранены.
+  Upgrade очищает closed marker и требует полный approval до public proxy.
+  Ошибка preflight закрывает traffic/writers. Stage продолжает прерванные
+  миграции/bootstrap без удаления volume. Руководство запуска/импорта обновлено.
+- **P2 notifications:** native status выбирает owning Partner/creator и partner
+  URL; legacy Buyer route сохранён. Получателю не нужен Telegram, PII отсутствует
+  в status messages. ORDER_CREATED больше не говорит «по вашей ссылке».
+  Retry/BlockedError/outbox dedupe правила сохранены и покрыты прежними tests.
+
+Свежая приёмка только на disposable loopback PostgreSQL 16: 55450 /watch_t46,
+/watch_t47, /watch_t48 и новые /watch_restore_*; отдельный свежий security cluster
+55454 /watch остановлен после проверки. Production-БД, реальные переводы,
+Google Таблица и доступы не менялись. TEST-INV-001..003 не импортировались в production.
+
+- Workspace typecheck/build — PASS; config 49/49, ops 21/21, topology 4/4,
+  fresh-volume least privilege 1/1, schema/legacy/immutability 9/9.
+- Полный API — **610/610**, 59 файлов, без skip. Сопоставление JSON reports
+  подтверждает сохранение всех прежних **603** тестов (UUID в parameterized
+  названиях нормализованы, повторяющиеся названия учитываются отдельно).
+- Chromium — **31/31**, без skip: все прежние **26** сценариев, новая форма D и
+  4 затронутых Admin Catalog сценария. Сопоставление прежнего/нового логов сохранено.
+- Encrypted isolated restore — **1/1**, exact 20 migrations, ACL и native/economic
+  history. Теперь настоящий production CLI с pending live proof выполняет
+  config/bootstrap/replay/verify; без closed marker запуск отклоняется даже
+  после healthy private readiness. NODE_ENV=test не использовался как обход.
+
+Первый широкий прогон: старые API tests прошли; один новый test ошибочно ожидал
+201 вместо существующего 200 для create-variant. Исправлено ожидание, финальный
+полный прогон зелёный. После перерыва disposable PostgreSQL был выключен;
+неудачный restore сохранён отдельно, затем кластер запущен и restore повторён
+успешно. Промежуточные failure logs не выдаются за acceptance.
+
+Docker Linux engine повторно недоступен. Image builds/Compose startup, настоящее
+Telegram/device/native live acceptance, внешние IPv4/IPv6/HTTPS/alerts/media и
+production host-loss restore, реальные переводы остаются непроверенными.
+Локальный кандидат готов к review/слиянию исправлений; продажи остаются BLOCKED
+до полного approval итогового SHA/config и отдельного решения владельца.
+Точный candidate SHA, source archive/hashes и evidence hashes — в новом manifest;
+это не production approval. Deployment требует чистого clone этого SHA.

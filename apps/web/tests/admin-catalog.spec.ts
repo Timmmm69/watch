@@ -5,7 +5,7 @@ const variantId = "00000000-0000-4000-8000-000000000043";
 const categoryId = "00000000-0000-4000-8000-000000000044";
 const assetId = "00000000-0000-4000-8000-000000000045";
 const category = { id: categoryId, name: "Часы", slug: "watches", status: "ACTIVE", sortOrder: 0, updatedAt: "1" };
-const variant = { id: variantId, sku: "SKU-42", status: "DRAFT", currency: "BYN", attributes: {}, priceMinor: 10000,
+const variant = { id: variantId, sku: "SKU-42", status: "DRAFT", currency: "BYN", attributes: {}, priceMinor: 10000, dropshipPriceMinor: null,
   partnerCommissionUnitMinor: 1000, supplierSettlementUnitMinor: 5000, inventoryExternalKey: "sheet-42", inventory: { safetyBuffer: 0 }, updatedAt: "1" };
 const asset = { id: assetId, type: "IMAGE", purpose: "STOREFRONT", status: "ACTIVE", sortOrder: 0, variantId: null, mediaUrl: null, text: null, sizeBytes: 4 };
 const initial = { id, title: "Часы T42", slug: "watch-t42", status: "DRAFT", description: "", brand: null as string | null,
@@ -75,7 +75,7 @@ test("catalog happy path: category, DRAFT product, variant, storage image, publi
   await core.getByLabel("Статус товара").selectOption("ACTIVE"); await core.getByRole("button").click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("ACTIVE_STOREFRONT_IMAGE_REQUIRED"); expect(state.current().status).toBe("DRAFT");
   const newVariant = page.getByRole("form", { name: "Новый вариант", exact: true });
-  await newVariant.getByLabel("SKU", { exact: true }).fill("SKU-42"); await newVariant.getByLabel("Цена (minor)", { exact: true }).fill("10000");
+  await newVariant.getByLabel("SKU", { exact: true }).fill("SKU-42"); await newVariant.getByLabel("Legacy цена (minor)", { exact: true }).fill("10000");
   await newVariant.getByLabel("Комиссия (minor)", { exact: true }).fill("1000"); await newVariant.getByLabel("Расчёт с поставщиком", { exact: false }).fill("5000");
   await newVariant.getByLabel("Внешний ключ остатков").fill("sheet-42"); await newVariant.getByRole("button").click();
   const editVariant = page.getByRole("form", { name: "Вариант SKU-42", exact: true });
