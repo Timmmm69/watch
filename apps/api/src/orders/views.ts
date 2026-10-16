@@ -17,6 +17,7 @@ interface OrderRow {
   subtotal_minor: number;
   total_minor: number;
   commission_eligible_snapshot: boolean;
+  economic_regime: "LEGACY_FIXED" | "DROPSHIP_MARKUP";
   created_at: Date;
   confirmed_at: Date | null;
   fulfilling_at: Date | null;
@@ -37,6 +38,8 @@ interface ItemRow {
   unit_price_minor: number;
   line_total_minor: number;
   partner_commission_unit_snapshot_minor: number;
+  dropship_unit_price_minor: number | null;
+  remuneration_total_minor: number | null;
 }
 
 interface FulfillmentRow {
@@ -186,6 +189,9 @@ export class OrderViewService {
     const items = await this.loadItems(row.id);
     return {
       ...baseDetail(row, this.supportContact),
+      economicRegime: row.economic_regime,
+      // Historical referral partners never gain access to Buyer recipient PII.
+      ...(row.economic_regime === "DROPSHIP_MARKUP" ? { fulfillment: await this.fulfillmentDetail(row.id) } : {}),
       items: items.map((item) => ({
         id: item.id,
         variantId: item.variant_id,
@@ -195,7 +201,9 @@ export class OrderViewService {
         quantity: item.quantity,
         unitPriceMinor: item.unit_price_minor,
         lineTotalMinor: item.line_total_minor,
-        partnerCommissionUnitSnapshotMinor: item.partner_commission_unit_snapshot_minor
+        partnerCommissionUnitSnapshotMinor: item.partner_commission_unit_snapshot_minor,
+        dropshipUnitPriceMinor: item.dropship_unit_price_minor,
+        remunerationTotalMinor: item.remuneration_total_minor
       }))
     };
   }
@@ -203,7 +211,7 @@ export class OrderViewService {
   private async loadItems(orderId: string): Promise<ItemRow[]> {
     return (await this.pool.query<ItemRow>(
       `SELECT id, variant_id, sku_snapshot, title_snapshot, attributes_snapshot, quantity,
-              unit_price_minor, line_total_minor, partner_commission_unit_snapshot_minor
+              unit_price_minor, line_total_minor, partner_commission_unit_snapshot_minor, dropship_unit_price_minor, remuneration_total_minor
        FROM order_items WHERE order_id = $1 ORDER BY id`,
       [orderId]
     )).rows;
@@ -215,5 +223,11 @@ export class OrderViewService {
        FROM order_fulfillment_details WHERE order_id = $1`,
       [orderId]
     )).rows[0];
+  }
+
+  private async fulfillmentDetail(orderId: string) {
+    const row = await this.loadFulfillment(orderId);
+    return row ? { recipientName: row.recipient_name, phone: row.phone, address: row.address, comment: row.comment,
+      redactedAt: row.redacted_at?.toISOString() ?? null } : null;
   }
 }

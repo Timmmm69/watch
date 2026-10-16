@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { currentLegalDocuments, loadApiRuntimeConfig } from "@watch/config";
 import { createDatabasePool } from "@watch/db";
-import { bootstrapRelease } from "./bootstrap.js";
+import { bootstrapRelease, provisionBootstrapAdmin } from "./bootstrap.js";
 import { verifyInstalledRelease } from "./readiness.js";
 import { cleanupTransportData, retryFailed, supportDiagnostics } from "./maintenance.js";
 import { verifyS12FinancialData } from "../finance/gate.js";
@@ -16,7 +16,7 @@ let stage = "config";
 try {
   const runtime = loadApiRuntimeConfig();
   if (command === "config") {
-    console.log(JSON.stringify({ status: "ok", command }));
+    console.log(JSON.stringify({ status: "ok", command, productionApprovalSha256: runtime.productionApprovalSha256 }));
   } else if (command === "database-name") {
     const database = decodeURIComponent(new URL(runtime.DATABASE_URL).pathname.slice(1));
     if (!/^(watch|watch_restore_[a-z0-9_]+)$/.test(database)) throw new Error("Unsupported deployment database name");
@@ -39,6 +39,10 @@ try {
     try {
       stage = command ?? "command";
       if (command === "bootstrap" && args.length === 1) await bootstrapRelease(pool, runtime, args[0]!);
+      else if (command === "provision-admin" && args.length === 3) {
+        const actorUserId=await provisionBootstrapAdmin(pool,runtime,args[0]!,args[1]!,args[2]!);
+        console.log(JSON.stringify({status:"ok",command,actorUserId}));
+      }
       else if (command === "verify" || command === "verify-restore") {
         await verifyInstalledRelease(pool, runtime);
         await verifyS12FinancialData(pool);

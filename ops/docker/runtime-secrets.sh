@@ -4,6 +4,10 @@ set -eu
 for name in DATABASE_URL TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET CSRF_SECRET \
   GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64 OBJECT_STORAGE_ACCESS_KEY_ID OBJECT_STORAGE_SECRET_ACCESS_KEY; do
   file_var="${name}_FILE"
+  if [ "$name" = GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64 ] && [ "${INVENTORY_PROVIDER:-}" = native ]; then
+    unset "$name" "$file_var"
+    continue
+  fi
   file=$(printenv "$file_var" || true)
   if [ -n "$file" ]; then
     if [ -n "$(printenv "$name" || true)" ]; then

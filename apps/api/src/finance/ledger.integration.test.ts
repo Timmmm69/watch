@@ -210,7 +210,7 @@ describe.skipIf(!databaseUrl)("Commission/Ledger migrations on real PostgreSQL",
     const id = randomUUID();
     await pool!.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [id, order, user]);
     await expect(pool!.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [randomUUID(), randomUUID(), user])).rejects.toMatchObject({ code: "23503" });
-    expect((await pool!.query("SELECT status FROM returns WHERE id=$1", [id])).rows[0].status).toBe("OPEN");
+    expect((await pool!.query("SELECT status FROM returns WHERE id=$1", [id])).rows[0].status).toBe("REQUESTED");
     const indexes = (await pool!.query("SELECT indexname FROM pg_indexes WHERE schemaname=$1", [schema])).rows.map((row) => row.indexname);
     for (const index of ["commissions_partner_id_state_created_at_idx", "commissions_order_id_idx", "ledger_entries_partner_id_bucket_created_at_idx", "ledger_entries_commission_id_created_at_idx", "ledger_entries_payout_id_created_at_idx", "ledger_entries_transaction_group_id_idx", "returns_order_id_status_idx", "returns_status_created_at_id_idx"]) expect(indexes).toContain(index);
     const columns = (await pool!.query("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='return_items'", [schema])).rows.map((row) => row.column_name);

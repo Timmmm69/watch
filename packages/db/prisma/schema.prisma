@@ -32,6 +32,13 @@ model User {
   requestedPayouts Payout[] @relation("PayoutRequestedBy")
   processedPayouts Payout[] @relation("PayoutProcessedBy")
   createdReturns Return[]
+  createdDropshipOrders Order[] @relation("OrderCreator")
+  inventoryInitializations InventoryInitialization[]
+  inventoryMovements InventoryMovement[]
+  moneyEntries OrderMoneyEntry[]
+  customerObligations CustomerObligation[]
+  directExpenses OrderDirectExpense[]
+  expenseReviews OrderExpenseReview[]
 
   @@map("users")
 }
@@ -117,11 +124,13 @@ model Partner {
   referralLinks ReferralLink[]
   attributionTouches AttributionTouch[]
   attributedOrders Order[]
+  ownedDropshipOrders Order[] @relation("DropshipOrderOwner")
   commissions Commission[]
   ledgerEntries LedgerEntry[]
   payouts Payout[]
   payoutAllocations PayoutAllocation[]
 
+  @@unique([id, userId])
   @@index([status])
   @@map("partners")
 }
@@ -132,6 +141,7 @@ model PartnerTermsAcceptance {
   acceptedAt      DateTime      @default(now()) @map("accepted_at") @db.Timestamptz(6)
   partner         Partner       @relation(fields: [partnerId], references: [id], onDelete: Restrict)
   legalDocument   LegalDocument @relation(fields: [legalDocumentId], references: [id], onDelete: Restrict)
+  orders          Order[] @relation("OrderPartnerTerms")
 
   @@id([partnerId, legalDocumentId])
   @@map("partner_terms_acceptances")
@@ -254,6 +264,7 @@ model ProductVariant {
   currency                     String          @db.VarChar(3)
   partnerCommissionUnitMinor   Int             @map("partner_commission_unit_minor")
   supplierSettlementUnitMinor  Int?            @map("supplier_settlement_unit_minor")
+  dropshipPriceMinor            Int?            @map("dropship_price_minor")
   inventoryExternalKey         String          @unique @map("inventory_external_key") @db.VarChar(200)
   status                       VariantStatus   @default(DRAFT)
   createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -337,6 +348,15 @@ model InventoryItem {
   lastSuccessfulSyncAt     DateTime?             @map("last_successful_sync_at") @db.Timestamptz(6)
   lastSuccessfulSyncRunId  String?               @map("last_successful_sync_run_id") @db.Uuid
   updatedAt                DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  // NULL native fields mean no reviewed cutover; external snapshots are never opening stock.
+  nativeInitializationId   String?               @map("native_initialization_id") @db.Uuid
+  nativeOnHand             Int?                  @map("native_on_hand")
+  nativeReservedQuantity   Int?                  @map("native_reserved_quantity")
+  nativeFreeValueMinor     Int?                  @map("native_free_value_minor")
+  nativeReservedKnownValueMinor Int?              @map("native_reserved_known_value_minor")
+  nativeReservedUnknownQuantity Int?              @map("native_reserved_unknown_quantity")
+  initialization          InventoryInitialization? @relation(fields: [nativeInitializationId], references: [id], onDelete: Restrict)
+  movements               InventoryMovement[]
   variant                  ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
   lastSuccessfulSyncRun    InventorySyncRun?     @relation(fields: [lastSuccessfulSyncRunId], references: [id], onDelete: Restrict)
 
@@ -418,6 +438,16 @@ enum OrderStatus {
   DELIVERY_FAILED
 }
 
+enum EconomicRegime {
+  LEGACY_FIXED
+  DROPSHIP_MARKUP
+}
+
+enum OrderOrigin {
+  LEGACY_BUYER
+  DROPSHIPPER
+}
+
 enum ReservationStatus {
   ACTIVE
   RELEASED
@@ -453,9 +483,9 @@ enum PayoutStatus {
 }
 
 enum ReturnStatus {
-  OPEN
+  REQUESTED
   COMPLETED
-  CANCELLED
+  REJECTED
 }
 
 enum ReservationReconciliationMethod {
@@ -505,7 +535,11 @@ model AttributionTouch {
 model Order {
   id                        String           @id @default(uuid()) @db.Uuid
   publicNumber              String           @unique @map("public_number") @db.VarChar(32)
-  buyerUserId               String           @map("buyer_user_id") @db.Uuid
+  buyerUserId               String?          @map("buyer_user_id") @db.Uuid
+  origin                    OrderOrigin      @default(LEGACY_BUYER)
+  economicRegime            EconomicRegime   @default(LEGACY_FIXED) @map("economic_regime")
+  creatorUserId             String?          @map("creator_user_id") @db.Uuid
+  partnerTermsDocumentId    String?          @map("partner_terms_document_id") @db.Uuid
   supplierId                String           @map("supplier_id") @db.Uuid
   attributionTouchId        String?          @map("attribution_touch_id") @db.Uuid
   partnerIdSnapshot         String?          @map("partner_id_snapshot") @db.Uuid
@@ -514,10 +548,10 @@ model Order {
   currency                  String           @db.VarChar(3)
   subtotalMinor             Int              @map("subtotal_minor")
   totalMinor                Int              @map("total_minor")
-  salesTermsDocumentId      String           @map("sales_terms_document_id") @db.Uuid
-  privacyDocumentId         String           @map("privacy_document_id") @db.Uuid
-  salesTermsAcceptedAt      DateTime         @map("sales_terms_accepted_at") @db.Timestamptz(6)
-  privacyAcknowledgedAt     DateTime         @map("privacy_acknowledged_at") @db.Timestamptz(6)
+  salesTermsDocumentId      String?          @map("sales_terms_document_id") @db.Uuid
+  privacyDocumentId         String?          @map("privacy_document_id") @db.Uuid
+  salesTermsAcceptedAt      DateTime?        @map("sales_terms_accepted_at") @db.Timestamptz(6)
+  privacyAcknowledgedAt     DateTime?        @map("privacy_acknowledged_at") @db.Timestamptz(6)
   idempotencyKey            String           @map("idempotency_key") @db.VarChar(100)
   requestFingerprint        String           @map("request_fingerprint") @db.Char(64)
   completionEligibleAt      DateTime?        @map("completion_eligible_at") @db.Timestamptz(6)
@@ -530,16 +564,24 @@ model Order {
   deliveryFailedAt          DateTime?        @map("delivery_failed_at") @db.Timestamptz(6)
   createdAt                 DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
-  buyer                     User             @relation(fields: [buyerUserId], references: [id], onDelete: Restrict)
+  buyer                     User?            @relation(fields: [buyerUserId], references: [id], onDelete: Restrict)
+  creator                   User?            @relation("OrderCreator", fields: [creatorUserId], references: [id], onDelete: Restrict)
+  owningDropshipper         Partner?         @relation("DropshipOrderOwner", fields: [partnerIdSnapshot, creatorUserId], references: [id, userId], onDelete: Restrict, onUpdate: Restrict, map: "orders_creator_owns_partner")
+  partnerTermsAcceptance    PartnerTermsAcceptance? @relation("OrderPartnerTerms", fields: [partnerIdSnapshot, partnerTermsDocumentId], references: [partnerId, legalDocumentId], onDelete: Restrict)
   supplier                  Supplier         @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   partnerSnapshot           Partner?         @relation(fields: [partnerIdSnapshot], references: [id], onDelete: Restrict)
-  salesTermsDocument        LegalDocument    @relation("OrderSalesTerms", fields: [salesTermsDocumentId], references: [id], onDelete: Restrict)
-  privacyDocument           LegalDocument    @relation("OrderPrivacy", fields: [privacyDocumentId], references: [id], onDelete: Restrict)
+  salesTermsDocument        LegalDocument?   @relation("OrderSalesTerms", fields: [salesTermsDocumentId], references: [id], onDelete: Restrict)
+  privacyDocument           LegalDocument?   @relation("OrderPrivacy", fields: [privacyDocumentId], references: [id], onDelete: Restrict)
   fulfillmentDetail         OrderFulfillmentDetail?
   items                     OrderItem[]
   commissions               Commission[]
   returns                   Return[]
+  moneyEntries              OrderMoneyEntry[]
+  customerObligations       CustomerObligation[]
+  directExpenses            OrderDirectExpense[]
+  expenseReviews            OrderExpenseReview[]
 
+  @@unique([creatorUserId, idempotencyKey])
   @@unique([buyerUserId, idempotencyKey])
   @@unique([id, partnerIdSnapshot])
   @@index([buyerUserId, createdAt])
@@ -578,11 +620,17 @@ model OrderItem {
   partnerCommissionUnitSnapshotMinor Int                   @map("partner_commission_unit_snapshot_minor")
   supplierSettlementUnitSnapshotMinor Int?                 @map("supplier_settlement_unit_snapshot_minor")
   lineTotalMinor                     Int                   @map("line_total_minor")
+  economicRegime                     EconomicRegime        @default(LEGACY_FIXED) @map("economic_regime")
+  dropshipUnitPriceMinor              Int?                  @map("dropship_unit_price_minor")
+  customerUnitPriceMinor              Int?                  @map("customer_unit_price_minor")
+  allocatedProcurementCostMinor       Int?                  @map("allocated_procurement_cost_minor")
+  remunerationTotalMinor              Int?                  @map("remuneration_total_minor")
   order                              Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
   variant                            ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
   reservations                       InventoryReservation[]
   commissions                        Commission[]
   returnItems                        ReturnItem[]
+  directExpenses                     OrderDirectExpense[]
 
   @@unique([orderId, variantId])
   @@unique([id, orderId])
@@ -604,6 +652,9 @@ model InventoryReservation {
   createdAt                          DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
   releasedAt                         DateTime?                           @map("released_at") @db.Timestamptz(6)
   consumedAt                         DateTime?                           @map("consumed_at") @db.Timestamptz(6)
+  economicRegime                     EconomicRegime                      @default(LEGACY_FIXED) @map("economic_regime")
+  allocatedProcurementCostMinor      Int?                                @map("allocated_procurement_cost_minor")
+  movements                         InventoryMovement[]
   orderItem                          OrderItem                           @relation(fields: [orderId, variantId], references: [orderId, variantId], onDelete: Restrict)
   variant                            ProductVariant                      @relation(fields: [variantId], references: [id], onDelete: Restrict)
   reconciliationInventorySyncRun     InventorySyncRun?                   @relation(fields: [reconciliationInventorySyncRunId], references: [id], onDelete: Restrict)
@@ -655,6 +706,7 @@ model Payout {
   requestedByUserId      String       @map("requested_by_user_id") @db.Uuid
   processedByAdminUserId String?      @map("processed_by_admin_user_id") @db.Uuid
   externalReference      String?      @map("external_reference") @db.VarChar(200)
+  verifiedTransferReference String?   @unique @map("verified_transfer_reference") @db.VarChar(200)
   requestedAt            DateTime     @default(now()) @map("requested_at") @db.Timestamptz(6)
   processedAt            DateTime?    @map("processed_at") @db.Timestamptz(6)
   note                   String?
@@ -715,7 +767,9 @@ model LedgerEntry {
 model Return {
   id                   String       @id @default(uuid()) @db.Uuid
   orderId              String       @map("order_id") @db.Uuid
-  status               ReturnStatus @default(OPEN)
+  status               ReturnStatus @default(REQUESTED)
+  createIdempotencyKey  String? @map("create_idempotency_key") @db.VarChar(100)
+  createFingerprint    String? @map("create_fingerprint") @db.Char(64)
   reason               String
   createdByAdminUserId String       @map("created_by_admin_user_id") @db.Uuid
   createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -724,10 +778,12 @@ model Return {
   order                Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   createdBy            User         @relation(fields: [createdByAdminUserId], references: [id], onDelete: Restrict)
   items                ReturnItem[]
+  obligations          CustomerObligation[]
 
   @@unique([id, orderId])
   @@index([orderId, status])
   @@index([status, createdAt, id])
+  @@unique([createdByAdminUserId, createIdempotencyKey], map: "returns_creator_idempotency")
   @@map("returns")
 }
 
@@ -739,8 +795,196 @@ model ReturnItem {
   quantity    Int
   return      Return    @relation(fields: [returnId, orderId], references: [id, orderId], onDelete: Restrict)
   orderItem   OrderItem @relation(fields: [orderItemId, orderId], references: [id, orderId], onDelete: Restrict)
+  movements   InventoryMovement[]
 
   @@unique([returnId, orderItemId])
   @@index([orderItemId])
   @@map("return_items")
+}
+
+enum InventoryMovementKind {
+  INITIALIZATION
+  RECEIPT
+  VALUATION
+  CORRECTION
+  RESERVE
+  RELEASE
+  SHIPMENT
+  RETURN_INSPECTION
+  SHIPMENT_LOSS
+}
+
+// These are facts only. T47/T49 own stock mutations and transactional projections.
+model InventoryInitialization {
+  id            String   @id @default(uuid()) @db.Uuid
+  operationKey  String   @unique @map("operation_key") @db.VarChar(200)
+  sourceReference String @map("source_reference") @db.VarChar(200)
+  actorUserId   String   @map("actor_user_id") @db.Uuid
+  reason        String   @db.VarChar(500)
+  occurredAt    DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor         User     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  items         InventoryItem[]
+  movements     InventoryMovement[]
+
+  @@map("inventory_initializations")
+}
+
+model InventoryMovement {
+  id            String   @id @default(uuid()) @db.Uuid
+  operationKey  String   @map("operation_key") @db.VarChar(200)
+  variantId     String   @map("variant_id") @db.Uuid
+  sequence      Int
+  kind          InventoryMovementKind
+  quantity      Int
+  onHandDelta   Int      @map("on_hand_delta")
+  reservedDelta Int      @map("reserved_delta")
+  procurementCostMinor Int? @map("procurement_cost_minor")
+  initializationId String? @map("initialization_id") @db.Uuid
+  reservationId String? @map("reservation_id") @db.Uuid
+  returnItemId  String? @map("return_item_id") @db.Uuid
+  returnedQuantityBefore Int? @map("returned_quantity_before")
+  saleableQuantity Int? @map("saleable_quantity")
+  saleableCostMinor Int? @map("saleable_cost_minor")
+  onHandAfter Int @map("on_hand_after")
+  reservedQuantityAfter Int @map("reserved_quantity_after")
+  freeValueAfterMinor Int? @map("free_value_after_minor")
+  reservedKnownValueAfterMinor Int @map("reserved_known_value_after_minor")
+  reservedUnknownQuantityAfter Int @map("reserved_unknown_quantity_after")
+  actorUserId   String   @map("actor_user_id") @db.Uuid
+  reason        String   @db.VarChar(500)
+  occurredAt    DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  inventoryItem InventoryItem @relation(fields: [variantId], references: [variantId], onDelete: Restrict)
+  initialization InventoryInitialization? @relation(fields: [initializationId], references: [id], onDelete: Restrict)
+  reservation InventoryReservation? @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  returnItem ReturnItem? @relation(fields: [returnItemId], references: [id], onDelete: Restrict)
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([variantId, sequence])
+  @@unique([operationKey, variantId, kind])
+  @@index([returnItemId])
+  @@map("inventory_movements")
+}
+
+enum OrderMoneyKind {
+  RECEIPT
+  REFUND
+  CORRECTION
+}
+
+enum CustomerObligationKind {
+  RETURN_REFUND
+  OVERPAYMENT
+  ADJUSTMENT
+}
+
+model CustomerObligation {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  operationKey String @unique @map("operation_key") @db.VarChar(200)
+  kind CustomerObligationKind
+  amountMinor Int @map("amount_minor")
+  adjustsObligationId String? @map("adjusts_obligation_id") @db.Uuid
+  returnId String? @map("return_id") @db.Uuid
+  actorUserId String @map("actor_user_id") @db.Uuid
+  reason String @db.VarChar(500)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  return Return? @relation(fields: [returnId, orderId], references: [id, orderId], onDelete: Restrict)
+  adjusts CustomerObligation? @relation("ObligationAdjustments", fields: [adjustsObligationId, orderId], references: [id, orderId], onDelete: Restrict)
+  adjustments CustomerObligation[] @relation("ObligationAdjustments")
+  moneyEntries OrderMoneyEntry[]
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, orderId])
+  @@index([orderId, occurredAt])
+  @@index([adjustsObligationId])
+  @@map("customer_obligations")
+}
+
+// Signed cash: receipts +, refunds -, corrections reverse one actual entry.
+model OrderMoneyEntry {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  operationKey String @unique @map("operation_key") @db.VarChar(200)
+  reference String @unique @db.VarChar(200)
+  kind OrderMoneyKind
+  amountMinor Int @map("amount_minor")
+  correctsEntryId String? @unique @map("corrects_entry_id") @db.Uuid
+  obligationId String? @map("obligation_id") @db.Uuid
+  actorUserId String @map("actor_user_id") @db.Uuid
+  reason String @db.VarChar(500)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  corrects OrderMoneyEntry? @relation("MoneyCorrection", fields: [correctsEntryId, orderId], references: [id, orderId], onDelete: Restrict)
+  corrections OrderMoneyEntry[] @relation("MoneyCorrection")
+  obligation CustomerObligation? @relation(fields: [obligationId, orderId], references: [id, orderId], onDelete: Restrict)
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, orderId])
+  @@index([orderId, occurredAt])
+  @@index([obligationId])
+  @@map("order_money_entries")
+}
+
+enum DirectExpenseKind {
+  DELIVERY
+  PACKAGING
+  PAYMENT_FEE
+  OTHER
+}
+
+// Paid external expenses only; inventory losses/refunds/remuneration are other facts.
+model OrderDirectExpense {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  orderItemId String? @map("order_item_id") @db.Uuid
+  operationKey String @unique @map("operation_key") @db.VarChar(200)
+  kind DirectExpenseKind
+  amountMinor Int @map("amount_minor")
+  correctsExpenseId String? @unique @map("corrects_expense_id") @db.Uuid
+  reference String @db.VarChar(200)
+  actorUserId String @map("actor_user_id") @db.Uuid
+  reason String @db.VarChar(500)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem OrderItem? @relation(fields: [orderItemId, orderId], references: [id, orderId], onDelete: Restrict)
+  corrects OrderDirectExpense? @relation("ExpenseCorrection", fields: [correctsExpenseId, orderId], references: [id, orderId], onDelete: Restrict)
+  corrections OrderDirectExpense[] @relation("ExpenseCorrection")
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([id, orderId])
+  @@index([orderId, occurredAt])
+  @@map("order_direct_expenses")
+}
+
+model InventoryAuthority {
+  singletonId Int @id @map("singleton_id")
+  mode String
+  actorUserId String @map("actor_user_id") @db.Uuid
+  reason String @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("inventory_authority")
+}
+
+model OrderExpenseReview {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  operationKey String @unique @map("operation_key") @db.VarChar(200)
+  expenseEntryCount Int @map("expense_entry_count")
+  reviewedTotalMinor Int @map("reviewed_total_minor")
+  actorUserId String @map("actor_user_id") @db.Uuid
+  reason String @db.VarChar(500)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@map("order_expense_reviews")
 }

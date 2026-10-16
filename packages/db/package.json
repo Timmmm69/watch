@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "db:status": "prisma migrate status"
+    "db:status": "prisma migrate status",
+    "test:schema": "node --test test/dropshipping.test.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

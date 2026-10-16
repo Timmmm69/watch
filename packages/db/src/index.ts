@@ -16,6 +16,10 @@ const productAssetsMigration = "20260930060000_product_assets";
 const referralAttributionMigration = "20260930070000_referral_attribution";
 const returnsMigration = "20261002000000_returns";
 const analyticsMigration = "20261004000000_analytics_cohorts";
+const dropshippingEconomicsMigration = "20261016000000_dropshipping_economics";
+const nativeInventoryMigration = "20261016010000_native_inventory";
+const atomicShippingReturnsMigration = "20261016020000_atomic_shipping_returns";
+const observedMoneyMigration = "20261016030000_observed_money";
 
 export function createDatabasePool(connectionString: string): Pool {
   const options: PoolConfig = {
@@ -39,7 +43,7 @@ export async function checkDatabaseReady(pool: Pool): Promise<void> {
   }
   // A rolled-back attempt cannot satisfy any installed-slice prerequisite.
   result.rows = result.rows.filter((row) => row.rolled_back_at === null);
-  for (const migration of [productAssetsMigration, referralAttributionMigration, returnsMigration, analyticsMigration]) {
+  for (const migration of [productAssetsMigration, referralAttributionMigration, returnsMigration, analyticsMigration, dropshippingEconomicsMigration, nativeInventoryMigration, atomicShippingReturnsMigration, observedMoneyMigration]) {
     if (!result.rows.some((row) => row.migration_name === migration && row.finished_at !== null && row.rolled_back_at === null)) {
       throw new Error(`Required migration ${migration} has not been applied`);
     }

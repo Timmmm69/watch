@@ -8,9 +8,10 @@ interface OrderSummary {
   itemCount: number; createdAt: string; commissionEligibleSnapshot?: boolean;
 }
 interface OrderDetail extends OrderSummary {
+  economicRegime?: "LEGACY_FIXED" | "DROPSHIP_MARKUP";
   timeline: { status: string; at: string }[];
   items: { id: string; title: string; sku: string; attributes: Record<string, unknown>; quantity: number;
-    unitPriceMinor: number; lineTotalMinor: number; partnerCommissionUnitSnapshotMinor?: number }[];
+    unitPriceMinor: number; lineTotalMinor: number; partnerCommissionUnitSnapshotMinor?: number; dropshipUnitPriceMinor?: number | null }[];
   fulfillment?: { recipientName: string | null; phone: string | null; address: string | null;
     comment: string | null; redactedAt: string | null } | null;
   supportContact: string;
@@ -75,10 +76,11 @@ export function OrdersScreen({ partner = false, blocked = false, publicNumber }:
       <h2 className="mt-5 text-lg font-semibold">Товары</h2><ul className="space-y-3">{detail.items.map((item) => <li key={item.id} className="rounded-xl bg-slate-900 p-4">
         <p>{item.title} · {item.sku}</p><p>{Object.entries(item.attributes).map(([key, value]) => `${key}: ${String(value)}`).join(", ")}</p>
         <p>{item.quantity} шт. × {money(item.unitPriceMinor, detail.currency)} = {money(item.lineTotalMinor, detail.currency)}</p>
-        {partner && <p>Комиссия по снимку за единицу: {money(item.partnerCommissionUnitSnapshotMinor ?? 0, detail.currency)}</p>}
+        {partner && <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Наценка R−D" : "Комиссия по снимку"} за единицу: {money(item.partnerCommissionUnitSnapshotMinor ?? 0, detail.currency)}</p>}
+        {partner && item.dropshipUnitPriceMinor != null && <p>D при оформлении: {money(item.dropshipUnitPriceMinor, detail.currency)} · R: {money(item.unitPriceMinor, detail.currency)}</p>}
       </li>)}</ul><p className="mt-5 text-xl">Итого: {money(detail.totalMinor, detail.currency)}</p>
-      {partner && <><p>Комиссия по снимку: {detail.commissionEligibleSnapshot ? "предусмотрена" : "не предусмотрена"}</p><p>Комиссия по снимку за заказ: {money(detail.items.reduce((sum, item) => sum + (item.partnerCommissionUnitSnapshotMinor ?? 0) * item.quantity, 0), detail.currency)}</p><Link className="inline-flex min-h-11 items-center underline" href="/partner/earnings">Состояние начислений и возвратов</Link></>}
-      {!partner && <section className="mt-5"><h2 className="text-lg font-semibold">Данные доставки</h2>
+      {partner && <><p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Наценка по снимку" : "Комиссия по снимку"}: {detail.commissionEligibleSnapshot ? "предусмотрена" : "не предусмотрена"}</p><p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Предполагаемая наценка за заказ" : "Комиссия по снимку за заказ"}: {money(detail.items.reduce((sum, item) => sum + (item.partnerCommissionUnitSnapshotMinor ?? 0) * item.quantity, 0), detail.currency)}</p><Link className="inline-flex min-h-11 items-center underline" href="/partner/earnings">Состояние начислений и возвратов</Link></>}
+      {(!partner || detail.economicRegime === "DROPSHIP_MARKUP") && <section className="mt-5"><h2 className="text-lg font-semibold">Данные доставки</h2>
         {detail.fulfillment && !detail.fulfillment.redactedAt ? <dl>{Object.entries({ Получатель: detail.fulfillment.recipientName, Телефон: detail.fulfillment.phone, Адрес: detail.fulfillment.address, Комментарий: detail.fulfillment.comment }).map(([label, value]) => value && <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : <p>Данные доставки удалены.</p>}
         <p className="mt-4">Для отмены или возврата свяжитесь с оператором и укажите номер заказа.</p>
         {support ? <a className="inline-flex min-h-11 items-center underline" href={support}>Связаться по заказу</a> : <p>Связаться по заказу: {detail.supportContact}</p>}

@@ -1,16 +1,73 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { spawn } from "node:child_process";
-import { deploy } from "./deploy.mjs";
+import { deploy as deployRelease } from "./deploy.mjs";
+import { verifyLaunchInputs, verifyReleaseSource } from "./launch.mjs";
+import { productionApprovalFixture } from "./fixtures/production-approval.mjs";
 import { productionSmoke } from "./smoke.mjs";
 import { encryptBackup, decryptBackup, authenticateBackup, retainedBackups, createBackup, restoreBackup, liveDatabaseName } from "./backup.mjs";
 
 const config = { services: { api: { image: `watch-api:${"a".repeat(40)}` } } };
+const deployWithPreflight=(mode,run,smoke,services,preflight)=>deployRelease(mode,run,smoke,services,preflight,async()=>{});
+// Existing sequencing tests isolate the new preflight; separate tests exercise its failures.
+const deploy = (mode, run, smoke, services) => deployWithPreflight(mode, run, smoke, services, async () => {});
+
+test("release source must match image SHA and be clean before any build or stop", async () => {
+  const sha="0123456789abcdef0123456789abcdef01234567";
+  const git=(head,status)=>args=>args[0]==="rev-parse"?head:status;
+  verifyReleaseSource(sha,git(sha,""));
+  assert.throws(()=>verifyReleaseSource(sha,git("other","")),/HEAD differs/);
+  for(const status of [" M apps/api/src/server.ts","?? apps/api/new.ts"]) {
+    assert.throws(()=>verifyReleaseSource(sha,git(sha,status)),/clean reviewed checkout/);
+  }
+  const {calls,run}=runner();
+  await assert.rejects(deployRelease("upgrade",run,undefined,undefined,async()=>{},()=>{throw new Error("Dirty source");}),/Dirty source/);
+  assert.deepEqual(calls,[["config","--format","json"],["ps","--all","--format","json"]]);
+});
+
+test("failed production approval preflight performs no DB writes or service stops", async () => {
+  const { calls, run } = runner();
+  await assert.rejects(deployWithPreflight("upgrade", run, undefined, undefined, async () => { throw new Error("Missing approval"); }), /Missing approval/);
+  assert.deepEqual(calls, [["config", "--format", "json"], ["ps", "--all", "--format", "json"], ["build", "migrate", "api", "web"]]);
+});
+
+test("launch preflight binds every image, origin, read-only mount and real backup configuration", async () => {
+  const releaseSha = "0123456789abcdef0123456789abcdef01234567";
+  const approval = productionApprovalFixture({ RELEASE_TAG: releaseSha, APP_BASE_URL: "https://watch.company.org", INVENTORY_PROVIDER:"native" });
+  const services = Object.fromEntries([["api", "watch-api"], ["worker", "watch-api"], ["bootstrap", "watch-api"], ["web", "watch-web"], ["migrate", "watch-migrate"]]
+    .map(([name, prefix]) => [name, { image: `${prefix}:${releaseSha}` }]));
+  services.api.volumes = [{ type: "bind", source: "/run/approval.json", target: "/run/production-approval.json", read_only: true }];
+  for(const name of ["api","worker","bootstrap"]) services[name].environment={INVENTORY_PROVIDER:"native"};
+  Object.assign(services.api.environment, { RELEASE_TAG: releaseSha, WATCH_PRODUCTION_APPROVAL_FILE: "/run/production-approval.json" });
+  services["reverse-proxy"] = { environment: { APP_BASE_URL: approval.appBaseUrl } };
+  const env = { BACKUP_DIRECTORY: approval.infrastructure.backupDirectory, BACKUP_KEY_FILE: approval.infrastructure.backupKeyFile };
+  let checked = 0;
+  const verify = async (...args) => { checked++; assert.deepEqual(args, Object.values(env)); };
+  const bytes = Buffer.from(JSON.stringify(approval));
+  const read = async () => bytes;
+  const run = async () => JSON.stringify({ status: "ok", productionApprovalSha256: createHash("sha256").update(bytes).digest("hex") });
+  await verifyLaunchInputs({ services }, run, env, verify, read);
+  assert.equal(checked, 1);
+  for (const mutate of [
+    (s) => { s.web.image = `watch-web:${"b".repeat(40)}`; },
+    (s) => { s.api.volumes[0].read_only = false; },
+    (s) => { s.api.environment.RELEASE_TAG = "other"; },
+    (s) => { s.worker.environment.INVENTORY_PROVIDER = "google_sheets"; },
+    (s) => { s.bootstrap.secrets = [{source:"google_service_account"}]; },
+    (s) => { s["reverse-proxy"].environment.APP_BASE_URL = "https://other.company.org"; },
+  ]) {
+    const copy = structuredClone(services); mutate(copy);
+    await assert.rejects(verifyLaunchInputs({ services: copy }, run, env, verify, read));
+  }
+  await assert.rejects(verifyLaunchInputs({ services }, run, {}, verify, read), /Backup environment/);
+  await assert.rejects(verifyLaunchInputs({ services }, run, env, async () => { throw new Error("Backup mount absent"); }, read), /Backup mount/);
+  await assert.rejects(verifyLaunchInputs({ services }, async () => '{"status":"ok"}', env, verify, read), /validated file/);
+});
 test("backup follows the configured database after a restored database is promoted", async () => {
   assert.equal(await liveDatabaseName(async () => '{"database":"watch_restore_promoted"}'), "watch_restore_promoted");
   await assert.rejects(liveDatabaseName(async () => '{"database":"postgres"}'));
@@ -37,6 +94,21 @@ test("upgrade quiesces writers, recreates migration/bootstrap jobs and verifies 
   assert.ok(index((a) => a.at(-1) === "migrate" && a.includes("--force-recreate")) < index((a) => a.at(-1) === "bootstrap"));
   assert.ok(index((a) => a.at(-1) === "verify") < index((a) => a[0] === "up" && a.at(-1) === "reverse-proxy"));
   assert.deepEqual(smoke, ["https://public.example.com"]);
+});
+
+test("prepare bootstraps a fresh native database while keeping writers and public traffic stopped", async () => {
+  const {calls,run}=runner();
+  await deploy("prepare",run,async()=>assert.fail("must not smoke/open traffic"),async()=>assert.fail("must not start services"));
+  assert.ok(calls.some(a=>a.at(-1)==="bootstrap"));
+  assert.equal(calls.some(a=>a[0]==="up" && (a.includes("api") || a.includes("worker") || a.includes("reverse-proxy"))),false);
+});
+
+test("stage verifies internal services without starting the public proxy", async () => {
+  const {calls,run}=runner();
+  await deploy("stage",run,async()=>assert.fail("must not run public smoke"),async()=>assert.fail("must not open traffic"));
+  assert.ok(calls.some(a=>a.at(-1)==="verify"));
+  assert.ok(calls.some(a=>a[0]==="up" && a.includes("api")));
+  assert.equal(calls.some(a=>a[0]==="up" && a.includes("reverse-proxy")),false);
 });
 
 for (const gate of ["migrate", "bootstrap", "verify", "worker"]) test(`failed ${gate} gate keeps traffic closed`, async () => {

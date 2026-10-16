@@ -73,6 +73,13 @@ export async function evaluateActiveProductInvariant(
   const images = await checks.countActiveStorefrontImages(client, productId);
   if (images < 1) unmet.push(ACTIVE_STOREFRONT_IMAGE_REQUIRED);
 
+  const native = await client.query(`SELECT 1 FROM product_variants v JOIN inventory_items i ON i.variant_id=v.id
+    JOIN products p ON p.id=v.product_id WHERE v.product_id=$1 AND v.status='ACTIVE'
+    AND i.native_initialization_id IS NOT NULL AND (v.dropship_price_minor IS NULL
+      OR length(trim(p.description))=0 OR NOT EXISTS (SELECT 1 FROM product_assets a WHERE a.product_id=p.id
+        AND (a.variant_id IS NULL OR a.variant_id=v.id) AND a.type='IMAGE' AND a.purpose='STOREFRONT' AND a.status='ACTIVE'))`,[productId]);
+  if (native.rowCount) unmet.push("NATIVE_CARD_INCOMPLETE");
+
   return { productId, unmet };
 }
 

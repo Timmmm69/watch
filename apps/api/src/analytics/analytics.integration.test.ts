@@ -71,7 +71,7 @@ describe.skipIf(!pool)("T35 Analytics against PostgreSQL", () => {
     const full = await order("2026-09-09T00:00:00Z", "COMPLETED", true, t);
     await order("2026-09-10T00:00:00Z", "COMPLETED", false, blocked, otherPartner, null);
     await returned(partial.id, partial.itemId, 1);
-    await returned(partial.id, partial.itemId, 1, "OPEN");
+    await returned(partial.id, partial.itemId, 1, "REQUESTED");
     await returned(full.id, full.itemId, 2);
     await order("2026-09-11T00:00:00Z", "CANCELLED");
     await order("2026-09-12T00:00:00Z", "DELIVERY_FAILED");

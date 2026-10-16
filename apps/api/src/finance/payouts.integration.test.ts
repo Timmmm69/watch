@@ -1,7 +1,7 @@
 import { randomUUID, randomBytes } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PayoutService } from "./payouts.js";
 import { PartnerEarningsService } from "./earnings.js";
 import { createOrderCommissions, releaseCommission } from "./commissions.js";
@@ -268,7 +268,7 @@ describe.skipIf(!pool)("T33 payouts against PostgreSQL", () => {
       FROM payouts WHERE id=$1`, [requested.payout.id])).rows[0];
     const writesBeforeRetry = await counts();
     await expect(service.transition(admin,requested.payout.id,{ target: "PAID",externalReference: "changed",note: "changed" }))
-      .resolves.toMatchObject({ status: "PAID" });
+      .rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect((await pool!.query(`SELECT processed_by_admin_user_id,processed_at,external_reference,note
       FROM payouts WHERE id=$1`, [requested.payout.id])).rows[0]).toEqual(terminalBeforeRetry);
     expect(await counts()).toEqual(writesBeforeRetry);
@@ -309,7 +309,7 @@ describe.skipIf(!pool)("T33 payouts against PostgreSQL", () => {
   it("serializes equal and opposing concurrent terminal transitions", async () => {
     await commission(6000);
     const same = await service.request(user,"same-transition");
-    const bothPaid = await Promise.all(["a","b"].map((reference) =>
+    const bothPaid = await Promise.all(["same","same"].map((reference) =>
       service.transition(admin,same.payout.id,{ target: "PAID",externalReference: reference })));
     expect(bothPaid.map((p) => p.status)).toEqual(["PAID","PAID"]);
     expect((await pool!.query("SELECT count(*)::int AS count FROM ledger_entries WHERE payout_id=$1 AND entry_type='PAYOUT_PAID'", [same.payout.id])).rows[0].count).toBe(1);
@@ -391,8 +391,10 @@ describe.skipIf(!pool)("T33 payouts against PostgreSQL", () => {
   });
 });
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!pool) return;
+  // Recreate disposable facts instead of weakening append-only protections.
+  await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
   await pool.query(`CREATE SCHEMA ${schema}`);
   const root = new URL("../../../../packages/db/prisma/migrations/", import.meta.url);
   for (const migration of (await readdir(root,{ withFileTypes: true })).filter((m) => m.isDirectory()).sort((a,b) => a.name.localeCompare(b.name)))
@@ -412,12 +414,6 @@ beforeAll(async () => {
   await pool.query(`INSERT INTO attribution_touches (id,buyer_user_id,partner_id,referral_link_id,source_fingerprint,expires_at)
     VALUES ($1,$2,$3,$4,$5,now()+interval '30 days')`, [touch,admin,partner,link,"a".repeat(64)]);
   service = new PayoutService(pool,"BYN",terms);
-});
-beforeEach(async () => {
-  if (!pool) return;
-  await pool.query("TRUNCATE orders,payouts,events,audit_logs CASCADE");
-  await pool.query("UPDATE partners SET status='ACTIVE' WHERE id=$1", [partner]);
-  await pool.query("UPDATE users SET is_blocked=false WHERE id=$1", [user]);
   await pool.query("INSERT INTO partner_terms_acceptances (partner_id,legal_document_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [partner,terms.id]);
 });
 afterAll(async () => { if (pool) { await pool.query(`DROP SCHEMA ${schema} CASCADE`); await pool.end(); } });

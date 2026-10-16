@@ -3,6 +3,8 @@ import type { Pool, PoolClient } from "pg";
 import type { LegalDocumentRef } from "@watch/config";
 import { payoutRequestSchema, payoutResponseSchema, payoutTransitionSchema, type PayoutListQuery } from "@watch/contracts";
 import { partnerProgramMutationAllowed, partnerTermsCurrent, type PartnerStatus } from "../partner/partner.js";
+import { commissionPayable } from "./coverage.js";
+import { safeFinancialReferenceSchema } from "@watch/contracts";
 
 export class PayoutError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -73,12 +75,29 @@ export class PayoutService {
       await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [identity.partner_id]);
       const row = (await client.query<StoredPayout>("SELECT * FROM payouts WHERE id=$1 FOR UPDATE", [id])).rows[0]!;
       if (row.status === target) {
+        if (target === "PAID" && row.external_reference !== externalReference) throw new PayoutError("IDEMPOTENCY_CONFLICT");
         const result = await this.project(client,row);
         await client.query("COMMIT");
         return result;
       }
       if (row.status !== "REQUESTED") throw new PayoutError("PAYOUT_ALREADY_FINALIZED");
       const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
+      if (target === "PAID") {
+        if (!safeFinancialReferenceSchema.safeParse(externalReference).success) throw new PayoutError("VALIDATION_ERROR");
+        const duplicate = await client.query("SELECT id FROM payouts WHERE external_reference=$1 AND id<>$2 AND status='PAID'", [externalReference, id]);
+        if (duplicate.rowCount) throw new PayoutError("IDEMPOTENCY_CONFLICT");
+        const allocations = (await client.query(`SELECT a.commission_id,
+          c.gross_amount_minor-c.reversed_amount_minor AS net,
+          (SELECT sum(a2.amount_minor) FROM payout_allocations a2 JOIN payouts p ON p.id=a2.payout_id
+            WHERE a2.commission_id=c.id AND p.status IN ('REQUESTED','PAID')) AS committed
+          FROM payout_allocations a JOIN commissions c ON c.id=a.commission_id WHERE a.payout_id=$1`, [id])).rows;
+        for (const allocation of allocations) {
+          if (Number(allocation.committed) > allocation.net || !await commissionPayable(client, allocation.commission_id, now))
+            throw new PayoutError("PAYOUT_FACTS_CHANGED");
+        }
+        const available = Number((await client.query("SELECT COALESCE(sum(amount_minor),0)::text AS amount FROM ledger_entries WHERE partner_id=$1 AND bucket='AVAILABLE'", [row.partner_id])).rows[0].amount);
+        if (available < 0) throw new PayoutError("PAYOUT_FACTS_CHANGED");
+      }
       const group = randomUUID(), action = target === "PAID" ? "paid" : "reject";
       const entries: [string,number][] = [["PAYOUT_LOCKED",-row.amount_minor]];
       if (target === "REJECTED") entries.push(["AVAILABLE",row.amount_minor]);
@@ -88,8 +107,8 @@ export class PayoutService {
         target === "PAID" ? "PAYOUT_PAID" : "PAYOUT_REJECT",group,
         `payout:${id}:${action}${bucket === "AVAILABLE" ? ":available" : ""}`,now]);
       const updated = (await client.query<StoredPayout>(`UPDATE payouts SET status=$2,processed_by_admin_user_id=$3,
-        processed_at=$4,external_reference=$5,note=$6 WHERE id=$1 RETURNING *`,
-      [id,target,adminId,now,externalReference ?? null,note ?? null])).rows[0]!;
+        processed_at=$4,external_reference=$5,note=$6,verified_transfer_reference=$7 WHERE id=$1 RETURNING *`,
+      [id,target,adminId,now,externalReference ?? null,note ?? null,target === "PAID" ? externalReference : null])).rows[0]!;
       const payload = { v: 1,payoutId: id,partnerId: row.partner_id,amountMinor: row.amount_minor,status: target };
       await client.query(`INSERT INTO events (id,type,aggregate_type,aggregate_id,dedupe_key,payload,created_at)
         VALUES ($1,$2,'Payout',$3,$4,$5,$6)`, [randomUUID(),`PAYOUT_${target}`,id,
@@ -101,7 +120,9 @@ export class PayoutService {
       const result = await this.project(client,updated);
       await client.query("COMMIT");
       return result;
-    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    } catch (error) { await client.query("ROLLBACK");
+      if ((error as { code?: string }).code === "23505") throw new PayoutError("IDEMPOTENCY_CONFLICT");
+      throw error; }
     finally { client.release(); }
   }
 
@@ -179,6 +200,10 @@ export class PayoutService {
         ORDER BY c.available_at,c.id FOR UPDATE OF c`, [partner.id])).rows;
       let remaining = amount;
       const allocations: { commissionId: string; amount: number }[] = [];
+      // A full-balance request must not use an uncovered credit to offset old debt.
+      // Validate all unallocated credits before choosing the deterministic allocations.
+      for (const commission of commissions) if (BigInt(commission.allocatable) > 0n
+        && !await commissionPayable(client, commission.id, now)) throw new PayoutError("PAYOUT_FACTS_CHANGED");
       for (const commission of commissions) {
         if (!commission.available_at) throw new PayoutError("INTERNAL_INVARIANT_VIOLATION");
         const eligible = BigInt(commission.allocatable);

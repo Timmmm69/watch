@@ -146,7 +146,7 @@ describe.skipIf(!pool)("T32 Return completion and reversals against PostgreSQL",
     const next = await service.create(admin, { orderId: id, reason: "Corrupt quantity", items: [{ orderItemId: itemId, quantity: 1 }] });
     await pool!.query("UPDATE return_items SET quantity=2 WHERE return_id=$1", [next.id]);
     await expect(service.complete(next.id, admin)).rejects.toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
-    expect((await service.detail(next.id)).status).toBe("OPEN");
+    expect((await service.detail(next.id)).status).toBe("REQUESTED");
     expect((await finance(id)).commissions[0].reversed_amount_minor).toBe(0);
   });
 
@@ -160,7 +160,7 @@ describe.skipIf(!pool)("T32 Return completion and reversals against PostgreSQL",
       const before = await finance(id);
       await expect(service.complete(created.id, admin)).rejects.toThrow("t32 audit failure");
       expect(await finance(id)).toEqual(before);
-      expect((await service.detail(created.id)).status).toBe("OPEN");
+      expect((await service.detail(created.id)).status).toBe("REQUESTED");
       expect((await pool!.query("SELECT * FROM events WHERE aggregate_id=$1", [created.id])).rows).toEqual([]);
     } finally { await pool!.query("DROP TRIGGER fail_t32_audit ON audit_logs; DROP FUNCTION fail_t32_audit()"); }
     await service.complete(created.id, admin);
@@ -176,7 +176,7 @@ describe.skipIf(!pool)("T32 Return completion and reversals against PostgreSQL",
     expect(rejected.reason).toMatchObject({ code: "RETURN_NOT_ALLOWED" });
     const status = (await service.detail(created.id)).status;
     expect((await finance(id)).commissions[0].reversed_amount_minor).toBe(status === "COMPLETED" ? 100 : 0);
-    if (status === "CANCELLED") {
+    if (status === "REJECTED") {
       const next = await service.create(admin, { orderId: id, reason: "Retry", items: [{ orderItemId: itemId, quantity: 1 }] });
       await service.complete(next.id, admin);
     }
@@ -190,14 +190,14 @@ describe.skipIf(!pool)("T32 Return completion and reversals against PostgreSQL",
     await pool!.query("UPDATE order_items SET partner_commission_unit_snapshot_minor=100 WHERE id=$1", [itemId]);
     const corrupt = await service.create(admin, { orderId: id, reason: "Missing", items: [{ orderItemId: itemId, quantity: 1 }] });
     await expect(service.complete(corrupt.id, admin)).rejects.toMatchObject({ code: "INTERNAL_INVARIANT_VIOLATION" });
-    expect((await service.detail(corrupt.id)).status).toBe("OPEN");
+    expect((await service.detail(corrupt.id)).status).toBe("REQUESTED");
     expect((await finance(id)).commissions).toEqual([]);
     expect((await pool!.query("SELECT * FROM events WHERE aggregate_id=$1", [corrupt.id])).rows).toEqual([]);
   });
 });
 
 describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () => {
-  it("creates OPEN Returns only for DELIVERED/COMPLETED Orders with server-derived Order identity", async () => {
+  it("creates REQUESTED Returns for SHIPPED/DELIVERED/COMPLETED Orders with server-derived identity", async () => {
     const { id, itemId } = await placeOrder(admin, false);
     await expect(service.create(admin, { orderId: id, reason: "Not delivered yet", items: [{ orderItemId: itemId, quantity: 1 }] }, "request-t31"))
       .rejects.toMatchObject({ code: "RETURN_NOT_ALLOWED" });
@@ -205,11 +205,11 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
       .rejects.toMatchObject({ code: "NOT_FOUND" });
     const transitions = new AdminOrderService(pool!, 0);
     for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED"] as const) await transitions.transition(id, admin, target);
-    await expect(service.create(admin, { orderId: id, reason: "Shipped already", items: [{ orderItemId: itemId, quantity: 1 }] }))
-      .rejects.toMatchObject({ code: "RETURN_NOT_ALLOWED" });
+    const refused = await service.create(admin, { orderId: id, reason: "Shipped refusal", items: [{ orderItemId: itemId, quantity: 1 }] });
+    await service.reject(refused.id, admin);
     await transitions.transition(id, admin, "DELIVERED");
     const created = await service.create(admin, { orderId: id, reason: "Damaged in transit", items: [{ orderItemId: itemId, quantity: 1 }] }, "request-t31");
-    expect(created).toMatchObject({ orderId: id, status: "OPEN", reason: "Damaged in transit", currency,
+    expect(created).toMatchObject({ orderId: id, status: "REQUESTED", reason: "Damaged in transit", currency,
       createdByAdminUserId: admin, reversalPreviewMinor: 0 });
     expect(created.orderPublicNumber).toMatch(/^W-/);
     expect(created.items).toHaveLength(1);
@@ -220,15 +220,15 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     expect(audit).toMatchObject({ actor_user_id: admin, action: "admin.return.create", entity_id: created.id });
     expect(audit.metadata).toMatchObject({ orderId: id, items: [{ orderItemId: itemId, quantity: 1 }] });
     expect(JSON.stringify(audit.metadata)).not.toMatch(/Damaged/);
-    await pool!.query("UPDATE returns SET status='CANCELLED' WHERE id=$1", [created.id]);
+    await pool!.query("UPDATE returns SET status='REJECTED' WHERE id=$1", [created.id]);
     await setStatus(id, "COMPLETED");
     const second = await service.create(admin, { orderId: id, reason: "Second return", items: [{ orderItemId: itemId, quantity: 1 }] });
-    expect(second.status).toBe("OPEN");
+    expect(second.status).toBe("REQUESTED");
   });
 
   it("rejects every non-DELIVERED/non-COMPLETED Order state", async () => {
     const { id, itemId } = await placeOrder(admin, false);
-    for (const status of ["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "CANCELLED", "DELIVERY_FAILED"]) {
+    for (const status of ["PLACED", "CONFIRMED", "FULFILLING", "CANCELLED", "DELIVERY_FAILED"]) {
       await setStatus(id, status);
       await expect(service.create(admin, { orderId: id, reason: "x", items: [{ orderItemId: itemId, quantity: 1 }] }))
         .rejects.toMatchObject({ code: "RETURN_NOT_ALLOWED" });
@@ -236,8 +236,8 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     for (const status of ["DELIVERED", "COMPLETED"]) {
       await setStatus(id, status);
       const created = await service.create(admin, { orderId: id, reason: "x", items: [{ orderItemId: itemId, quantity: 1 }] });
-      expect(created.status).toBe("OPEN");
-      await pool!.query("UPDATE returns SET status='CANCELLED' WHERE id=$1", [created.id]);
+      expect(created.status).toBe("REQUESTED");
+      await pool!.query("UPDATE returns SET status='REJECTED' WHERE id=$1", [created.id]);
     }
   });
 
@@ -250,8 +250,8 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     await expect(service.create(admin, request)).rejects.toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
     await pool!.query("UPDATE returns SET status='COMPLETED' WHERE id=$1", [first.id]);
     await expect(service.create(admin, request)).rejects.toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
-    await pool!.query("UPDATE returns SET status='CANCELLED' WHERE id=$1", [first.id]);
-    expect((await service.create(admin, request)).status).toBe("OPEN");
+    await pool!.query("UPDATE returns SET status='REJECTED' WHERE id=$1", [first.id]);
+    expect((await service.create(admin, request)).status).toBe("REQUESTED");
     await expect(service.create(admin, { orderId: id, reason: "Unknown item", items: [{ orderItemId: randomUUID(), quantity: 1 }] }))
       .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     const foreign = await placeOrder(admin, false);
@@ -266,12 +266,12 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     const worker = new OrderCompletionWorker(pool!);
     expect(await worker.completeOrder(id)).toBe(false);
     const cancelled = await service.cancel(created.id, admin, "request-t31");
-    expect(cancelled.status).toBe("CANCELLED");
+    expect(cancelled.status).toBe("REJECTED");
     const before = await counts();
     const replay = await service.cancel(created.id, admin, "request-t31");
     expect(replay).toEqual(cancelled);
     expect(await counts()).toEqual(before);
-    expect((await pool!.query("SELECT status FROM returns WHERE id=$1", [created.id])).rows[0].status).toBe("CANCELLED");
+    expect((await pool!.query("SELECT status FROM returns WHERE id=$1", [created.id])).rows[0].status).toBe("REJECTED");
     expect(await worker.completeOrder(id)).toBe(true);
     const completed = await service.create(admin, { orderId: id, reason: "Never", items: [{ orderItemId: itemId, quantity: 1 }] });
     await pool!.query("UPDATE returns SET status='COMPLETED' WHERE id=$1", [completed.id]);
@@ -288,7 +288,7 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
     expect(rejected.reason).toMatchObject({ code: "RETURN_QUANTITY_EXCEEDED" });
-    expect((await pool!.query("SELECT * FROM returns WHERE order_id=$1 AND status='OPEN'", [id])).rowCount).toBe(1);
+    expect((await pool!.query("SELECT * FROM returns WHERE order_id=$1 AND status='REQUESTED'", [id])).rowCount).toBe(1);
     expect((await pool!.query("SELECT count(*)::int AS count FROM return_items")).rows[0].count).toBe(1);
   });
 
@@ -297,14 +297,14 @@ describe.skipIf(!pool)("T31 Return workflow foundation against PostgreSQL", () =
     await deliver(first.id);
     const created = await service.create(admin, { orderId: first.id, reason: "Listed", items: [{ orderItemId: first.itemId, quantity: 1 }] });
     const query = { page: 1, limit: 20 };
-    expect(await service.list({ ...query, status: "OPEN" })).toMatchObject({ total: 1, items: [{ id: created.id, itemCount: 1 }] });
-    expect((await service.list({ ...query, status: "OPEN" })).items[0]!.orderPublicNumber).toMatch(/^W-/);
-    expect(await service.list({ ...query, status: "CANCELLED" })).toMatchObject({ total: 0, items: [] });
+    expect(await service.list({ ...query, status: "REQUESTED" })).toMatchObject({ total: 1, items: [{ id: created.id, itemCount: 1 }] });
+    expect((await service.list({ ...query, status: "REQUESTED" })).items[0]!.orderPublicNumber).toMatch(/^W-/);
+    expect(await service.list({ ...query, status: "REJECTED" })).toMatchObject({ total: 0, items: [] });
     expect(await service.list({ ...query, orderId: first.id })).toMatchObject({ total: 1 });
     expect(await service.list({ ...query, orderId: randomUUID() })).toMatchObject({ total: 0 });
     expect((await service.list({ page: 2, limit: 20 })).items).toHaveLength(0);
     await pool!.query("UPDATE returns SET created_at=now()-interval '1 hour' WHERE id=$1", [created.id]);
-    await pool!.query("UPDATE returns SET status='CANCELLED' WHERE id=$1", [created.id]);
+    await pool!.query("UPDATE returns SET status='REJECTED' WHERE id=$1", [created.id]);
     const newer = await service.create(admin, { orderId: first.id, reason: "Newer", items: [{ orderItemId: first.itemId, quantity: 1 }] });
     const listed = await service.list({ ...query, limit: 1 });
     expect(listed).toMatchObject({ total: 2, items: [{ id: newer.id }] });
@@ -351,6 +351,14 @@ beforeAll(async () => {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   for (const migration of ["20260930100000_cart", "20260930110000_orders", "20261001000000_commission_ledger", "20261002000000_returns"])
     await pool.query(await readFile(new URL(`../../../../packages/db/prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8"));
+  // Legacy financial fixtures use the retained pre-native schema. Full T49
+  // migrations and immutable native journal are tested separately.
+  await pool.query(`ALTER TYPE "ReturnStatus" RENAME VALUE 'OPEN' TO 'REQUESTED';
+    ALTER TABLE orders ADD economic_regime text DEFAULT 'LEGACY_FIXED';
+    ALTER TYPE "ReturnStatus" RENAME VALUE 'CANCELLED' TO 'REJECTED';
+    ALTER TABLE returns ADD create_idempotency_key varchar(100), ADD create_fingerprint char(64);
+    ALTER TABLE order_items ADD economic_regime text DEFAULT 'LEGACY_FIXED';
+    ALTER TABLE inventory_reservations ADD economic_regime text DEFAULT 'LEGACY_FIXED'`);
   await pool.query("INSERT INTO platform_settings (singleton_id,platform_currency) VALUES (1,$1)", [currency]);
   await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,$2,'Admin')", [admin, 424240]);
   await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,$2,'Partner')", [partnerUser, 424241]);

@@ -8,7 +8,7 @@ import { PartnerEarnings } from "./earnings-client";
 type Terms = { id: string; version: string; sha256: string; contentMarkdown: string; effectiveAt: string };
 type Partner = { id: string; status: "ACTIVE" | "BLOCKED" };
 export type PartnerAuth = { user: { firstName: string }; partner?: Partner | null;
-  partnerTermsReacceptRequired?: boolean; csrfToken: string; isAdmin?: boolean; launchTarget?: string };
+  partnerTermsReacceptRequired?: boolean; csrfToken: string; isAdmin?: boolean; launchTarget?: string; nativeCommerce?: boolean };
 
 export function partnerReacceptUrl() {
   return `/partner/onboarding?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
@@ -122,11 +122,11 @@ export function PartnerDashboard({ auth, onAccepted }: { auth: PartnerAuth; onAc
          <Link href="/shop">Партнёрский каталог</Link><Link href="/partner/orders">Заказы</Link><Link href="/partner/earnings">Доходы</Link><Link href="/partner/payouts">Выплаты</Link>
       </nav>
       <PartnerEarnings compact blocked={blocked} />
-      <section aria-label="Партнёрская ссылка" className="rounded-xl bg-slate-900 p-4"><h2 className="text-lg font-semibold">Ваша ссылка на магазин</h2>
+      {!auth.nativeCommerce && <section aria-label="Партнёрская ссылка" className="rounded-xl bg-slate-900 p-4"><h2 className="text-lg font-semibold">Ваша ссылка на магазин</h2>
         <button className="mt-3 min-h-11 rounded bg-blue-600 px-4 disabled:opacity-40" disabled={pending || blocked || !!auth.partnerTermsReacceptRequired} onClick={() => void getLink()}>Получить ссылку</button>
         {link && <><p className="mt-3 break-all">{link}</p><button className="min-h-11 underline" onClick={() => { void navigator.clipboard.writeText(link).catch(() => setError("Не удалось скопировать. Скопируйте показанную ссылку вручную.")); }}>Скопировать ссылку</button></>}
         {error && <p role="alert">{error}</p>}
-      </section>
+      </section>}
       <section id="orders" className="rounded-xl bg-slate-900 p-4"><h2 className="text-lg font-semibold">Последние заказы</h2>
         {ordersError ? <><p role="alert">Не удалось загрузить заказы.</p><button className="min-h-11 underline" onClick={() => setRetry((n) => n + 1)}>Повторить</button></>
            : orders === null ? <p role="status">Загрузка заказов…</p> : !orders.length ? <p>Заказов пока нет</p> : <ul>{orders.map((order) => <li className="mt-3" key={order.publicNumber}><Link className="inline-flex min-h-11 items-center underline" href={`/partner/orders/${encodeURIComponent(order.publicNumber)}`}>{order.publicNumber}</Link> · {order.status} · {new Intl.NumberFormat("ru-BY", { style: "currency", currency: order.currency }).format(order.totalMinor / 100)}</li>)}</ul>}

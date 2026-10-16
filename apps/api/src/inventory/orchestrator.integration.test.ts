@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { deriveCsrfToken } from "../auth/middleware.js";
 import { SESSION_COOKIE_NAME, type SessionStore } from "../auth/session.js";
@@ -34,19 +34,17 @@ function deferred() {
   return { promise, resolve };
 }
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!pool || !adminPool) return;
+  // New immutable economic facts forbid CASCADE TRUNCATE, even when empty.
+  // Recreate this disposable schema without weakening production constraints.
+  await adminPool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
   await adminPool.query(`CREATE SCHEMA ${schema}`);
   const root = new URL("../../../../packages/db/prisma/migrations/", import.meta.url);
   for (const name of (await readdir(root)).sort()) {
     if (name.startsWith("202")) await pool.query(await readFile(new URL(`${name}/migration.sql`, root), "utf8"));
   }
   await pool.query("INSERT INTO platform_settings (platform_currency) VALUES ('BYN')");
-});
-
-beforeEach(async () => {
-  if (!pool) return;
-  await pool.query("TRUNCATE inventory_items, inventory_sync_runs, events, audit_logs, product_variants, products, suppliers, users CASCADE");
   await pool.query("INSERT INTO users (id, telegram_user_id, first_name) VALUES ($1, 42, 'Sync')", [actor]);
   const supplier = randomUUID();
   product = randomUUID();
@@ -70,7 +68,7 @@ afterAll(async () => {
 });
 
 describe.skipIf(!databaseUrl)("safe inventory orchestration against PostgreSQL", () => {
-  it("successful sync after shipment keeps MANUAL reservations ACTIVE against the newly applied snapshot", async () => {
+  it("successful legacy sync after shipment preserves consumed reservations against the newly applied snapshot", async () => {
     const sales = randomUUID(), privacy = randomUUID(), cart = randomUUID();
     for (const [id,type,hash] of [[sales,"SALES_TERMS","a"],[privacy,"PRIVACY","b"]])
       await pool!.query(`INSERT INTO legal_documents (id,type,version,sha256,content_markdown,effective_at)
@@ -90,7 +88,7 @@ describe.skipIf(!databaseUrl)("safe inventory orchestration against PostgreSQL",
     const run = await orchestrator([{ externalKey: "key-0",quantity: 9 },{ externalKey: "key-1",quantity: 10 }]).run();
     expect((await pool!.query("SELECT * FROM inventory_reservations WHERE order_id=$1", [result.order.id])).rows[0]).toEqual(original);
     expect((await new InventoryService(pool!).listItems({ page: 1,limit: 20 })).items.find((item) => item.variantId === variants[0]))
-      .toMatchObject({ sourceQuantity: 9,activeReservations: 1,sellable: 8,reconciliationPending: 1,lastSuccessfulSyncRunId: run.id });
+      .toMatchObject({ sourceQuantity: 9,activeReservations: 0,sellable: 9,reconciliationPending: 0,lastSuccessfulSyncRunId: run.id });
   });
   it("wires Google Sheets into Admin sync with real PostgreSQL apply and preserves catalog authority", async () => {
     const token = vi.spyOn(GoogleAuth.prototype, "getAccessToken").mockResolvedValue("test-token");

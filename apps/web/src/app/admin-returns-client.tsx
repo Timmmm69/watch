@@ -4,15 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
-const labels: Record<string, string> = { OPEN: "Открыт", COMPLETED: "Завершён", CANCELLED: "Отменён" };
+const labels: Record<string, string> = { REQUESTED: "Запрошен", COMPLETED: "Завершён", REJECTED: "Отклонён" };
 type ReturnItem = { id: string; orderItemId: string; variantId: string; sku: string; title: string; quantity: number;
-  unitPriceMinor: number; partnerCommissionUnitSnapshotMinor: number };
+  unitPriceMinor: number; partnerCommissionUnitSnapshotMinor: number;
+  physicalAcceptanceAllowed?: boolean; inspectedQuantity?: number; saleableQuantity?: number };
 type ReturnDetail = { id: string; orderId: string; orderPublicNumber: string; status: string; reason: string; note: string | null;
+  economicRegime?: string;
   createdByAdminUserId: string; currency: string; items: ReturnItem[]; reversalPreviewMinor: number; createdAt: string; updatedAt: string };
 type ReturnSummary = { id: string; orderId: string; orderPublicNumber: string; status: string; reason: string; note: string | null;
   itemCount: number; createdAt: string; updatedAt: string };
 type Page = { items: ReturnSummary[]; total: number; page: number; limit: number };
 type OrderView = { id: string; publicNumber: string; status: string; currency: string;
+  economicRegime?: string;
   items?: { id: string; title: string; sku: string; quantity: number; unitPriceMinor: number;
     partnerCommissionUnitMinor: number }[] };
 const money = (value: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(value / 100);
@@ -39,9 +42,15 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
   const [order, setOrder] = useState<OrderView | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [reason, setReason] = useState("");
-  const request = useCallback(async (url: string, payload?: object) => {
+  const createAttempt = useRef({ fingerprint: "", key: "" });
+  const inspectAttempt = useRef({ fingerprint: "", key: "" });
+  const [inspection, setInspection] = useState<Record<string, { quantity: number; saleableQuantity: number }>>({});
+  const [inspectionReason, setInspectionReason] = useState("");
+  const [inspected, setInspected] = useState(false);
+  const request = useCallback(async (url: string, payload?: object, idempotencyKey?: string) => {
     const send = () => fetch(url, { method: payload ? "POST" : "GET", credentials: "same-origin", cache: "no-store",
-      headers: payload ? { "content-type": "application/json", "x-csrf-token": token.current } : undefined,
+      headers: payload ? { "content-type": "application/json", "x-csrf-token": token.current,
+        ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) } : undefined,
       body: payload ? JSON.stringify(payload) : undefined });
     let response = await send();
     if (response.status === 401) {
@@ -56,7 +65,8 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
       }
       throw Object.assign(new Error(body.error?.code === "RETURN_QUANTITY_EXCEEDED"
         ? "Превышено доступное к возврату количество. Проверьте заказ и попробуйте снова."
-        : body.error?.code === "RETURN_NOT_ALLOWED" ? "Возврат доступен только для доставленных или завершённых заказов."
+        : body.error?.code === "RETURN_NOT_ALLOWED" ? "Действие недоступно в текущем состоянии возврата или заказа. Возврат можно запросить после отправки."
+        : body.error?.code === "IDEMPOTENCY_CONFLICT" ? "Этот повтор отличается от сохранённой операции. Обновите возврат и проверьте результат."
         : body.error?.code === "NOT_FOUND" ? "Возврат не найден." : "Не удалось выполнить действие. Повторите попытку."), { code: body.error?.code });
     }
     return body;
@@ -105,8 +115,8 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
     try {
       const body = await request(`/api/v1/admin/orders/${encodeURIComponent(orderId)}`);
       setOrder(body);
-      if (body.status !== "DELIVERED" && body.status !== "COMPLETED")
-        setError("Возврат доступен только для доставленных или завершённых заказов.");
+      if (!["SHIPPED", "DELIVERED", "COMPLETED"].includes(body.status))
+        setError("Возврат доступен после отправки, в том числе при отказе от получения.");
     } catch (cause) { setError((cause as Error).message); }
     finally { busy.current = false; }
   };
@@ -119,7 +129,10 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
     if (!reason.trim()) { setError("Укажите причину возврата."); return; }
     busy.current = true; setPending("create"); ++sequence.current;
     try {
-      const created = await request("/api/v1/admin/returns", { orderId: order.id, reason: reason.trim(), items });
+      const payload = { orderId: order.id, reason: reason.trim(), items };
+      const fingerprint = JSON.stringify(payload);
+      if (createAttempt.current.fingerprint !== fingerprint) createAttempt.current = { fingerprint, key: crypto.randomUUID() };
+      const created = await request("/api/v1/admin/returns", payload, createAttempt.current.key);
       setOrder(null); setQuantities({}); setReason(""); setOrderInput("");
       await router.push(`/admin/returns/${created.id}`);
     } catch (cause) { setError((cause as Error).message); }
@@ -129,7 +142,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
     if (!returnId || busy.current || blocked || loading) return;
     busy.current = true; setPending("cancel"); ++sequence.current;
     try {
-      await request(`/api/v1/admin/returns/${encodeURIComponent(returnId)}/cancel`, {});
+      await request(`/api/v1/admin/returns/${encodeURIComponent(returnId)}/reject`, {});
       setConfirm(false); setError("");
       await refresh();
     } catch (cause) { setError((cause as Error).message); setConfirm(false); }
@@ -149,6 +162,23 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
   };
   const preview = order && order.currency
     ? (order.items ?? []).reduce((sum, item) => sum + item.partnerCommissionUnitMinor * (quantities[item.id] ?? 0), 0) : 0;
+  const acceptPhysical = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!returnId || busy.current || blocked || !inspected) return;
+    const items = Object.entries(inspection).filter(([, value]) => value.quantity > 0)
+      .map(([returnItemId, value]) => ({ returnItemId, ...value }));
+    if (!items.length) { setError("Укажите фактически полученное количество."); return; }
+    const payload = { reason: inspectionReason.trim(), items };
+    const fingerprint = JSON.stringify(payload);
+    if (inspectAttempt.current.fingerprint !== fingerprint) inspectAttempt.current = { fingerprint, key: crypto.randomUUID() };
+    busy.current = true; setPending("inspect");
+    try {
+      await request(`/api/v1/admin/returns/${encodeURIComponent(returnId)}/inspect`, { ...payload, operationKey: inspectAttempt.current.key });
+      setInspection({}); setInspected(false); setInspectionReason(""); inspectAttempt.current = { fingerprint: "", key: "" };
+      await refresh();
+    } catch (cause) { setError((cause as Error).message); }
+    finally { busy.current = false; setPending(""); }
+  };
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={returnId ? "/admin/returns" : "/shop"}>← {returnId ? "Все возвраты" : "Каталог"}</Link>
     <h1 className="text-2xl font-semibold">{returnId ? "Возврат" : "Возвраты администратора"}</h1>
@@ -174,14 +204,14 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
           <label>ID заказа<input className="block min-h-11 w-full bg-slate-800" pattern={uuidPattern} value={orderInput}
             onChange={(e) => setOrderInput(e.target.value)} /></label>
           <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending}>Загрузить заказ</button></form>
-        {order && ["DELIVERED", "COMPLETED"].includes(order.status) && <form aria-label="Оформление возврата" onSubmit={submitCreate} className="mt-3 space-y-3">
+        {order && ["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && <form aria-label="Оформление возврата" onSubmit={submitCreate} className="mt-3 space-y-3">
           <p>Заказ {order.publicNumber} · {labels[order.status] ?? order.status}</p>
           {order.items?.map((item) => <div key={item.id} className="rounded bg-slate-800 p-3">
             <p>{item.title} · {item.sku} · в заказе {item.quantity} шт.</p>
-            <p>Комиссия за единицу: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
+            <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
             <label>Количество к возврату<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={item.quantity}
               value={quantities[item.id] ?? 0} onChange={(e) => setQuantities({ ...quantities, [item.id]: Math.max(0, Math.min(item.quantity, Number(e.target.value) || 0)) })} /></label></div>)}
-          <p>Предполагаемый возврат комиссии: {money(preview, order.currency)} — применится при завершении возврата.</p>
+          <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Предполагаемое сторно наценки" : "Предполагаемый возврат комиссии"}: {money(preview, order.currency)} — применится при завершении возврата.</p>
           <label className="block">Причина возврата<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
           <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || !Object.values(quantities).some((q) => q > 0)}>{pending === "create" ? "Сохранение…" : "Создать возврат"}</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setOrder(null); setQuantities({}); setReason(""); setOrderInput(""); }}>Сбросить</button>
@@ -193,20 +223,48 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
         {detail.note && <p className="break-words">Комментарий: {detail.note}</p>}</section>
       <section><h2 className="font-semibold">Позиции</h2>{detail.items.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">
         <h3>{item.title} · {item.sku}</h3><p>{item.quantity} шт. × {money(item.unitPriceMinor, detail.currency)}</p>
-        <p>Комиссия за единицу: {money(item.partnerCommissionUnitSnapshotMinor, detail.currency)}</p></article>)}</section>
-      <p>{detail.status === "COMPLETED" ? "Возвращённая комиссия" : "Предполагаемый возврат комиссии"}: {money(detail.reversalPreviewMinor, detail.currency)}{detail.status === "OPEN" && " — применится при завершении возврата."}</p>
-      {detail.status === "OPEN" && <section className="flex flex-wrap gap-3">
+        <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitSnapshotMinor, detail.currency)}</p></article>)}</section>
+      <p>{detail.economicRegime === "DROPSHIP_MARKUP"
+        ? detail.status === "COMPLETED" ? "Сторнированная наценка" : "Предполагаемое сторно наценки"
+        : detail.status === "COMPLETED" ? "Возвращённая комиссия" : "Предполагаемый возврат комиссии"}: {money(detail.reversalPreviewMinor, detail.currency)}{detail.status === "REQUESTED" && " — применится при завершении возврата."}</p>
+      <p>Завершение возврата не пополняет склад. Фактический приём и проверка пригодности оформляются отдельно.</p>
+      {detail.status === "REQUESTED" && <section className="flex flex-wrap gap-3">
         <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
-        <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отменить возврат"}</button></section>}
-      {confirmComplete && detail.status === "OPEN" && <section aria-label="Подтверждение завершения возврата" className="rounded border border-slate-600 p-4">
-        <p>Завершить возврат и списать комиссию {money(detail.reversalPreviewMinor, detail.currency)}? Уже выплаченная комиссия образует задолженность партнёра.</p>
+        <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отклонить возврат"}</button></section>}
+      {confirmComplete && detail.status === "REQUESTED" && <section aria-label="Подтверждение завершения возврата" className="rounded border border-slate-600 p-4">
+        <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Завершить возврат и сторнировать наценку" : "Завершить возврат и списать комиссию"} {money(detail.reversalPreviewMinor, detail.currency)}? Уже выплаченное вознаграждение образует задолженность {detail.economicRegime === "DROPSHIP_MARKUP" ? "дропшиппера" : "партнёра"}.</p>
         <label>Комментарий (необязательно)<textarea className="block w-full bg-slate-900" maxLength={1000} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} /></label>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void completeReturn()}>Да, завершить возврат</button>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => setConfirmComplete(false)}>Вернуться</button></section>}
-      {confirm && <section aria-label="Подтверждение отмены возврата" className="rounded border border-slate-600 p-4">
-        <p>Отменить возврат? После отмены заказ снова сможет завершиться автоматически.</p>
-        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void cancelReturn()}>Да, отменить возврат</button>
+      {confirm && <section aria-label="Подтверждение отклонения возврата" className="rounded border border-slate-600 p-4">
+        <p>Отклонить возврат? Блокировка затронутых позиций снимется; первоначальный срок удержания не меняется.</p>
+        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void cancelReturn()}>Да, отклонить возврат</button>
         <button className="min-h-11 px-4 underline" onClick={() => setConfirm(false)}>Вернуться</button></section>}
+      {detail.status === "COMPLETED" && detail.items.some(item => item.physicalAcceptanceAllowed) &&
+        <section className="rounded border border-slate-600 p-4"><h2 className="text-xl font-semibold">Физический приём возврата</h2>
+          <p>В продажу поступят только полученные, проверенные и пригодные часы. Непригодное количество учитывается как потеря.</p>
+          <form aria-label="Физический приём возврата" onSubmit={acceptPhysical} className="mt-3 space-y-4">
+            {detail.items.filter(item => item.physicalAcceptanceAllowed).map(item => {
+              const remaining = item.quantity - (item.inspectedQuantity ?? 0);
+              const value = inspection[item.id] ?? { quantity: 0, saleableQuantity: 0 };
+              return <fieldset key={item.id} disabled={remaining === 0 || !!pending} className="space-y-2">
+                <legend>{item.title} · {item.sku}</legend>
+                <p>Проверено: {item.inspectedQuantity ?? 0} из {item.quantity}; в продажу: {item.saleableQuantity ?? 0}. Осталось принять: {remaining}.</p>
+                {remaining > 0 && <>
+                  <label className="block">Фактически получено, {item.sku}<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={remaining} step={1}
+                    value={value.quantity} onChange={event => setInspection({ ...inspection, [item.id]: { ...value, quantity: Number(event.target.value) } })} /></label>
+                  <label className="block">Из них пригодно, {item.sku}<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={value.quantity} step={1}
+                    value={value.saleableQuantity} onChange={event => setInspection({ ...inspection, [item.id]: { ...value, saleableQuantity: Number(event.target.value) } })} /></label>
+                </>}
+              </fieldset>;
+            })}
+            {detail.items.some(item => item.physicalAcceptanceAllowed && item.quantity > (item.inspectedQuantity ?? 0)) && <>
+              <label className="block">Основание приёмки<textarea className="block w-full bg-slate-900" required maxLength={500} value={inspectionReason} onChange={event => setInspectionReason(event.target.value)} /></label>
+              <label className="flex gap-2"><input type="checkbox" checked={inspected} onChange={event => setInspected(event.target.checked)} />Подтверждаю фактическое получение и проверку пригодности</label>
+              <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!inspected || !!pending || loading}>{pending === "inspect" ? "Сохранение…" : "Принять проверенный товар"}</button>
+            </>}
+          </form>
+        </section>}
     </>}
   </div></main>;
 }

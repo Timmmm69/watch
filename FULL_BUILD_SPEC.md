@@ -1,10 +1,12 @@
-# Full Build Specification v1.3 — Final
+# Full Build Specification v1.4 — Dropshipping amendment
 
 **Project:** Telegram Partner Commerce Platform  
 **Status:** authoritative implementation specification  
-**Version:** 1.3-final  
-**Date:** 2026-10-02 (MVP U02–U05 amendment)
+**Version:** 1.4-dropshipping
+**Date:** 2026-10-14 (owner-confirmed dropshipping process)
 **Implementation status:** frozen for implementation. Application code proceeds only through an explicit vertical-slice task from Section 21; this document defines requirements but does not itself authorize an unscoped whole-project implementation.
+
+**Current business authority:** Section 30 supersedes conflicting earlier partner/referral, pricing, inventory-source, checkout, payment-observation and analytics requirements. The owner confirmed: sales only in this application; the dropshipper creates the customer's order and sets the customer price; the platform receives payment and pays the dropshipper the price difference. This is a requirements amendment, not certification of existing code. T46–T52 in `CODEX_TASKS.md` must align the implementation before a new release is called ready.
 
 **Source-of-truth status:** this document supersedes `FULL_BUILD_SPEC_v1.2.md`, `FULL_BUILD_SPEC_v1.1.md`, `FULL_BUILD_SPEC_v1.0.md` and the previous `PRODUCT.md`, `MVP.md`, `ARCHITECTURE.md`, `DATA_MODEL.md`, `BUSINESS_RULES.md`, `BACKLOG.md`, `DECISIONS.md` as active implementation sources. The only active implementation requirements are **this document** plus Project Instructions. Older files may remain only as historical artifacts; they must be excluded from Codex implementation context or visibly marked `HISTORICAL — DO NOT USE FOR IMPLEMENTATION` by the project/tooling layer. If a tool automatically injects those files as active requirements, S00 must not start until that context is corrected.
 
@@ -2227,3 +2229,55 @@ This replaces earlier provisional fulfilment/hold decisions and launch gates. Se
 - Return ↔ ledger ↔ completion: REQUESTED/COMPLETED/REJECTED, affected-item release blocks, Order-level completion check, original 14-calendar-day hold and append-only proportional reversals.
 - Analytics ↔ snapshots: transaction-derived metrics available; missing economics unavailable, never zero; new economics snapshot into new OrderItems only.
 Relative document links and changed-line whitespace checks pass. Release/operator checklists attest implementation and runtime configuration of resolved U03/U05; they do not reopen product decisions. Historical implementation notes are explicitly separated from current requirements. Application conformity, migrations, concurrency and live operations remain unverified by this documentation-only task and are queued in CODEX_TASKS.md.
+
+# 30. Owner-confirmed dropshipping amendment — 2026-10-14
+
+This section has precedence over conflicting earlier business requirements, including Sections 1/2/8/9/12/14/16/18/22 and U01. Unrelated authentication, authorization, idempotency, immutable history, monetary bounds, security, backup and operational requirements remain applicable. The detailed operating and measurement design is [inventory-and-analytics-operating-model.md](docs/inventory-and-analytics-operating-model.md); this section and Project Instructions control implementation.
+
+## 30.1 Actors and scope
+
+The authenticated Partner is a dropshipper. They select watches, enter quantity, the customer's unit price and recipient name/phone/address, then create their own Order. The recipient need not have a Telegram account and MUST NOT be impersonated as an authenticated Buyer or be assigned fictitious legal acceptance. The Order's creator/owning dropshipper and fulfilment recipient are distinct facts. Ownership, required Terms and privacy/data handling must follow the real actors. Existing legal production prerequisites remain and must reflect this workflow.
+
+All sales are in this application. External-channel sale entry and a second sales ledger are out of MVP. Buyer self-checkout, referral attribution, referral-touch conversion and fixed per-SKU affiliate rewards are not the main new order flow. Do not delete historical records or allow old routes to bypass new price/ownership/inventory rules. Only one new order flow is required at launch.
+
+## 30.2 Prices and immutable commercial facts
+
+Distinguish C (allocated procurement cost), D (owner-set dropshipper unit price) and R (dropshipper-set customer unit price). The platform receives R. Dropshipper remuneration is R−D per retained unit; owner gross margin is D minus allocated C. Platform contribution additionally subtracts actual platform-paid direct expenses and unrecovered losses. Do not subtract remuneration from D again or present R−C as owner profit.
+
+Server controls D, procurement allocation, quantity bounds and eligibility. The dropshipper explicitly supplies R; for the initial workflow require R>=D to avoid introducing a dropshipper top-up/debt for selling below D. There is no arbitrary percentage markup cap beyond existing monetary bounds. A changed D before checkout requires explicit recalculation/reconfirmation. Persist D, R, total allocated procurement cost, quantity and remuneration in new OrderItem/reservation snapshots; do not silently repurpose historical supplier-settlement fields or rewrite historical commercial snapshots.
+
+Shipping/packaging/transfer charges are not automatically deducted from the promised R−D. Record actual platform-paid charges separately. Customer delivery charges, if later collected by the platform, require a separate amount outside the watch markup; do not smuggle them into R−D.
+
+## 30.3 U01 replacement: internal inventory authority
+
+Google Sheets is an initial inventory/preparation artifact only. The new deployment's sole live stock authority is the application's PostgreSQL inventory journal. Disable periodic Sheets reads and remove live Google credentials/age/outage checks as prerequisites of this mode. Never run a Sheets snapshot writer over internal quantities or invent periodic sync timestamps to make native inventory appear fresh. Existing provider code and old sync facts can remain for historical compatibility, not as a second authority.
+
+Initial import validates stable SKU mappings, nonnegative integer quantities and known procurement totals; duplicate/invalid rows fail preview/apply. Apply is explicit and repeat of the same initialization cannot re-add/reset stock. Missing quantity is not zero; unknown cost is not zero. Existing deployments require reconciled physical counts and a reviewed migration/cutover; do not automatically treat a stale external snapshot as native opening stock.
+
+Preserve `sellable=max(0,on_hand-active_reservations-safety_buffer)`. Checkout reserves stock. Pre-shipment cancellation releases it. SHIPPED, physical quantity decrement, procurement-value decrement, terminal CONSUMED reservations, inventory movements and audit/event effects commit atomically exactly once. Concurrent checkout/cancellation/correction/return/receipt must observe the existing deterministic lock discipline. No network stock proof or per-reservation source reconciliation is required for new native orders.
+
+Returns never reactivate old reservations. Refund completion alone does not restock. A linked, idempotent physical-return acceptance adds only actually received, inspected, saleable quantity/cost; it cannot exceed returned quantity or be repeated. Non-saleable returns are write-offs/losses. Receipts and manual corrections use the same journal with actor/reason and stable operation identity. No unaudited arbitrary stock edit.
+
+## 30.4 Procurement allocation
+
+Track known physical procurement value and reserved value. A receipt adds quantity and actual total cost. For known free quantity Q and free value V, reserve q<Q at floor(V*q/Q) minor units; for q=Q allocate all remaining V. Existing reserved costs remain immutable across later differently priced receipts. Shipping removes the reservation's allocated cost; cancellation releases the allocation. A partial return uses cumulative proportional allocation from the original line; the last/full return consumes the rounding remainder. Saleable return restores that value; write-off records it as a loss, without double counting.
+
+This is the chosen management-cost allocation, not serial-unit purchase tracing or tax accounting. An unknown-cost receipt makes new allocations from the mixed free pool unknown; never average only covered costs as the full basis. Previously known reservation allocations remain immutable. A known receipt alone cannot restore an unknown pool's basis: require an attributable, fully documented current-stock valuation or exhaustion of the old quantity followed by a known receipt. An empty pool has known zero value. Prospective valuation never silently fills historical unknown Order snapshots. T46/T47 must encode these constraints and compatible migration; unknown cost/margin is never filled with zero or the newest catalog cost.
+
+## 30.5 Observed money and remuneration
+
+No automatic bank/provider integration is required. Add a minimal attributable, idempotent manual money journal for actual receipt, refund and correction amounts per Order, with occurrence time and safe reference. Creation/CONFIRMED/DELIVERED are never proof of receipt. Shipment with collection on delivery remains possible. Overpayment is a customer liability, not extra commission or profit.
+
+Reuse the existing immutable Commission/Ledger/Payout lifecycle with new remuneration computed from snapshotted R−D instead of fixed catalog commission. Release requires delivered retained goods, the configured original 14-calendar-day hold, no unresolved REQUESTED return on affected items and sufficient observed money after actual refunds and confirmed outstanding refund obligations to cover retained customer sales. Do not fabricate partially paid remuneration. Unaffected items may release when their own gates and Order money coverage pass. Payment receipt/refund/return/release/payout races must serialize and re-check current facts.
+
+Keep REQUESTED/COMPLETED/REJECTED Returns, partial quantity reversals, no false DELIVERED for refused shipments, no restarted hold after rejection, and append-only late reversals/debt after payout. Mark PAID only after actual off-platform transfer; do not collect bank/card credentials. Historical fixed-commission orders continue under their recorded economic facts.
+
+## 30.6 Actionable analytics
+
+Use Europe/Minsk business-date boundaries. Main results: retained completed orders/units, owner contribution when procurement/expenses are sufficiently known, and dropshipper obligations split pending/available/payout-locked/paid/debt. Additional required views: per-SKU demand/current availability/returns/contribution and per-dropshipper orders/retained results/owner contribution/remuneration/returns. Show R sales value, D owner sales value and observed money distinctly.
+
+Order-quality cohorts use created_at and their current outcomes, with unfinished Orders visible. Actual delivery flow uses delivered_at; observed cash uses money occurrence times. Do not mix those periods in a single profit formula. Contribution of a closed Order cohort includes its actual cancellation/refusal/return losses. Unknown procurement or unreviewed expenses makes complete contribution unavailable; explicitly reviewed zero expense is distinct. Partial covered totals must be named and never passed off as full business results. No compulsory referral-click, Buyer-registration or retention metrics in the main new workflow.
+
+## 30.7 Implementation/release boundary
+
+Apply corrective T46–T52 in bounded order, reusing the existing catalog/media, Orders, PostgreSQL locks, ledger, payouts, UI and operations. Write no parallel commerce/financial engine. Preserve historical data and disable incompatible new-write paths before cutover. Existing production attestations and Google-outage smoke do not certify the native/dropshipping workflow; configuration, evidence and acceptance must be updated for it. Live inventory import, Telegram order flow, received-money/return/remuneration/payout scenarios and backup/restore remain required before production completion.

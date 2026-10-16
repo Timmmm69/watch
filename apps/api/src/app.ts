@@ -2,7 +2,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { installSecurityRateLimits } from "./security/rate-limits.js";
 import multipart from "@fastify/multipart";
 import { timingSafeEqual } from "node:crypto";
-import { analyticsQuerySchema } from "@watch/contracts";
+import { analyticsQuerySchema, ownerWorkQuerySchema } from "@watch/contracts";
 import type { AnalyticsService } from "./analytics/analytics.js";
 import {
   adminCategoryCreateRequestSchema,
@@ -29,8 +29,10 @@ import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
+import type { DropshipCheckoutService } from "./orders/dropship-checkout.js";
+import { dropshipCheckoutRequestSchema, dropshipCheckoutResponseSchema } from "@watch/contracts";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
-import { adminReturnCreateRequestSchema, adminReturnListQuerySchema, adminReturnCompleteRequestSchema } from "@watch/contracts";
+import { adminReturnCreateRequestSchema, adminReturnListQuerySchema, adminReturnCompleteRequestSchema, adminReturnInspectionSchema } from "@watch/contracts";
 import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
 import { OrderTransitionError, type AdminOrderService } from "./orders/admin.js";
 import { ReturnError, type AdminReturnService } from "./returns/returns.js";
@@ -51,6 +53,7 @@ import { adminPartnerListQuerySchema, adminPartnerPageQuerySchema, adminPartnerM
   adminPartnerListResponseSchema, adminPartnerDetailSchema, adminPartnerStateSchema } from "@watch/contracts";
 import type { PartnerEarningsService } from "./finance/earnings.js";
 import { PayoutError, type PayoutService } from "./finance/payouts.js";
+import { MoneyError, type OrderMoneyService } from "./finance/money.js";
 import { payoutRequestSchema, payoutResponseSchema, payoutListQuerySchema, adminPayoutListQuerySchema,
   payoutListResponseSchema, payoutTransitionSchema } from "@watch/contracts";
 import { partnerEarningsQuerySchema, partnerEarningsResponseSchema } from "@watch/contracts";
@@ -68,10 +71,12 @@ export type CatalogApi = Pick<CatalogService,
 export type InventoryApi = Pick<InventoryService, "listItems" | "listSyncRuns">;
 
 export interface AppDependencies {
+  money?: Pick<OrderMoneyService, "detail" | "record">;
   adminPartners?: Pick<AdminPartnerService, "list" | "detail" | "setStatus">;
-  analytics?: Pick<AnalyticsService, "summary" | "dashboard">;
+  analytics?: Pick<AnalyticsService, "summary" | "dashboard"> & Partial<Pick<AnalyticsService, "owner">>;
   checkReadiness: () => Promise<void>;
   logger?: boolean;
+  nativeCommerce?: boolean;
   trustedProxyIp?: string;
   auth?: {
     store: SessionStore;
@@ -90,9 +95,9 @@ export interface AppDependencies {
   inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
-  checkout?: Pick<CheckoutService, "checkout">;
+  checkout?: Pick<CheckoutService | DropshipCheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
-  returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete">;
+  returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete"> & Partial<Pick<AdminReturnService, "reject" | "inspect">>;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
   earnings?: Pick<PartnerEarningsService, "list">;
   payouts?: Pick<PayoutService, "request" | "requestSettlement"> & Partial<Pick<PayoutService,
@@ -100,7 +105,7 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, nativeCommerce = false, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners, money }: AppDependencies) {
   const app = Fastify({
     logger: logger ? { redact: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "req.headers['x-telegram-bot-api-secret-token']", "res.headers['set-cookie']"] } : false,
     trustProxy: trustedProxyIp ? [trustedProxyIp] : false,
@@ -191,7 +196,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
       try {
         const identity = verifyTelegramInitData((body as { initData: string }).initData, auth.botToken!);
         const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie),
-          referral ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
+          referral && !nativeCommerce ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
         reply.header("Set-Cookie", serializeSessionCookie(current.token, current.session.expiresAt,
           new URL(auth.appBaseUrl).protocol === "https:"));
         const state = await partnerState(current.user.id);
@@ -200,6 +205,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
             firstName: current.user.firstName, lastName: current.user.lastName,
             username: current.user.username, languageCode: current.user.languageCode },
           partner: state.partner, isAdmin: isAdmin(current, auth.adminIds()),
+          nativeCommerce,
           partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
           csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id),
           launchTarget: current.launchTarget?.includes("?product=") ? current.launchTarget : state.partner ? "/partner" : "/shop"
@@ -229,6 +235,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
           languageCode: current.user.languageCode
         },
         partner: state.partner,
+        nativeCommerce,
         isAdmin: isAdmin(current, auth.adminIds()),
         partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
         csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id)
@@ -242,6 +249,21 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
 
     if (analytics) {
       const requireAdmin = createRequireAdmin(auth.adminIds);
+      if (analytics.owner) {
+        const owner = analytics.owner;
+        app.get("/api/v1/admin/analytics/owner", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+          reply.header("cache-control", "no-store");
+          const parsed = analyticsQuerySchema.safeParse(request.query);
+          if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid analytics period", details: {}, requestId: request.id } });
+          return owner.report(parsed.data);
+        });
+        app.get("/api/v1/admin/analytics/work", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+          reply.header("cache-control", "no-store");
+          const parsed = ownerWorkQuerySchema.safeParse(request.query);
+          if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid work queue", details: {}, requestId: request.id } });
+          return owner.work(parsed.data);
+        });
+      }
       app.get("/api/v1/admin/dashboard", { preHandler: [requireSession, requireAdmin] }, async (_request, reply) => {
         reply.header("cache-control", "no-store");
         return analytics.dashboard();
@@ -380,6 +402,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
 
     if (referral) {
       app.post("/api/v1/partner/referral-links", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         const body = request.body;
         if (!body || typeof body !== "object" || Array.isArray(body) ||
             !Object.hasOwn(body, "productId") || Object.keys(body).some((key) => key !== "productId") ||
@@ -407,6 +430,27 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
       });
     }
 
+    if (money) {
+      const handlers = [requireSession, createRequireAdmin(auth.adminIds)];
+      const fail = (request: FastifyRequest, reply: FastifyReply, error: unknown) => {
+        if (!(error instanceof MoneyError)) throw error;
+        return reply.code(error.code === "NOT_FOUND" ? 404 : error.code === "VALIDATION_ERROR" ? 400 : 409)
+          .send({ error: { code: error.code, message: error.code, details: {}, requestId: request.id } });
+      };
+      app.get("/api/v1/admin/orders/:id/finance", { preHandler: handlers }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id: string }).id;
+        try { if (!validUuid(id)) throw new MoneyError("VALIDATION_ERROR"); return await money.detail(id); }
+        catch (error) { return fail(request, reply, error); }
+      });
+      for (const mode of ["money", "expense", "review"] as const) app.post(`/api/v1/admin/orders/:id/finance/${mode}`,
+        { preHandler: [requireSession, requireCsrf, createRequireAdmin(auth.adminIds)] }, async (request, reply) => {
+          reply.header("Cache-Control", "no-store");
+          const id = (request.params as { id: string }).id;
+          try { if (!validUuid(id)) throw new MoneyError("VALIDATION_ERROR"); return await money.record(id, request.auth!.user.id, request.body, mode, request.id); }
+          catch (error) { return fail(request, reply, error); }
+        });
+    }
     if (orders) {
       const requireAdmin = createRequireAdmin(auth.adminIds);
       const fail = (request: FastifyRequest, reply: FastifyReply, code: string, status = 400) =>
@@ -448,17 +492,17 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
     }
     if (checkout) app.post("/api/v1/orders", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
       reply.header("Cache-Control", "no-store");
-      const parsed = checkoutRequestSchema.safeParse(request.body);
+      const parsed = (nativeCommerce ? dropshipCheckoutRequestSchema : checkoutRequestSchema).safeParse(request.body);
       const key = request.headers["idempotency-key"];
       if (!parsed.success || typeof key !== "string" || key.length < 1 || key.length > 100 || !key.trim()) {
         return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid checkout request", details: {}, requestId: request.id } });
       }
       try {
         const result = await checkout.checkout(request.auth!.user.id, key, parsed.data);
-        return reply.code(result.created ? 201 : 200).send(checkoutResponseSchema.parse(result.order));
+        return reply.code(result.created ? 201 : 200).send((nativeCommerce ? dropshipCheckoutResponseSchema : checkoutResponseSchema).parse(result.order));
       } catch (error) {
         if (!(error instanceof CheckoutError)) throw error;
-        const status = error.code === "VALIDATION_ERROR" ? 400 : error.code === "USER_BLOCKED" ? 403
+        const status = error.code === "VALIDATION_ERROR" ? 400 : ["USER_BLOCKED", "PARTNER_REQUIRED", "PARTNER_BLOCKED", "TERMS_REACCEPT_REQUIRED"].includes(error.code) ? 403
           : error.code === "AUTH_REQUIRED" ? 401 : error.code === "INTERNAL_INVARIANT_VIOLATION" ? 500 : 409;
         return reply.code(status).send({ error: { code: error.code, message: error.message, details: error.details, requestId: request.id } });
       }
@@ -482,8 +526,9 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
       app.post("/api/v1/admin/returns", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const parsed = adminReturnCreateRequestSchema.safeParse(request.body);
-        if (!parsed.success) return fail(request, reply, "VALIDATION_ERROR");
-        try { return await returns.create(request.auth!.user.id, parsed.data, request.id); }
+        const key = request.headers["idempotency-key"];
+        if (!parsed.success || typeof key !== "string" || !key.trim() || key.length > 100) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.create(request.auth!.user.id, parsed.data, request.id, key); }
         catch (error) { return handleError(request, reply, error); }
       });
       app.get("/api/v1/admin/returns/:id", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
@@ -505,6 +550,21 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
         const id = (request.params as { id?: string }).id;
         if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
         try { return await returns.cancel(id!, request.auth!.user.id, request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
+      app.post("/api/v1/admin/returns/:id/reject", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        if (!validUuid(id)) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await (returns.reject ?? returns.cancel).call(returns, id!, request.auth!.user.id, request.id); }
+        catch (error) { return handleError(request, reply, error); }
+      });
+      if (returns.inspect) app.post("/api/v1/admin/returns/:id/inspect", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const id = (request.params as { id?: string }).id;
+        const parsed = adminReturnInspectionSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return fail(request, reply, "VALIDATION_ERROR");
+        try { return await returns.inspect!(id!, request.auth!.user.id, parsed.data, request.id); }
         catch (error) { return handleError(request, reply, error); }
       });
     }
@@ -561,6 +621,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
     if (cart) {
       const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {
         reply.header("Cache-Control", "no-store");
+        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         try { return cartResponseSchema.parse(await action()); }
         catch (error) {
           if (!(error instanceof CartError)) throw error;
@@ -598,6 +659,10 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
     if (catalog) {
       const service = catalog.service;
       const requireAdmin = createRequireAdmin(auth.adminIds);
+      const requireCatalogPartner = async (request: FastifyRequest, reply: FastifyReply) => {
+        if (nativeCommerce && !(await partnerState(request.auth!.user.id)).partner)
+          reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
+      };
 
       app.get("/api/v1/catalog/categories", { preHandler: requireSession }, async () => {
         return service.listStorefrontCategories();
@@ -613,7 +678,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
         return context;
       };
 
-      app.get("/api/v1/catalog/products", { preHandler: requireSession }, async (request, reply) => {
+      app.get("/api/v1/catalog/products", { preHandler: [requireSession, requireCatalogPartner] }, async (request, reply) => {
         const parsed = storefrontProductsQuerySchema.safeParse(request.query ?? {});
         if (!parsed.success) {
           return reply.code(400).send({
@@ -624,7 +689,7 @@ export function createApp({ checkReadiness, logger = true, trustedProxyIp, auth,
         return service.listStorefrontProducts(parsed.data, partnerContext);
       });
 
-      app.get("/api/v1/catalog/products/:slug", { preHandler: requireSession }, async (request, reply) => {
+      app.get("/api/v1/catalog/products/:slug", { preHandler: [requireSession, requireCatalogPartner] }, async (request, reply) => {
         const slug = (request.params as { slug?: string }).slug ?? "";
         try {
           const partnerContext = await buildPartnerContext(request.auth!.user);

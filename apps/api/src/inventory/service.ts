@@ -42,6 +42,11 @@ export type InventorySourceStatus = "UNINITIALIZED" | "OK" | "MISSING" | "INVALI
 export type InventorySyncRunStatus = "RUNNING" | "SUCCESS" | "PARTIAL" | "FAILED";
 
 export interface AdminInventoryItem {
+  authority: "native" | "external";
+  onHand: number | null;
+  freeValueMinor: number | null;
+  reservedKnownValueMinor: number | null;
+  reservedUnknownQuantity: number | null;
   variantId: string;
   productId: string;
   productTitle: string;
@@ -74,6 +79,12 @@ export interface InventorySyncRunView {
 }
 
 interface AdminInventoryRow {
+  native_authority: boolean;
+  native_on_hand: number | null;
+  native_reserved_quantity: number | null;
+  native_free_value_minor: number | null;
+  native_reserved_known_value_minor: number | null;
+  native_reserved_unknown_quantity: number | null;
   variant_id: string;
   product_id: string;
   product_title: string;
@@ -114,6 +125,9 @@ export class InventoryService {
     );
     const rows = await this.pool.query<AdminInventoryRow>(
       `SELECT v.id AS variant_id, v.product_id, p.title AS product_title, v.sku,
+              EXISTS(SELECT 1 FROM inventory_authority) AS native_authority,
+              i.native_on_hand,i.native_reserved_quantity,i.native_free_value_minor,
+              i.native_reserved_known_value_minor,i.native_reserved_unknown_quantity,
               v.inventory_external_key,
               i.variant_id AS inventory_variant_id, i.source_quantity, i.safety_buffer, i.source_status,
               i.source_version, i.last_attempt_at, i.last_successful_sync_at, i.last_successful_sync_run_id
@@ -129,9 +143,10 @@ export class InventoryService {
     const reconciliationPending = await this.reservationChecks.reconciliationPendingByVariant(this.pool, variantIds);
 
     const items = rows.rows.map((row) => {
-      const reserved = activeReservations.get(row.variant_id) ?? 0;
-      const pending = reconciliationPending.get(row.variant_id) ?? 0;
+      const reserved = row.native_authority ? row.native_reserved_quantity ?? 0 : activeReservations.get(row.variant_id) ?? 0;
+      const pending = row.native_authority ? 0 : reconciliationPending.get(row.variant_id) ?? 0;
       const state = computeInventoryAvailability({
+        native: row.native_authority, nativeOnHand: row.native_on_hand, nativeReservedQuantity: row.native_reserved_quantity,
         sourceStatus: row.inventory_variant_id === null ? "UNINITIALIZED" : row.source_status,
         sourceQuantity: row.source_quantity,
         lastSuccessfulSyncAt: row.last_successful_sync_at,
@@ -140,6 +155,9 @@ export class InventoryService {
         maxAgeSeconds: this.maxAgeSeconds
       });
       return {
+        authority: row.native_authority ? "native" as const : "external" as const,
+        onHand: row.native_on_hand, freeValueMinor: row.native_free_value_minor,
+        reservedKnownValueMinor: row.native_reserved_known_value_minor, reservedUnknownQuantity: row.native_reserved_unknown_quantity,
         variantId: row.variant_id,
         productId: row.product_id,
         productTitle: row.product_title,

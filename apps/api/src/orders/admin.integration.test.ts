@@ -24,6 +24,10 @@ beforeAll(async () => {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   for (const migration of ["20260930100000_cart", "20260930110000_orders", "20261001000000_commission_ledger"])
     await pool.query(await readFile(new URL(`../../../../packages/db/prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8"));
+  // This legacy fixture deliberately predates native initialization. New native
+  await pool.query("ALTER TABLE orders ADD economic_regime text DEFAULT 'LEGACY_FIXED'");
+  // transaction/journal constraints are exercised by fulfillment.integration.
+  await pool.query("ALTER TABLE inventory_reservations ADD economic_regime text DEFAULT 'LEGACY_FIXED'");
   await pool.query("INSERT INTO platform_settings (singleton_id,platform_currency) VALUES (1,$1)", [currency]);
   await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,123,'Admin')", [buyer]);
   await pool.query("INSERT INTO suppliers (id,name) VALUES ($1,'Supplier')", [supplier]);
@@ -55,6 +59,11 @@ afterAll(async () => { if (pool) { await pool.query(`DROP SCHEMA ${schema} CASCA
 
 async function advance(...targets: ("CONFIRMED" | "FULFILLING" | "SHIPPED" | "DELIVERED")[]) {
   for (const target of targets) await service.transition(id,buyer,target);
+}
+async function historicalShipment() {
+  await advance("CONFIRMED", "FULFILLING");
+  // Retained pre-amendment shipment, before atomic consumption existed.
+  await pool!.query("UPDATE orders SET status='SHIPPED',shipped_at=now() WHERE id=$1", [id]);
 }
 async function counts() {
   return (await pool!.query(`SELECT (SELECT count(*)::int FROM events) AS events,(SELECT count(*)::int FROM audit_logs) AS audits`)).rows[0];
@@ -92,7 +101,7 @@ describe.skipIf(!pool)("T24 snapshot-bound MANUAL reservation reconciliation", (
     expect((await inventoryReservationChecks.reconciliationPendingByVariant(pool!,[variant])).size).toBe(0);
   });
   it("stores optional current source version and serializes duplicate reconciliation once", async () => {
-    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    await historicalShipment();
     await pool!.query("UPDATE inventory_items SET source_version='sheet-outcome-24' WHERE variant_id=$1", [variant]);
     const before = await counts();
     const results = await Promise.all([reconcile("CONSUMED"),reconcile("CONSUMED")]);
@@ -103,7 +112,7 @@ describe.skipIf(!pool)("T24 snapshot-bound MANUAL reservation reconciliation", (
     expect((await service.detail(id)).reservations[0]!.allowedManualTargets).toEqual([]);
   });
   it("rejects stale/null snapshots, absent confirmation and unavailable source/mode conservatively", async () => {
-    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    await historicalShipment();
     const original = await reserve(), before = await counts();
     await expect(reconcile("CONSUMED",randomUUID())).rejects.toMatchObject({ code: "INVENTORY_SNAPSHOT_CHANGED" });
     await expect(service.reconcileReservation(original.id,buyer,{ target: "CONSUMED",reason: "checked",expectedInventorySyncRunId: syncRunId,
@@ -121,7 +130,7 @@ describe.skipIf(!pool)("T24 snapshot-bound MANUAL reservation reconciliation", (
     expect(await reserve()).toEqual(original); expect(await counts()).toEqual(before);
   });
   it("rolls back terminal state and evidence if the AuditLog insert fails", async () => {
-    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    await historicalShipment();
     const original = await reserve(), before = await counts();
     await pool!.query(`CREATE FUNCTION fail_t24_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       RAISE EXCEPTION 't24 audit failure'; END $$;
@@ -132,7 +141,7 @@ describe.skipIf(!pool)("T24 snapshot-bound MANUAL reservation reconciliation", (
     } finally { await pool!.query("DROP TRIGGER fail_t24_audit ON audit_logs; DROP FUNCTION fail_t24_audit()"); }
   });
   it("checks the snapshot after waiting for a concurrent stock-apply lock", async () => {
-    await advance("CONFIRMED","FULFILLING","SHIPPED");
+    await historicalShipment();
     const original = await reserve(), before = await counts();
     const blocker = await pool!.connect();
     await blocker.query("BEGIN");
@@ -172,7 +181,7 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
     for (const to of orderStatusSchema.options) {
       await pool!.query(`UPDATE orders SET status=$2,confirmed_at=NULL,fulfilling_at=NULL,shipped_at=NULL,delivered_at=NULL,
         cancelled_at=NULL,delivery_failed_at=NULL,completed_at=NULL,completion_eligible_at=NULL WHERE id=$1`, [id,from]);
-      await pool!.query("UPDATE inventory_reservations SET status='ACTIVE',released_at=NULL WHERE order_id=$1", [id]);
+      await pool!.query("UPDATE inventory_reservations SET status='ACTIVE',released_at=NULL,consumed_at=NULL WHERE order_id=$1", [id]);
       await pool!.query("DELETE FROM events WHERE type<>'ORDER_CREATED'");
       await pool!.query("TRUNCATE audit_logs");
       if (to === "COMPLETED") await expect(service.transition(id,buyer,to)).rejects.toMatchObject({ code: "SYSTEM_TRANSITION_ONLY" });
@@ -192,7 +201,7 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
     expect(replay.timeline).toEqual(first.timeline);
     expect(replay.updatedAt).toBe(first.updatedAt);
     expect(await counts()).toEqual(initial);
-    expect((await reserve()).status).toBe("ACTIVE");
+    expect((await reserve()).status).toBe("CONSUMED");
   });
   it.each([[],["CONFIRMED"],["CONFIRMED","FULFILLING"]] as const)("cancels pre-shipment and releases once from path %j", async (...path) => {
     await advance(...path);
@@ -210,14 +219,14 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
     const audit = (await pool!.query("SELECT * FROM audit_logs WHERE request_id='request-t23'")).rows[0];
     expect(audit.actor_user_id).toBe(buyer); expect(audit.metadata.toStatus).toBe("CANCELLED");
   });
-  it("shipment and failed delivery preserve ACTIVE reservations and emit the exact safe event pair", async () => {
+  it("shipment consumes reservations and rejects new failed-delivery transitions", async () => {
     await advance("CONFIRMED","FULFILLING","SHIPPED");
     await expect(service.transition(id,buyer,"CANCELLED")).rejects.toMatchObject({ code: "INVALID_ORDER_TRANSITION" });
-    await service.transition(id,buyer,"DELIVERY_FAILED");
-    expect((await reserve()).status).toBe("ACTIVE");
+    await expect(service.transition(id,buyer,"DELIVERY_FAILED")).rejects.toMatchObject({ code: "INVALID_ORDER_TRANSITION" });
+    expect((await reserve()).status).toBe("CONSUMED");
     const events = (await pool!.query("SELECT type,dedupe_key,payload FROM events ORDER BY created_at,type")).rows;
-    expect(events.map((e) => e.type)).toEqual(["ORDER_CREATED","ORDER_STATUS_CHANGED","ORDER_STATUS_CHANGED","ORDER_STATUS_CHANGED","ORDER_DELIVERY_FAILED","ORDER_STATUS_CHANGED"]);
-    const generic = events.find((e) => e.payload.toStatus === "DELIVERY_FAILED")!;
+    expect(events.map((e) => e.type)).toEqual(["ORDER_CREATED","ORDER_STATUS_CHANGED","ORDER_STATUS_CHANGED","ORDER_STATUS_CHANGED"]);
+    const generic = events.find((e) => e.payload.toStatus === "SHIPPED")!;
     expect(Object.keys(generic.payload).sort()).toEqual(["fromStatus","orderId","publicNumber","toStatus","v"]);
     expect(new Set(events.map((e) => e.dedupe_key)).size).toBe(events.length);
     expect(JSON.stringify(events)).not.toMatch(/Private|375291234567/);
@@ -291,7 +300,7 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
     }
     expect(await firstResult).toMatchObject({ status: first });
     expect(await secondResult).toMatchObject({ code: "INVALID_ORDER_TRANSITION" });
-    expect((await reserve()).status).toBe(first === "CANCELLED" ? "RELEASED" : "ACTIVE");
+    expect((await reserve()).status).toBe(first === "CANCELLED" ? "RELEASED" : "CONSUMED");
     expect((await service.detail(id)).status).toBe(first);
   });
   it("serves Admin detail snapshots, filters, pagination and operational overdue without cancellation", async () => {
@@ -308,7 +317,7 @@ describe.skipIf(!pool)("Admin Order state machine against PostgreSQL", () => {
     expect((await service.list({ ...query,page: 2 })).items).toHaveLength(0);
     expect((await service.list({ ...query,reconciliationPending: true })).total).toBe(0);
     await advance("CONFIRMED","FULFILLING","SHIPPED");
-    expect((await service.list({ ...query,reconciliationPending: true })).total).toBe(1);
+    expect((await service.list({ ...query,reconciliationPending: true })).total).toBe(0);
     expect((await service.detail(id)).overdue).toBe(false);
     expect((await new AdminOrderService(pool!).list({ ...query,overdue: true })).total).toBe(0);
     await expect(service.detail(randomUUID())).rejects.toMatchObject({ code: "NOT_FOUND" });

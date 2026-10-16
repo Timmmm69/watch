@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 type Earnings = {
+  debtAmountMinor?: number; reversalAmountMinor?: number; payoutBlocked?: boolean;
   currency: string; pendingAmountMinor: number; availableAmountMinor: number;
   total: number; page: number; limit: number;
   items: { id: string; orderPublicNumber: string; state: "PENDING" | "HOLD" | "EARNED" | "VOID";
@@ -38,6 +39,8 @@ export function PartnerEarnings({ compact = false, blocked = false }: { compact?
       <button className="ml-3 min-h-11 underline" onClick={() => setRetry((n) => n + 1)}>Повторить</button></div>
       : !data ? <p role="status" className="mt-4 animate-pulse text-slate-400">Загрузка доходов…</p>
       : <>
+        <p>Долг после корректировок: {money(data.debtAmountMinor ?? Math.max(0,-data.availableAmountMinor), data.currency)}. Учтённые сторно: {money(data.reversalAmountMinor ?? 0, data.currency)}.</p>
+        {data.payoutBlocked && <p>Выплата заблокирована до проверки оплаты и возвратов.</p>}
         <dl className="my-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div><dt className="text-slate-400">Ожидается</dt><dd className="text-xl">{money(data.pendingAmountMinor, data.currency)}</dd></div>
           <div><dt className="text-slate-400">Доступно</dt><dd className="text-xl">{money(data.availableAmountMinor, data.currency)}</dd></div>

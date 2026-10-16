@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { Storefront } from "./storefront";
 import { CartScreen } from "./cart-client";
 import { CheckoutScreen } from "./checkout-client";
+import { DropshipCheckoutScreen } from "./dropship-checkout-client";
 import { AdminOrdersScreen } from "./admin-orders-client";
 import { AdminReturnsScreen } from "./admin-returns-client";
 import { AdminAnalyticsScreen } from "./admin-analytics-client";
+import { OwnerAnalyticsScreen } from "./owner-analytics-client";
 import { EarningsScreen } from "./earnings-client";
 import { AdminPayoutsScreen, PartnerPayoutsScreen } from "./payouts-client";
 import { PartnerDashboard, PartnerOnboarding } from "./partner-client";
@@ -18,6 +20,7 @@ import { AdminCatalogScreen } from "./admin-catalog-client";
 import { AdminProductScreen } from "./admin-product-client";
 
 interface AuthResponse {
+  nativeCommerce?: boolean;
   user: { firstName: string };
   partner?: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
   partnerTermsReacceptRequired?: boolean;
@@ -94,7 +97,7 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
 
   if (state.auth && (screen === "adminDashboard" || screen === "adminAnalytics")) return state.auth.isAdmin
-    ? <AdminAnalyticsScreen dashboard={screen === "adminDashboard"} />
+    ? state.auth.nativeCommerce ? <OwnerAnalyticsScreen dashboard={screen === "adminDashboard"} /> : <AdminAnalyticsScreen dashboard={screen === "adminDashboard"} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "earnings") return state.auth.partner
     ? <EarningsScreen blocked={state.auth.partner.status === "BLOCKED"} />
@@ -111,10 +114,15 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
   if (state.auth && screen === "adminPayouts") return state.auth.isAdmin
     ? <AdminPayoutsScreen key={payoutId ?? partnerId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} partnerId={partnerId} />
     : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к выплатам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+  if (state.auth?.nativeCommerce && (screen === "cart" || screen === "checkout")) return <DropshipCheckoutScreen csrfToken={state.auth.csrfToken}
+    partner={state.auth.partner ?? null} termsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
+  if (state.auth?.nativeCommerce && !state.auth.partner) return <main className="min-h-screen bg-slate-950 p-8 text-slate-100">
+    <p className="mb-5">Каталог и оформление доступны дропшипперам. Примите условия участия, чтобы продолжить.</p>
+    <PartnerOnboarding auth={state.auth} onAccepted={accepted} /></main>;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}
-    partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
+    nativeCommerce={state.auth.nativeCommerce ?? false} partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
     <div className="text-center"><h1 className="text-2xl font-semibold">Watch</h1>
       <p className="mt-4">{state.error ?? "Вход через Telegram…"}</p></div>

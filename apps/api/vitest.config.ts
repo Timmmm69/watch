@@ -7,6 +7,8 @@ if (acceptance && !process.env.TEST_DATABASE_URL) {
 
 export default defineConfig({
   test: {
+    // PostgreSQL advisory inventory locks are database-wide, including across fixture schemas.
+    fileParallelism: !acceptance,
     forbidOnly: acceptance,
     reporters: acceptance ? ["default", "json"] : ["default"],
     outputFile: acceptance ? { json: "test-results/vitest.json" } : undefined

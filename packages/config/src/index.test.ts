@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { productionApprovalFixture } from "../../../ops/scripts/fixtures/production-approval.mjs";
 import { currentLegalDocuments, loadApiRuntimeConfig } from "./index.js";
 
 const partnerTermsId = "00000000-0000-4000-8000-000000000001";
@@ -52,23 +56,30 @@ describe("API runtime configuration", () => {
   };
 
   it("requires HTTPS origin and exact proxy trust in production", () => {
-    const production = { ...valid, ...google, NODE_ENV: "production", APP_BASE_URL: "https://app.example.com", API_TRUSTED_PROXY_IP: "172.30.36.2",
+    const production = { ...valid, ...google, NODE_ENV: "production", APP_BASE_URL: "https://watch.company.org", API_TRUSTED_PROXY_IP: "172.30.36.2",
+      TELEGRAM_BOT_TOKEN: "123456:fixture_token", GOOGLE_SHEETS_SPREADSHEET_ID: "0123456789abcdefghijklmnop", RELEASE_TAG: "0123456789abcdef0123456789abcdef01234567", ORDER_HOLD_DAYS: "14", ORDER_OVERDUE_SECONDS: "3600",
       LEGAL_SALES_TERMS_ID: salesTermsId, LEGAL_SALES_TERMS_VERSION: "v1", LEGAL_PRIVACY_ID: privacyId, LEGAL_PRIVACY_VERSION: "v1",
-      OBJECT_STORAGE_ENDPOINT: "https://account.r2.cloudflarestorage.com", OBJECT_STORAGE_REGION: "auto",
-      OBJECT_STORAGE_BUCKET: "private-media", OBJECT_STORAGE_ACCESS_KEY_ID: "test-key", OBJECT_STORAGE_SECRET_ACCESS_KEY: "test-secret" };
-    expect(loadApiRuntimeConfig(production).API_TRUSTED_PROXY_IP).toBe("172.30.36.2");
-    for (const field of ["LEGAL_SALES_TERMS_ID", "LEGAL_PRIVACY_ID", "INVENTORY_PROVIDER", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_SECRET_ACCESS_KEY"]) {
-      expect(() => loadApiRuntimeConfig({ ...production, [field]: undefined })).toThrow();
-    }
-    expect(() => loadApiRuntimeConfig({ ...production, OBJECT_STORAGE_ENDPOINT: "http://storage.example.com" })).toThrow();
-    expect(loadApiRuntimeConfig(valid).API_TRUSTED_PROXY_IP).toBeUndefined();
-    expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: undefined })).toThrow();
-    for (const proxy of ["true", "1", "*", "172.30.36.0/24", "172.30.36.2,127.0.0.1"]) {
-      expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: proxy })).toThrow();
-    }
-    for (const url of ["http://app.example.com", "https://app.example.com/path", "https://user:secret@app.example.com", "https://app.example.com?x=1", "https://app.example.com#x"]) {
-      expect(() => loadApiRuntimeConfig({ ...production, APP_BASE_URL: url })).toThrow();
-    }
+      OBJECT_STORAGE_ENDPOINT: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com", OBJECT_STORAGE_REGION: "auto",
+      OBJECT_STORAGE_BUCKET: "private-media", OBJECT_STORAGE_ACCESS_KEY_ID: "fixture-key", OBJECT_STORAGE_SECRET_ACCESS_KEY: "fixture-secret",
+      WATCH_PRODUCTION_APPROVAL_FILE: "" };
+    const directory = mkdtempSync(join(tmpdir(), "watch-config-"));
+    production.WATCH_PRODUCTION_APPROVAL_FILE = join(directory, "approval.json");
+    writeFileSync(production.WATCH_PRODUCTION_APPROVAL_FILE, JSON.stringify(productionApprovalFixture(production)));
+    try {
+      expect(loadApiRuntimeConfig(production).API_TRUSTED_PROXY_IP).toBe("172.30.36.2");
+      for (const field of ["LEGAL_SALES_TERMS_ID", "LEGAL_PRIVACY_ID", "INVENTORY_PROVIDER", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_SECRET_ACCESS_KEY"]) {
+        expect(() => loadApiRuntimeConfig({ ...production, [field]: undefined })).toThrow();
+      }
+      expect(() => loadApiRuntimeConfig({ ...production, OBJECT_STORAGE_ENDPOINT: "http://storage.example.com" })).toThrow();
+      expect(loadApiRuntimeConfig(valid).API_TRUSTED_PROXY_IP).toBeUndefined();
+      expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: undefined })).toThrow();
+      for (const proxy of ["true", "1", "*", "172.30.36.0/24", "172.30.36.2,127.0.0.1"]) {
+        expect(() => loadApiRuntimeConfig({ ...production, API_TRUSTED_PROXY_IP: proxy })).toThrow();
+      }
+      for (const url of ["http://app.example.com", "https://app.example.com/path", "https://user:secret@app.example.com", "https://app.example.com?x=1", "https://app.example.com#x"]) {
+        expect(() => loadApiRuntimeConfig({ ...production, APP_BASE_URL: url })).toThrow();
+      }
+    } finally { rmSync(directory, { recursive: true }); }
   });
 
   it("accepts and decodes Google Sheets service-account configuration without requiring it when unset", () => {
@@ -82,6 +93,12 @@ describe("API runtime configuration", () => {
       expect(() => loadApiRuntimeConfig({ ...valid, ...google, [field]: "" })).toThrow();
     }
     expect(() => loadApiRuntimeConfig({ ...valid, INVENTORY_PROVIDER: "fake" })).toThrow();
+  });
+
+  it("native mode needs no Google configuration and ignores unused credentials", () => {
+    const runtime=loadApiRuntimeConfig({...valid,INVENTORY_PROVIDER:"native",GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64:"invalid-unused"});
+    expect(runtime.INVENTORY_PROVIDER).toBe("native");
+    expect(runtime.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64).toBeUndefined();
   });
 
   it("rejects malformed base64/JSON/accounts/keys without exposing credentials", () => {

@@ -1,5 +1,7 @@
 # T42 — Admin Catalog and Inventory
 
+> New requirements, 2026-10-14: FULL_BUILD_SPEC.md Section 30 replaces live Sheets authority and fixed catalog commissions for new dropshipping Orders. The existing UI below is reusable implementation, but does not yet provide native stock movements or D/R/cost/remuneration pricing. T46–T51 must align it before production certification.
+
 ## Current MVP requirements — 2026-10-02
 
 New SHIPPED consumes ACTIVE reservations atomically; Return never increments source quantity. Pending reconciliation links/CTAs below are legacy pre-amendment remediation only. Catalog characteristics remain stored/displayed; MVP filtering is category, price range and availability plus text search.

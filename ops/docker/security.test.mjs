@@ -4,6 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { composeArgs } from "../scripts/compose.mjs";
+
+test("native Compose removes Google secrets and routes the config overlay", () => {
+  const directory=mkdtempSync(join(tmpdir(),"watch-native-compose-"));
+  const file=join(directory,"native.env");
+  try {
+    writeFileSync(file,readFileSync("ops/docker/production.env.example","utf8").replace("INVENTORY_PROVIDER=google_sheets","INVENTORY_PROVIDER=native"));
+    const args=composeArgs(file);
+    assert.ok(args.some(arg=>arg.endsWith("compose.native.yml")));
+    const result=spawnSync("docker",[...args,"config","--format","json"],{
+      encoding:"utf8",env:{...process.env,WATCH_CONFIG_FILE:join(process.cwd(),"ops/docker/production.env.example")},
+    });
+    assert.equal(result.status,0,result.stderr);
+    const config=JSON.parse(result.stdout);
+    for(const name of ["api","worker","bootstrap"]) {
+      assert.equal(config.services[name].secrets.some(s=>s.source==="google_service_account"),false);
+      assert.equal(config.services[name].environment.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE,undefined);
+    }
+    assert.equal(config.secrets.google_service_account,undefined);
+  } finally {unlinkSync(file);rmdirSync(directory);}
+});
 
 test("production Compose isolates services, secrets and migration ordering", () => {
   const result = spawnSync("docker", ["compose", "--env-file", "ops/docker/production.env.example", "-f", "ops/docker/compose.production.yml", "config", "--format", "json"], {
@@ -23,6 +44,11 @@ test("production Compose isolates services, secrets and migration ordering", () 
   assert.equal(config.services.worker.networks.proxy, undefined);
   const proxyIp = config.services["reverse-proxy"].networks.proxy.ipv4_address;
   assert.equal(config.services.api.environment.API_TRUSTED_PROXY_IP, proxyIp);
+  assert.equal(config.services.api.environment.WATCH_PRODUCTION_APPROVAL_FILE, "/run/production-approval.json");
+  for (const name of ["api", "worker", "bootstrap"]) {
+    const mount = config.services[name].volumes.find((volume) => volume.target === "/run/production-approval.json");
+    assert.equal(mount.type, "bind"); assert.equal(mount.read_only, true);
+  }
   for (const name of ["api", "web", "worker"]) {
     assert.equal(config.services[name].depends_on.migrate.condition, "service_completed_successfully");
     assert.equal(config.services[name].depends_on.bootstrap.condition, "service_completed_successfully");
@@ -67,6 +93,7 @@ test("runtime secrets are read as data and empty/conflicting files fail closed",
     const value = "literal-$(printf injected)-`printf injected`-'quote'-$HOME";
     writeFileSync(secretFile, value + "\n");
     assert.equal(run({ EXPECTED_SECRET: value }).status, 0);
+    assert.equal(run({EXPECTED_SECRET:value,INVENTORY_PROVIDER:"native",GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE:"/missing-unused-google-secret"}).status,0);
     const conflict = run({ DATABASE_URL: "other-secret" });
     assert.equal(conflict.status, 1);
     assert.match(conflict.stderr, /not both/);

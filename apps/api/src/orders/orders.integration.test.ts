@@ -182,6 +182,10 @@ beforeAll(async () => {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await pool.query(await readFile(new URL("../../../../packages/db/prisma/migrations/20260930110000_orders/migration.sql", import.meta.url), "utf8"));
+  // This focused legacy fixture intentionally omits the financial/inventory
+  // migrations, but current view projections also read their additive columns.
+  await pool.query(`ALTER TABLE orders ADD COLUMN economic_regime text NOT NULL DEFAULT 'LEGACY_FIXED';
+    ALTER TABLE order_items ADD COLUMN dropship_unit_price_minor integer, ADD COLUMN remuneration_total_minor integer`);
   currency = process.env.TEST_PLATFORM_CURRENCY ?? "BYN";
   await pool.query("INSERT INTO platform_settings (singleton_id, platform_currency) VALUES (1, $1)", [currency]);
   for (const [id, name] of [

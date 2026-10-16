@@ -1,7 +1,7 @@
 # Codex Implementation Tasks
 
 **Project:** Telegram Partner Commerce Platform  
-**Authoritative specification:** `FULL_BUILD_SPEC.md` v1.3-final  
+**Authoritative specification:** `FULL_BUILD_SPEC.md` v1.4-dropshipping, Section 30 takes precedence for amended business behavior
 **Purpose:** implementation queue for Codex  
 **Status:** active execution plan
 
@@ -614,3 +614,56 @@ The documentation amendment does not certify existing code or authorize code cha
 - S16/T45: release/operator checks verify implementation/configuration of resolved U03/U05, not repeat product decisions. Keep U07/U08, legal artifacts, SUPPORT_CONTACT, live integrations and financial gates; operational overdue thresholds are configuration, not a new U03 blocker.
 
 Targeted future acceptance: required checkout fields; no payment semantics for CONFIRMED; shipping consumption exactly once; failed shipment handled by Return without false DELIVERED; partial Return blocks only affected release; rejection after expiry does not restart hold; late paid return appends debt/reversal; Return does not restock; economics missing means unavailable.
+
+# Required corrective queue — native inventory and dropshipping (2026-10-14)
+
+Owner confirmed the business inputs recorded in `FULL_BUILD_SPEC.md` Section 30. The earlier Google-authoritative/fixed-commission/Buyer-checkout assumptions no longer describe new production Orders. This is planning, not completion of these tasks. Execute one explicitly bounded task at a time; preserve old records and reuse existing services. These tasks precede certification of a production release under the amended model. Historical T01–T45 validation is not acceptance of T46–T52.
+
+### T46 — Economic/ownership schema and compatible migration
+
+- Define explicit native on-hand/value/unknown-cost facts, immutable inventory movements/initialization, reservation cost allocations, D/R/cost/remuneration snapshots, Order creator/owning dropshipper versus fulfilment recipient, manual money records and attributable direct expenses/refund obligations.
+- Define unknown procurement propagation, cumulative return rounding, expense review and money coverage; prevent double counting cash/refund/stock losses.
+- Preserve existing snapshots, ledger and payouts. Mark old order origin/economic regime explicitly; never infer historical D/R from present catalog settings. Do not invent Buyer identity/acceptance for recipients.
+- Verify migration from zero and representative legacy data, constraints, immutable-history access and forbidden writes on real PostgreSQL.
+
+### T47 — Native inventory and initial receipt/import
+
+- Add single native stock authority through existing inventory services/projections. No periodic Google writes/read dependency or manufactured freshness in native mode.
+- Initial preview/apply/import deduplication, receipts with actual quantity/total cost, audited corrections, deterministic reservation allocation of free procurement value.
+- Amend runtime/readiness/provider configuration coherently; prevent switching an initialized deployment between competing sources.
+- Verify last unit, concurrent reservations/receipt/correction, repeat import, unknown cost, differently priced receipt after reservation and minor-unit rounding on PostgreSQL.
+
+### T48 — Dropshipper-created order and price UI
+
+- Adapt existing catalog and order services/forms: D visible to the owning dropshipper, explicit R>=D, recipient details, price/markup preview, server-current D check and immutable snapshots.
+- Session assigns owning dropshipper; preserve role/current-terms/block checks and idempotency. No self-referral shortcut, fake Buyer or editable client C/D.
+- Disable incompatible Buyer/referral/fixed-price new-write routes in the new mode; retain historical reads with correct ownership.
+- Verify two dropshippers using different R for one SKU, price changes/retry, cross-owner access, money bounds and last-unit race; browser smoke must use the new workflow.
+
+### T49 — Atomic native shipping and physical Returns
+
+- SHIPPED atomically consumes reservations and decrements native quantity/value once. Cancellation and shipment serialize.
+- Finish already queued REQUESTED/COMPLETED/REJECTED/SHIPPED-exception alignment, partial returns and original hold behavior.
+- Link inspected saleable return receipt to quantity/cost restoration; completed financial Return alone never adds stock. Keep non-saleable cost as loss and preserve old reservations/history.
+- Verify all race/retry cases, partial/full return cost rounding and refused delivery without fabricated DELIVERED on PostgreSQL.
+
+### T50 — Actual money, variable remuneration and payouts
+
+- Minimal manual observed receipt/refund/correction and actual direct-expense input; safe references, idempotency, reviewed zero versus unknown, refund liability and overpayment.
+- Feed snapshotted R−D into the existing Commission/Ledger/Payout mechanisms; money-coverage checks and original hold/affected-item return gates before release.
+- Keep manual real-world payout confirmation and append-only late debt; no new bank integration or rewrite of fixed-commission history.
+- Verify delivered-but-unpaid, money/refund/release/payout concurrency, partial return, rejection after hold, returned paid remuneration, overpayment and duplicate receipts/transfers on PostgreSQL.
+
+### T51 — Owner's actionable reporting
+
+- Main operational queues and three result groups; per-SKU and per-dropshipper tables using the same reviewed facts.
+- Distinguish R, D, owner contribution, dropshipper remuneration, actual cash and created-order GMV. Include closed-cohort failure costs and clear coverage/unavailable values.
+- Europe/Minsk date boundaries, created-order quality cohorts versus delivery flow versus observed cash. Remove irrelevant required referral/Buyer-registration metrics from the new mode's main UI.
+- Verify aggregate/detail reconciliation, partial/late returns, unknown costs/expenses, unfinished recent cohorts and Minsk-midnight boundary; role/browser tests.
+
+### T52 — Native/dropshipping release alignment and real smoke
+
+- Update existing production config/bootstrap/readiness/approval and launch checklist for native inventory and the actual actors/terms; preserve security/backup/release binding. Google source/outage proof is not a prerequisite of native mode.
+- Initial real catalog/stock import and matching prepared photos/economics; no fictitious data or external acceptance flags.
+- Real Telegram drop-created order → observed receipt → shipment/delivery → remuneration → payout → partial/late return, with expected balances/stock; encrypted restore and external network checks.
+- Production complete only after actual new-workflow evidence for the release. This task does not invent hosting credentials, legal text, costs or approval of live money transfers.

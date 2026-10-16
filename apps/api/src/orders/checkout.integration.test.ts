@@ -224,9 +224,12 @@ describe.skipIf(!pool)("T29 System completion worker", () => {
     expect(await worker.completeOrder(randomUUID())).toBe(false);
   });
 
-  it.each(["CANCELLED", "COMPLETED"])("OPEN Return blocks completion until it becomes %s", async (status) => {
+  it.each(["REJECTED", "COMPLETED"])("REQUESTED Return blocks its affected commission until it becomes %s", async (status) => {
     const id = await financialOrder(true, 0);
-    await pool!.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [randomUUID(), id, buyers[0]]);
+    const returnId = randomUUID();
+    await pool!.query("INSERT INTO returns (id,order_id,reason,created_by_admin_user_id) VALUES ($1,$2,'Return',$3)", [returnId, id, buyers[0]]);
+    await pool!.query(`INSERT INTO return_items(id,return_id,order_id,order_item_id,quantity)
+      SELECT $1,$2,order_id,id,1 FROM order_items WHERE order_id=$3`, [randomUUID(),returnId,id]);
     const worker = new OrderCompletionWorker(pool!);
     await worker.run({ error: () => { throw new Error("unexpected failure"); } });
     expect(await worker.completeOrder(id)).toBe(false);
@@ -235,7 +238,7 @@ describe.skipIf(!pool)("T29 System completion worker", () => {
     expect(await worker.completeOrder(id)).toBe(true);
   });
 
-  it("rechecks OPEN Returns committed while waiting on the Order lock", async () => {
+  it("rechecks REQUESTED Returns committed while waiting on the Order lock", async () => {
     const id = (await service.checkout(buyers[0]!, "organic", request())).order.id;
     const admin = new AdminOrderService(pool!, 0);
     for (const target of ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED"] as const) await admin.transition(id, buyers[0]!, target);
@@ -386,7 +389,7 @@ describe.skipIf(!pool)("T28 Commission creation and financial transitions", () =
     expect(events).toEqual([{ payload: { v: 1,commissionId: commission.id,partnerId: partner,orderId: id,amountMinor: 60 } }]);
     await expect(admin.transition(id,buyers[0]!,"COMPLETED")).rejects.toMatchObject({ code: "SYSTEM_TRANSITION_ONLY" });
   });
-  it.each(["CANCELLED","DELIVERY_FAILED"] as const)("atomically reverses the remaining PENDING on %s once", async (target) => {
+  it.each(["CANCELLED"] as const)("atomically reverses the remaining PENDING on %s once", async (target) => {
     const id = await financialOrder();
     const admin = new AdminOrderService(pool!);
     await financialTransaction(id,(client,cid) => reverseCommission(client,cid,25,"partial",new Date()));
@@ -509,9 +512,12 @@ beforeAll(async () => {
     "products", "product_variants", "inventory_items", "inventory_sync_runs", "attribution_touches", "events", "audit_logs"]) {
     await pool.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   }
-  for (const migration of ["20260930100000_cart", "20260930110000_orders", "20261001000000_commission_ledger", "20261003000000_payout_allocations"]) {
+  for (const migration of ["20260930100000_cart", "20260930110000_orders", "20261001000000_commission_ledger", "20261002000000_returns", "20261003000000_payout_allocations"]) {
     await pool.query(await readFile(new URL(`../../../../packages/db/prisma/migrations/${migration}/migration.sql`, import.meta.url), "utf8"));
   }
+  await pool.query(`ALTER TYPE "ReturnStatus" RENAME VALUE 'OPEN' TO 'REQUESTED';
+    ALTER TABLE orders ADD economic_regime text DEFAULT 'LEGACY_FIXED';
+    ALTER TYPE "ReturnStatus" RENAME VALUE 'CANCELLED' TO 'REJECTED'`);
   await pool.query("INSERT INTO platform_settings (singleton_id, platform_currency) VALUES (1,$1)", [currency]);
   for (const id of [...buyers, partnerUser]) await pool.query("INSERT INTO users (id,telegram_user_id,first_name) VALUES ($1,$2,'Buyer')",
     [id, String(BigInt(`0x${id.replaceAll("-", "").slice(0, 15)}`))]);

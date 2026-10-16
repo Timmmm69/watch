@@ -4,7 +4,7 @@ import { GoogleSheetsInventoryProvider } from "./google-sheets.js";
 import { InventorySyncOrchestrator, runScheduledInventorySync } from "./orchestrator.js";
 
 export function createConfiguredInventoryOrchestrator(pool: Pool, config: ApiRuntimeConfig): InventorySyncOrchestrator | undefined {
-  if (config.INVENTORY_PROVIDER === undefined) return undefined;
+  if (config.INVENTORY_PROVIDER !== "google_sheets") return undefined;
   return new InventorySyncOrchestrator(pool, new GoogleSheetsInventoryProvider({
     spreadsheetId: config.GOOGLE_SHEETS_SPREADSHEET_ID!,
     worksheetName: config.GOOGLE_SHEETS_WORKSHEET_NAME!,

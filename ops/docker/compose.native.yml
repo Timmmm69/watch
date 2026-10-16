@@ -1,0 +1,21 @@
+# Applied automatically by ops/scripts/compose.mjs for INVENTORY_PROVIDER=native.
+# Compose !override replaces the secret list instead of merging it with Google.
+x-native: &native
+  environment:
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64_FILE: !reset null
+  secrets: !override
+    - app_database_url
+    - telegram_bot_token
+    - telegram_webhook_secret
+    - csrf_secret
+    - storage_access_key
+    - storage_secret_key
+services:
+  api:
+    <<: *native
+  worker:
+    <<: *native
+  bootstrap:
+    <<: *native
+secrets:
+  google_service_account: !reset null

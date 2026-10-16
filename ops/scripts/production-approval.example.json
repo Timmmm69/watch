@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 2,
+  "operatingModel": {
+    "inventoryProvider": "native",
+    "orderFlow": "DROPSHIPPER_MARKUP",
+    "recipientTelegramRequired": false,
+    "ownerReceives": "R",
+    "remuneration": "R_MINUS_D",
+    "termsCoverRecipientData": false
+  },
+  "releaseSha": "replace-with-reviewed-40-character-release-sha",
+  "approvedBy": "replace-with-product-owner",
+  "approvedAt": "replace-with-ISO-UTC-approval-time",
+  "appBaseUrl": "https://replace-with-real-domain.invalid",
+  "supportContact": "replace-with-reviewed-support-contact",
+  "fulfilment": {
+    "accepted": false,
+    "mode": "MANUAL",
+    "onlinePayment": false,
+    "fields": "NAME_PHONE_ADDRESS_OPTIONAL_COMMENT",
+    "statusOperator": "replace-with-authorized-operator-role-and-runbook",
+    "overdueSeconds": null
+  },
+  "returns": {
+    "accepted": false,
+    "holdDays": null,
+    "operatorRunbook": "replace-with-approved-return-support-runbook"
+  },
+  "infrastructure": {
+    "hosting": "replace-with-real-hosting",
+    "r2Endpoint": "https://replace-with-account-id.r2.cloudflarestorage.com",
+    "r2Bucket": "replace-with-private-production-bucket",
+    "backupDirectory": "/replace-with-mounted-backup-destination",
+    "backupKeyFile": "/replace-with-separate-backup-key-file",
+    "backupRecoveryRunbook": "replace-with-host-loss-key-recovery-runbook",
+    "monitoringAlertRunbook": "replace-with-real-alert-destination-and-runbook"
+  },
+  "legal": {
+    "PARTNER_TERMS": { "id": "replace-with-production-uuid", "version": "replace-with-reviewed-version", "sha256": "replace-with-exact-artifact-sha256", "reviewedBy": "replace-with-reviewer", "productionApproved": false },
+    "SALES_TERMS": { "id": "replace-with-production-uuid", "version": "replace-with-reviewed-version", "sha256": "replace-with-exact-artifact-sha256", "reviewedBy": "replace-with-reviewer", "productionApproved": false },
+    "PRIVACY": { "id": "replace-with-production-uuid", "version": "replace-with-reviewed-version", "sha256": "replace-with-exact-artifact-sha256", "reviewedBy": "replace-with-reviewer", "productionApproved": false }
+  },
+  "pii": {
+    "approved": false,
+    "reviewedBy": "replace-with-reviewer",
+    "policyFile": "replace-with-reviewed-policy-file.md",
+    "policySha256": "replace-with-exact-policy-sha256",
+    "retentionDays": null,
+    "redactionMode": "MANUAL",
+    "redactionRunbook": "replace-with-approved-PII-redaction-access-and-backup-runbook"
+  },
+  "acceptance": {
+    "t39ThroughT44": { "passed": false, "report": "replace-with-release-CI-report", "sha256": "replace-with-report-sha256" },
+    "migrations": { "passed": false, "report": "replace-with-migration-report", "sha256": "replace-with-report-sha256" },
+    "financial": { "passed": false, "report": "replace-with-financial-report", "sha256": "replace-with-report-sha256" },
+    "inventoryLive": { "passed": false, "report": "replace-with-physical-count-import-SKU-photo-reconciliation-report", "sha256": "replace-with-report-sha256" },
+    "nativeWorkflow": { "passed": false, "report": "replace-with-release-T46-T52-native-dropship-workflow-report", "sha256": "replace-with-report-sha256" },
+    "telegramDevice": { "passed": false, "report": "replace-with-real-device-report", "sha256": "replace-with-report-sha256" },
+    "encryptedBackupRestore": { "passed": false, "report": "replace-with-real-backup-restore-report", "sha256": "replace-with-report-sha256" },
+    "externalNetwork": { "passed": false, "report": "replace-with-external-network-report", "sha256": "replace-with-report-sha256" },
+    "noDeadLinks": false,
+    "noKnownP0P1": false
+  }
+}

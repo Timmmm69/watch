@@ -112,8 +112,7 @@ export async function restoreBackup(file, key, database, run = compose,
   return { status: "ok", database, verified: true };
 }
 
-async function loadKey() {
-  const file = process.env.BACKUP_KEY_FILE;
+async function loadKey(file = process.env.BACKUP_KEY_FILE) {
   if (!file || !isAbsolute(file)) throw new Error("BACKUP_KEY_FILE must be an absolute path outside the backup destination");
   const value = (await readFile(file, "utf8")).trim();
   const key = Buffer.from(value, "base64url");
@@ -125,14 +124,18 @@ function inside(parent, file) {
   const path = relative(parent, file);
   return path === "" || (path !== ".." && !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(path));
 }
-async function backupDestination(keyFile) {
-  const configured = process.env.BACKUP_DIRECTORY;
+async function backupDestination(keyFile, configured = process.env.BACKUP_DIRECTORY) {
   if (!configured || !isAbsolute(configured)) throw new Error("BACKUP_DIRECTORY must be an existing separately mounted backup destination");
   const directory = await realpath(configured);
   if (inside(root, directory) || inside(directory, keyFile)) throw new Error("Backup destination must be outside the checkout and separate from its encryption key");
   const current = await stat(directory), parent = await stat(dirname(directory));
   if (!current.isDirectory() || current.dev === parent.dev) throw new Error("Backup destination is not a mounted filesystem; aborting to avoid writing to host disk");
   return directory;
+}
+
+export async function verifyBackupConfiguration(directory, keyFile) {
+  const loaded = await loadKey(keyFile);
+  await backupDestination(loaded.file, directory);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

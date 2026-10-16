@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { partnerEarningsResponseSchema, type PartnerEarningsQuery } from "@watch/contracts";
+import { commissionPayable } from "./coverage.js";
 
 export class PartnerEarningsService {
   constructor(private readonly pool: Pool) {}
@@ -15,6 +16,13 @@ export class PartnerEarningsService {
           COALESCE((SELECT SUM(amount_minor) FROM ledger_entries WHERE partner_id=$1 AND bucket='AVAILABLE'),0)::text AS available
         FROM platform_settings WHERE singleton_id=1`, [partnerId])).rows[0];
       if (!balances) throw new Error("Platform currency is not initialized");
+      const reversals = Number((await client.query(`SELECT COALESCE(-sum(amount_minor),0)::text AS amount FROM ledger_entries
+        WHERE partner_id=$1 AND entry_type='COMMISSION_REVERSAL' AND bucket='AVAILABLE'`, [partnerId])).rows[0].amount);
+      const candidates = (await client.query(`SELECT c.id FROM commissions c WHERE c.partner_id=$1 AND c.state='EARNED'
+        AND c.gross_amount_minor-c.reversed_amount_minor > COALESCE((SELECT sum(a.amount_minor) FROM payout_allocations a
+          JOIN payouts p ON p.id=a.payout_id WHERE a.commission_id=c.id AND p.status IN ('REQUESTED','PAID')),0)`, [partnerId])).rows;
+      let payoutBlocked = false;
+      for (const c of candidates) if (!await commissionPayable(client, c.id, new Date())) { payoutBlocked = true; break; }
       const total = (await client.query<{ total: string }>(
         "SELECT count(*)::text AS total FROM commissions WHERE partner_id=$1", [partnerId])).rows[0]!.total;
       const rows = (await client.query<{
@@ -33,6 +41,7 @@ export class PartnerEarningsService {
         WHERE c.partner_id=$1 ORDER BY c.updated_at DESC,c.id DESC LIMIT $2 OFFSET $3`,
       [partnerId,query.limit,(query.page-1)*query.limit])).rows;
       const result = partnerEarningsResponseSchema.parse({
+        debtAmountMinor: Math.max(0, -Number(balances.available)), reversalAmountMinor: reversals, payoutBlocked,
         currency: balances.currency, pendingAmountMinor: Number(balances.pending),
         availableAmountMinor: Number(balances.available), total: Number(total), ...query,
         items: rows.map((row) => ({ id: row.id, orderPublicNumber: row.public_number, state: row.state,

@@ -6,6 +6,13 @@ This configuration does **not** resolve U07/U08 or mark S16 production complete.
 T37 owns deployment/bootstrap/config-data verification and raw-update cleanup;
 T38 owns encrypted separate backups/restore and live acceptance smoke tests.
 
+T52: FULL_BUILD_SPEC.md §30 controls new sales. Use INVENTORY_PROVIDER=native
+with compose.native.yml (selected automatically by the ops scripts). Google is
+an optional initial read-only import source; native runtime has no Google
+credential/sync/age/outage prerequisite. The overlay removes that secret from
+API/worker/bootstrap; launch preflight checks all three authorities. Use Compose
+supporting !reset/!override. Follow [the current checklist](production-launch-t45.md).
+
 ## Topology
 
 `ops/docker/compose.production.yml` contains PostgreSQL, one-shot migrate,
@@ -57,7 +64,8 @@ Do not append Prisma-only `?schema=public`: the migrator URL is also read by
 into images or put secrets in `production.env`, shell history, git or logs.
 Generate CSRF from >=32 CSPRNG bytes as unpadded base64url; generate a separate
 32–256 character Telegram-allowed webhook secret. `google_service_account`
-contains base64 of the service-account JSON (encoding is not encryption).
+contains base64 of the service-account JSON (encoding is not encryption), only
+for a separately maintained legacy Google deployment. Do not mount it in native mode.
 Storage keys are for the private R2 media bucket. Bot/storage/DB credentials
 must be separate from development. Web receives no application secrets.
 
@@ -90,8 +98,10 @@ to the Compose file (tests use the example). Use the reviewed commit SHA as
 `RELEASE_TAG` and build all three targets. Before public launch, T37 must
 implement/check the following explicit gates:
 
-1. Fresh: migrations → required currency/Supplier/reviewed LegalDocument
-   bootstrap/verification → start API/web/worker → readiness → normal traffic.
+1. Fresh native: `deploy.mjs prepare` runs migrations and currency/Supplier/legal
+   bootstrap while writers/proxy remain stopped. Explicitly provision the real
+   configured Admin and preview/apply opening stock, then `deploy.mjs upgrade`.
+   Runtime readiness requires native authority; bootstrap does not invent stock.
 2. Upgrade: quiesce old API/worker writers → migrations → same required
    bootstrap/verification → replace services → readiness → normal traffic.
 

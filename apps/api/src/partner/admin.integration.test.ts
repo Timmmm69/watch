@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adminPartnerDetailSchema } from "@watch/contracts";
 import { LegalDocuments } from "../legal/legal.js";
 import { AdminPartnerService } from "./admin.js";
@@ -26,7 +26,7 @@ const input = { items: [{ variantId: variant,quantity: 1,expectedUnitPriceMinor:
   recipientName: "Buyer",phone: "+375291234567",address: "Minsk",salesTermsDocumentId: docs.SALES_TERMS.id,
   privacyDocumentId: docs.PRIVACY.id,salesTermsAccepted: true,privacyAcknowledged: true };
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!pool) return;
   await pool.query(`CREATE SCHEMA ${schema}`);
   const migrations = new URL("../../../../packages/db/prisma/migrations/",import.meta.url);
@@ -53,9 +53,7 @@ beforeAll(async () => {
 },30000);
 beforeEach(async () => {
   if (!pool) return;
-  await pool.query("TRUNCATE orders,payouts,carts,events,referral_links,attribution_touches,partner_terms_acceptances,audit_logs CASCADE");
-  await pool.query("UPDATE partners SET status='ACTIVE',block_reason=NULL,blocked_at=NULL");
-  await pool.query("UPDATE users SET is_blocked=false");
+  // Recreate the disposable schema per test; immutable economic history forbids TRUNCATE CASCADE.
   await pool.query("INSERT INTO partner_terms_acceptances (partner_id,legal_document_id) VALUES ($1,$2)",[partner,docs.PARTNER_TERMS.id]);
   const link = await referral.getOrCreate(seller,null);
   await pool.query(`INSERT INTO attribution_touches (id,buyer_user_id,partner_id,referral_link_id,source_fingerprint,expires_at)
@@ -63,7 +61,8 @@ beforeEach(async () => {
   const cart = randomUUID(); await pool.query("INSERT INTO carts (id,buyer_user_id) VALUES ($1,$2)",[cart,buyer]);
   await pool.query("INSERT INTO cart_items (cart_id,variant_id,quantity) VALUES ($1,$2,1)",[cart,variant]);
 });
-afterAll(async () => { if (pool) { await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await pool.end(); } });
+afterEach(async () => { if (pool) await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); });
+afterAll(async () => { await pool?.end(); });
 
 // Observe real PostgreSQL wait dependencies, rather than relying on timing alone.
 async function waiter(blocker: number) {

@@ -8,6 +8,25 @@ legal content or automatic fulfilment PII deletion is supplied.
 
 ## Prepare a release
 
+Media storage may use Cloudflare R2 or private Beget S3. For Beget use
+`OBJECT_STORAGE_ENDPOINT=https://s3.ru1.storage.beget.cloud`,
+`OBJECT_STORAGE_REGION=ru1` and the actual bucket name; retain the existing
+`ops/secrets/storage_access_key` and `storage_secret_key` mounts. Media is
+streamed through the API, so public bucket access and browser CORS are not
+required. Approval JSON retains the legacy `r2Endpoint`/`r2Bucket` field names;
+set them to the same Beget endpoint/bucket. Database backups still require the
+separate mounted backup destination described below, not this media bucket.
+
+T45 adds mandatory production approval, explicit hold/SLA, approved PII policy,
+real-input validation and backup preflight. Follow [the launch checklist](production-launch-t45.md)
+before the commands below; the old environment example alone cannot launch production.
+
+T52 supersedes old Google/Buyer assumptions with FULL_BUILD_SPEC.md §30.
+Use INVENTORY_PROVIDER=native and compose.native.yml; the ops scripts select
+the overlay automatically. Approval v2 binds the native R−D workflow and requires
+nativeWorkflow evidence. [Import](initial-import-t52.md), [owner](owner-guide-t52.md),
+[dropshipper](dropshipper-guide-t52.md), [release state](release-t52.md).
+
 Use a Linux host with Docker Compose v2, Node 24 and the T36 firewall/SSH
 controls. Install the checkout at `/opt/watch` if using the supplied systemd
 units; adjust their paths/user to the reviewed host. Use the deployed commit's
@@ -15,8 +34,8 @@ full 40-character SHA as `RELEASE_TAG`; never reuse a release tag for new code.
 Keep configuration, keys and reviewed inputs outside git/build contexts.
 
 1. Supply the real `ops/docker/production.env` and runtime secret files from
-   [T36](production-topology-t36.md). All three legal references, Google Sheets
-   credentials and HTTPS object storage are required in production. Admin IDs
+   [T36](production-topology-t36.md). All three legal references and HTTPS private
+   storage are required. Native runtime requires no Google credentials. Admin IDs
    and canonical >=32-byte CSRF configuration are validated. Generate secrets
    with CSPRNG bytes, not memorable text. Storage media originals must also
    remain available for re-upload; database backup does not copy R2 objects.
@@ -43,16 +62,22 @@ as Compose's interpolation file and the service env file; they do not source
 shell code from it or print resolved secrets.
 
 ```sh
-node ops/scripts/deploy.mjs fresh
+node ops/scripts/deploy.mjs prepare
+# Explicit real Admin provisioning and reviewed opening-stock preview/apply:
+# initial-import-t52.md. Prepare leaves writers/proxy stopped. Then:
+node ops/scripts/deploy.mjs stage
+# Internal services only, with separately authorized private operator access.
+# Public opening only after the full checklist and owner decision:
+node ops/scripts/deploy.mjs upgrade
 # For a previously deployed database:
 node ops/scripts/deploy.mjs upgrade
 ```
 
-Fresh install refuses an existing Compose project or populated application
+Fresh/prepare refuses an existing Compose project or populated application
 schema. Upgrade builds/validates the release, closes the proxy, stops/drains
 old API/worker/web for up to 120 seconds, verifies they stopped, and then runs
 freshly recreated one-shot migration and bootstrap jobs. It starts API/web/worker
-only after both jobs exit successfully; verifies internal readiness, exact
+only after both jobs exit successfully (prepare stops after bootstrap); verifies internal readiness, exact
 committed migration names/checksums and the existing S12 financial gate; opens
 Caddy; then checks critical services and public `/health` and `/ready`, HTML,
 unauthenticated-session/legal-route rejection and security headers. Legal
@@ -70,7 +95,9 @@ type/version/effective-time/content hash, currency, final installed migrations
 and production's exactly-one-ACTIVE-Supplier invariant. Worker checks the same
 prerequisites before processing, plus the financial gate and initial retention
 cleanup. Worker health is a local heartbeat; domain inventory freshness remains
-separate from global readiness. Failed external inventory does not stop readiness.
+separate from global readiness in legacy mode. Native mode never queries Google;
+readiness requires native authority and rejects switching it back. Bootstrap
+permits a fresh uninitialized DB so explicit import can run before API startup.
 
 `ops/deployment.lock` serializes deployment/backup/restore commands. After an
 interrupted host process, inspect running containers/processes before removing
@@ -85,9 +112,9 @@ against a partly migrated schema.
 Use the configured Compose prefix:
 
 ```sh
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml ps --all
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js diagnostics
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js verify
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml ps --all
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js diagnostics
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js verify
 node ops/scripts/smoke.mjs
 df -h
 docker system df
@@ -101,7 +128,8 @@ and schema for that stage without sharing credentials. Restrict log access;
 API/worker structured errors omit sensitive details. All Compose services rotate
 JSON logs at 10 MiB ×3. Monitor filesystem free space, named PostgreSQL volume,
 failed/restarting/unhealthy services, expired leases, queue age/failures, inventory
-freshness/deficits, operational overdue Orders, backup/timer failures and backup
+deficits/uninitialized native SKU, unknown procurement and journal errors (legacy
+mode additionally monitors freshness), operational overdue Orders, backup/timer failures and backup
 age. Configure host monitoring/alert delivery using the selected U07 provider.
 Do not use `docker system prune --volumes` to address disk pressure.
 
@@ -116,8 +144,8 @@ storage/access/retention policy. Fulfilment PII redaction remains disabled until
 After operator review of a specific FAILED row and its business idempotency:
 
 ```sh
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js retry-event EVENT_UUID OPERATOR_TELEGRAM_ID
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js retry-telegram UPDATE_ID OPERATOR_TELEGRAM_ID
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js retry-event EVENT_UUID OPERATOR_TELEGRAM_ID
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js retry-telegram UPDATE_ID OPERATOR_TELEGRAM_ID
 ```
 
 The operator must be a configured, mirrored, unblocked Admin. Only FAILED
@@ -129,15 +157,15 @@ external delivery cannot guarantee exactly-once semantics.
 Telegram setup continues using the existing command (run in the one-shot image):
 
 ```sh
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml run --rm --no-deps bootstrap node apps/api/dist/telegram/configure.js
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js webhook-info
-docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml exec -T api node apps/api/dist/operations/cli.js webhook-remove
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml run --rm --no-deps bootstrap node apps/api/dist/telegram/configure.js
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js webhook-info
+docker compose --env-file ops/docker/production.env -f ops/docker/compose.production.yml -f ops/docker/compose.native.yml exec -T api node apps/api/dist/operations/cli.js webhook-remove
 ```
 
 Removal preserves pending Telegram updates. Info emits pending count/error
 timestamp only. Verify the configured URL separately without copying Bot tokens
 into browser URLs/logs. Keep BotFather Main Mini App/menu/domain aligned with
-the single HTTPS origin; test fresh top-level initData and referral startapp.
+the single HTTPS origin; test fresh top-level initData and dropshipper order flow.
 
 ## Encrypted daily backup
 
@@ -251,12 +279,12 @@ timestamp, restore duration, release, verified migration count and operator sign
       key-only, no public DB/API/web/Docker/Caddy admin. Verify IPv4 and IPv6.
 - [ ] Reviewed webhook URL/secret, pending updates and retry/lease recovery verified.
 - [ ] Real Telegram iOS/Android/Desktop/web: `/start`, `/help`, fresh Mini App
-      auth/relaunch, CSRF, catalog/media, referral, checkout/idempotency,
+      auth/relaunch, CSRF, catalog/media, dropshipper checkout/idempotency,
       ownership/Admin restrictions and CSP/HSTS/media display verified.
-- [ ] Inventory outage smoke: block/revoke Sheets read access in a controlled
-      window; domain health becomes failed/stale and sales fail closed while
-      `/ready` stays healthy; restore access and observe a successful fresh sync.
-      Do not infer MANUAL reservation reconciliation from sync success.
+- [ ] Native count → preview/apply → catalog/photos → drop order/reserve → observed R
+      → ship/deliver/hold → release R−D → payout → partial/late Return, separate refund
+      and saleable/non-saleable inspection. Stock/ledger reconciled; replays/races,
+      roles/unpaid delivery/unknown expenses checked. No native Google outage gate.
 - [ ] Notification/financial/fulfilment/return/payout installed acceptance suites
       pass with approved test participants; no automatic payout/tax inputs invented.
 - [ ] Daily encrypted backup and isolated restore pass with exact migration history;

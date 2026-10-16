@@ -18,6 +18,7 @@ x-app: &app
     API_HOST: 0.0.0.0
     API_PORT: "3001"
     API_TRUSTED_PROXY_IP: 172.30.36.2
+    WATCH_PRODUCTION_APPROVAL_FILE: /run/production-approval.json
     DATABASE_URL_FILE: /run/secrets/app_database_url
     TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
     TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
@@ -44,6 +45,8 @@ x-app: &app
   init: true
   user: "1000:1000"
   read_only: true
+  volumes:
+    - ${WATCH_PRODUCTION_APPROVAL_PATH:?Set the absolute reviewed production approval path}:/run/production-approval.json:ro
   tmpfs:
     - /tmp:uid=1000,gid=1000,mode=1770
   cap_drop: [ALL]
@@ -105,6 +108,7 @@ services:
         condition: service_completed_successfully
     networks: [database]
     volumes:
+      - ${WATCH_PRODUCTION_APPROVAL_PATH:?Set the absolute reviewed production approval path}:/run/production-approval.json:ro
       - ${WATCH_BOOTSTRAP_DIR:-../bootstrap}:/run/bootstrap:ro
     restart: "no"
 

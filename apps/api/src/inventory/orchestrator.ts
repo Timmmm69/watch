@@ -68,6 +68,11 @@ export class InventorySyncOrchestrator {
         throw new InventorySyncError("SYNC_ALREADY_RUNNING", { runSummary: current.rows[0] ?? null });
       }
 
+      // Native cutover holds this same session lock. Never read Google after cutover.
+      if ((await client.query("SELECT 1 FROM inventory_authority")).rowCount) {
+        throw new InventorySyncError("DEPENDENCY_UNAVAILABLE", { reason: "NATIVE_AUTHORITY" });
+      }
+
       const runId = randomUUID();
       // A: advisory-lock ownership proves every previous RUNNING run was interrupted.
       await transaction(client, async () => {

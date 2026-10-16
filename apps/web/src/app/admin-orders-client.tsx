@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { OrderFinance } from "./order-finance-client";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 const labels: Record<string, string> = { PLACED: "Создан", CONFIRMED: "Подтверждён", FULFILLING: "Собирается", SHIPPED: "Отправлен",
   DELIVERED: "Доставлен", COMPLETED: "Завершён", CANCELLED: "Отменён", DELIVERY_FAILED: "Не доставлен" };
 const actions: Record<string, string> = { CONFIRMED: "Подтвердить заказ", FULFILLING: "Начать сборку", SHIPPED: "Подтвердить отправку",
-  DELIVERED: "Подтвердить доставку покупателю", CANCELLED: "Отменить заказ", DELIVERY_FAILED: "Зафиксировать недоставку" };
+  DELIVERED: "Подтвердить доставку покупателю", CANCELLED: "Отменить заказ" };
 const reservationLabels: Record<string, string> = { ACTIVE: "Активен", RELEASED: "Освобождён", CONSUMED: "Использован" };
 const sourceLabels: Record<string, string> = { OK: "В порядке", UNINITIALIZED: "Не загружен", MISSING: "Товар отсутствует в источнике", INVALID: "Некорректные данные" };
 type Order = { id: string; publicNumber: string; status: string; totalMinor: number; currency: string; overdue: boolean;
+  economicRegime?: string;
   partnerIdSnapshot: string | null; attributionTouchId: string | null; commissionEligibleSnapshot: boolean; allowedTransitions: string[];
   completionEligibleAt: string | null; timeline: { status: string; at: string }[];
   fulfillment?: { recipientName: string | null; phone: string | null; address: string | null; comment: string | null; redactedAt: string | null } | null;
@@ -65,6 +67,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         setBlocked(true); setOrder(null); setResult(null);
+        setError(response.status === 401 ? "Откройте приложение заново через Telegram." : "Доступ запрещён. Изменение заказов недоступно.");
         throw new Error(response.status === 401 ? "Откройте приложение заново через Telegram." : "Доступ запрещён. Изменение заказов недоступно.");
       }
       throw Object.assign(new Error(body.error?.code === "INVENTORY_SNAPSHOT_CHANGED"
@@ -167,13 +170,14 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         <span>Страница {result.page}</span><button className="min-h-11" disabled={result.page * result.limit >= result.total || loading} onClick={() => turnPage(result.page + 1)}>Далее</button></nav></>}
     {order && !blocked && <>
       <h2 className="text-xl">{order.publicNumber}</h2><p>{labels[order.status]} · {money(order.totalMinor, order.currency)}{order.overdue ? " · Просрочен" : ""}</p>
-      {["DELIVERED", "COMPLETED"].includes(order.status) && orderId &&
-        <p><Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns?order=${orderId}`}>Оформить возврат</Link></p>}
+      {["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && orderId &&
+        <p><Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns?order=${orderId}`}>Оформить возврат</Link>
+          {order.status === "SHIPPED" && " · В том числе отказ от получения или недоставка"}</p>}
       <section><h2 className="font-semibold">Получатель</h2>{order.fulfillment && !order.fulfillment.redactedAt ? <>
         <p>{order.fulfillment.recipientName}</p><p>{order.fulfillment.phone}</p><p>{order.fulfillment.address}</p><p>{order.fulfillment.comment}</p></> : <p>Контактные данные не сохранены или удалены.</p>}</section>
       <section><h2 className="font-semibold">Товары</h2>{order.items?.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">
         <h3>{item.title} · {item.sku}</h3><p>{item.quantity} шт. × {money(item.unitPriceMinor, order.currency)} = {money(item.lineTotalMinor, order.currency)}</p>
-        <p>{JSON.stringify(item.attributes)}</p><p>Комиссия за единицу: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
+        <p>{JSON.stringify(item.attributes)}</p><p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
         {item.supplierSettlementUnitMinor !== null && <p>Расчёт с поставщиком за единицу: {money(item.supplierSettlementUnitMinor, order.currency)}</p>}</article>)}</section>
       <section><h2 className="font-semibold">Атрибуция</h2><p>Партнёр: {order.partnerIdSnapshot ?? "Органический заказ"}</p>
         <p>Касание: {order.attributionTouchId ?? "Нет"}</p><p>Право на комиссию при создании: {order.commissionEligibleSnapshot ? "Да" : "Нет"}</p></section>
@@ -195,6 +199,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
           <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Отмена сверки</button>
         </form>}</div>)}</section>
+      {order.economicRegime === "DROPSHIP_MARKUP" && <OrderFinance orderId={order.id} request={request} />}
       <section><h2 className="font-semibold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
         {order.completionEligibleAt && <p>Завершение системой возможно после {date(order.completionEligibleAt)}.</p>}</section>
       <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-blue-600 px-4"
@@ -202,7 +207,6 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
       {confirm && <section aria-label="Подтверждение действия" className="rounded border border-slate-600 p-4">
         <p>{actions[confirm]}?</p>{confirm === "DELIVERED" && <p>Подтвердите, что покупатель получил заказ.</p>}
         {confirm === "CANCELLED" && <p>Заказ будет отменён, его резервы освобождены.</p>}
-        {confirm === "DELIVERY_FAILED" && <p>Резервы останутся активными до сверки с источником.</p>}
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void transition(confirm)}>Да, подтвердить</button>
         <button className="min-h-11 px-4 underline" onClick={() => setConfirm("")}>Вернуться</button></section>}
     </>}

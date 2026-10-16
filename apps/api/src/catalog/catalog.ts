@@ -196,6 +196,8 @@ export interface StorefrontVariant {
   priceMinor: number;
   currency: string;
   availability: StorefrontAvailability;
+  dropshipPriceMinor?: number | null;
+  sellable?: number;
 }
 
 export interface StorefrontProduct extends StorefrontProductBase {
@@ -475,7 +477,9 @@ export class CatalogService {
     private readonly pool: Pool,
     private readonly platformCurrency: string,
     private readonly assetChecks: ProductAssetChecks = databaseAssetChecks,
-    private readonly inventoryMaxAgeSeconds: number = DEFAULT_INVENTORY_MAX_AGE_SECONDS
+    private readonly inventoryMaxAgeSeconds: number = DEFAULT_INVENTORY_MAX_AGE_SECONDS,
+    private readonly transactionClient?: PoolClient,
+    private readonly nativeCommerce = false
   ) {}
 
   async verifyCurrencyConfigured(): Promise<void> {
@@ -494,6 +498,7 @@ export class CatalogService {
   }
 
   private async withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    if (this.transactionClient) return fn(this.transactionClient);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -987,6 +992,8 @@ export class CatalogService {
         await this.lockInventoryItem(client, variantId);
       }
       if (input.inventoryExternalKey !== undefined && input.inventoryExternalKey !== variant.inventory_external_key) {
+        const native = await client.query("SELECT 1 FROM inventory_items WHERE variant_id=$1 AND native_initialization_id IS NOT NULL",[variantId]);
+        if (native.rowCount) throw new CatalogValidationError("Native SKU mapping is fixed after initialization", {variantId}, "INVENTORY_EXTERNAL_KEY_IN_USE");
         const activeReservations = await client.query<{ count: number }>(
           "SELECT COUNT(*)::int AS count FROM inventory_reservations WHERE variant_id = $1 AND status = 'ACTIVE'",
           [variantId]
@@ -1097,6 +1104,9 @@ export class CatalogService {
     query: StorefrontProductsQuery,
     partnerCtx?: PartnerViewContext
   ): Promise<Paginated<StorefrontProductCard>> {
+    const priceColumn = this.nativeCommerce ? "v.dropship_price_minor" : "v.price_minor";
+    const availabilitySql = variantAvailabilitySql(this.inventoryMaxAgeSeconds);
+    const stockSql = this.nativeCommerce ? `CASE WHEN i.native_initialization_id IS NULL THEN 'UNKNOWN' ELSE ${availabilitySql} END` : availabilitySql;
     const values: unknown[] = [];
     const conditions = ["p.status = 'ACTIVE'"];
     if (query.q) {
@@ -1117,11 +1127,11 @@ export class CatalogService {
       const priceConditions = ["v.product_id = p.id", "v.status = 'ACTIVE'"];
       if (query.minPriceMinor !== undefined) {
         values.push(query.minPriceMinor);
-        priceConditions.push(`v.price_minor >= $${values.length}`);
+        priceConditions.push(`${priceColumn} >= $${values.length}`);
       }
       if (query.maxPriceMinor !== undefined) {
         values.push(query.maxPriceMinor);
-        priceConditions.push(`v.price_minor <= $${values.length}`);
+        priceConditions.push(`${priceColumn} <= $${values.length}`);
       }
       conditions.push(`EXISTS (SELECT 1 FROM product_variants v WHERE ${priceConditions.join(" AND ")})`);
     }
@@ -1130,14 +1140,14 @@ export class CatalogService {
       conditions.push(`stock.availability = $${values.length}`);
     }
     const from = `FROM products p CROSS JOIN LATERAL (
-      SELECT min(v.price_minor) AS price_from_minor, max(v.price_minor) AS price_to_minor,
+      SELECT min(${priceColumn}) AS price_from_minor, max(${priceColumn}) AS price_to_minor,
         CASE WHEN bool_or(vs.availability = 'IN_STOCK') THEN 'IN_STOCK'
              WHEN bool_or(vs.availability = 'UNKNOWN') THEN 'UNKNOWN'
              WHEN bool_or(vs.availability = 'STALE') THEN 'STALE'
              ELSE 'OUT_OF_STOCK' END AS availability
       FROM product_variants v
       LEFT JOIN inventory_items i ON i.variant_id = v.id
-      CROSS JOIN LATERAL (SELECT ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability) vs
+      CROSS JOIN LATERAL (SELECT ${stockSql} AS availability) vs
       WHERE v.product_id = p.id AND v.status = 'ACTIVE'
     ) stock WHERE ${conditions.join(" AND ")}`;
     const total = await this.pool.query<{ count: number }>(
@@ -1170,7 +1180,7 @@ export class CatalogService {
        ORDER BY sort_order, created_at, id`,
       [items.rows.map((row) => row.id)]
     );
-    const commissionRows = partnerCtx?.partner
+    const commissionRows = partnerCtx?.partner && !this.nativeCommerce
       ? await this.pool.query<{ product_id: string; partner_commission_unit_minor: number }>(
           `SELECT product_id, partner_commission_unit_minor FROM product_variants
             WHERE product_id = ANY($1::uuid[]) AND status = 'ACTIVE'`,
@@ -1194,7 +1204,7 @@ export class CatalogService {
           currency: this.platformCurrency, availability: row.availability,
           gallery: assets.rows.filter((asset) => asset.product_id === row.id).map(mapAsset)
         };
-        if (partnerCtx?.partner) {
+        if (partnerCtx?.partner && !this.nativeCommerce) {
           card.partnerView = {
             commissionFromMinor: commissions.length > 0 ? Math.min(...commissions) : 0,
             commissionToMinor: commissions.length > 0 ? Math.max(...commissions) : 0,
@@ -1211,6 +1221,8 @@ export class CatalogService {
   }
 
   async getStorefrontProduct(slug: string, partnerCtx?: PartnerViewContext): Promise<StorefrontProduct> {
+    const availabilitySql = variantAvailabilitySql(this.inventoryMaxAgeSeconds);
+    const stockSql = this.nativeCommerce ? `CASE WHEN i.native_initialization_id IS NULL THEN 'UNKNOWN' ELSE ${availabilitySql} END` : availabilitySql;
     const productResult = await this.pool.query<ProductRow>(
       "SELECT * FROM products WHERE slug = $1 AND status = 'ACTIVE'",
       [slug]
@@ -1224,8 +1236,10 @@ export class CatalogService {
         ORDER BY c.sort_order, c.id`,
       [product.id]
     );
-    const variants = await this.pool.query<VariantRow & { availability: StorefrontAvailability }>(
-      `SELECT v.*, ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability FROM product_variants v
+    const variants = await this.pool.query<VariantRow & { availability: StorefrontAvailability; dropship_price_minor: number | null; sellable: number }>(
+      `SELECT v.*, ${this.nativeCommerce ? "v.dropship_price_minor AS price_minor," : ""}
+        GREATEST(0,COALESCE(i.native_on_hand-i.native_reserved_quantity-i.safety_buffer,0)) AS sellable,
+        ${stockSql} AS availability FROM product_variants v
         LEFT JOIN inventory_items i ON i.variant_id = v.id
         WHERE v.product_id = $1 AND v.status = 'ACTIVE'
         ORDER BY v.created_at, v.id`,
@@ -1241,7 +1255,7 @@ export class CatalogService {
            ORDER BY sort_order, created_at, id`, [product.id]
         )
       : null;
-    const prices = variants.rows.map((row) => row.price_minor);
+    const prices = variants.rows.map((row) => row.price_minor).filter((value) => value !== null);
     const statuses = variants.rows.map((row) => row.availability);
     const availability: StorefrontAvailability = statuses.includes("IN_STOCK") ? "IN_STOCK"
       : statuses.includes("UNKNOWN") ? "UNKNOWN"
@@ -1264,14 +1278,15 @@ export class CatalogService {
       })),
       variants: variants.rows.map((row) => ({
         id: row.id, sku: row.sku, attributes: row.attributes,
-        priceMinor: row.price_minor, currency: row.currency, availability: row.availability
+        priceMinor: row.price_minor, currency: row.currency, availability: row.availability,
+        ...(this.nativeCommerce ? { dropshipPriceMinor: row.dropship_price_minor, sellable: row.sellable } : {})
       }))
     };
     if (partnerCtx?.partner) {
       result.partnerView = {
-        referralEligible,
+        referralEligible: !this.nativeCommerce && referralEligible,
         readOnlyReason,
-        variants: variants.rows.map((row) => ({
+        variants: this.nativeCommerce ? [] : variants.rows.map((row) => ({
           id: row.id,
           commissionUnitMinor: row.partner_commission_unit_minor,
           referralEligible,

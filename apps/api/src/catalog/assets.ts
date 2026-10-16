@@ -66,9 +66,10 @@ export class StorageUnavailableError extends Error {
 }
 
 export class AssetService {
-  constructor(private readonly pool: Pool, private readonly storage: ObjectStorage) {}
+  constructor(private readonly pool: Pool, private readonly storage: ObjectStorage, private readonly transactionClient?: PoolClient) {}
 
   private async transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    if (this.transactionClient) return fn(this.transactionClient);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

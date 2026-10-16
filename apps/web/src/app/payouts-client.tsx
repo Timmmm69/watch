@@ -11,13 +11,16 @@ type Payout = { id: string; partnerId: string; amountMinor: number; currency: st
   requestedByUserId: string; requestedAt: string; allocations: Allocation[]; processedByAdminUserId?: string | null;
   processedAt?: string | null; externalReference?: string | null; note?: string | null };
 type PayoutPage = { items: Payout[]; total: number; page: number; limit: number };
-type Earnings = { currency: string; availableAmountMinor: number; minimumPayoutMinor?: number; payoutConfigurationResolved?: boolean };
+type Earnings = { currency: string; availableAmountMinor: number; minimumPayoutMinor?: number; payoutConfigurationResolved?: boolean;
+  debtAmountMinor?: number; reversalAmountMinor?: number; payoutBlocked?: boolean };
 const labels: Record<PayoutStatus, string> = { REQUESTED: "Ожидает выплаты", PAID: "Выплачена", REJECTED: "Отклонена" };
 const money = (amount: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(amount / 100);
 const date = (value: string) => new Date(value).toLocaleString("ru-BY");
 const newKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 
 function errorText(code?: string) {
+  if (code === "PAYOUT_FACTS_CHANGED") return "Изменились оплата или возвраты. Выплата заблокирована; проверьте деньги, долг и распределения. При необходимости отклоните заявку и создайте новую на актуальную сумму.";
+  if (code === "IDEMPOTENCY_CONFLICT") return "Идентификатор операции или перевода уже использован. Проверьте историю.";
   return code === "PARTNER_BLOCKED" ? "Партнёр заблокирован: самостоятельная заявка недоступна."
     : code === "TERMS_REACCEPT_REQUIRED" ? "Требуется принять новые условия партнёрской программы."
       : code === "PAYOUT_CONFIGURATION_MISSING" ? "Выплата сейчас не настроена."
@@ -59,7 +62,7 @@ export function PartnerPayoutsScreen({ csrfToken, blocked, termsReacceptRequired
   const minimum = earnings?.minimumPayoutMinor ?? 5000;
   const configured = earnings?.payoutConfigurationResolved === true;
   const disabledReason = !financeReady ? (error ? "Не удалось проверить условия выплаты. Обновите данные." : "Проверяем условия выплаты…") : blocked ? "Партнёр заблокирован." : termsReacceptRequired ? "Требуется принять новые условия партнёрской программы." : !configured ? "Выплата сейчас не настроена." : hasActive ? "Есть активная заявка на выплату."
-    : !earnings ? "Проверяем условия выплаты…" : earnings.availableAmountMinor <= 0 ? "Нет доступного баланса." : earnings.availableAmountMinor < minimum ? `Минимальная выплата — ${money(minimum, earnings.currency)}.` : null;
+    : !earnings ? "Проверяем условия выплаты…" : earnings.payoutBlocked ? "Выплата заблокирована: проверьте оплату и открытые возвраты заказов." : earnings.availableAmountMinor <= 0 ? "Нет доступного баланса." : earnings.availableAmountMinor < minimum ? `Минимальная выплата — ${money(minimum, earnings.currency)}.` : null;
   const submit = async () => {
     if (disabledReason || pending) return; setPending(true); setError("");
     key.current ??= newKey();
@@ -73,7 +76,8 @@ export function PartnerPayoutsScreen({ csrfToken, blocked, termsReacceptRequired
     {termsReacceptRequired && <Link className="inline-flex min-h-11 items-center underline" href="/partner/onboarding?returnTo=%2Fpartner%2Fpayouts">Принять новые условия</Link>}
     {error && <p role="alert" className="text-rose-300">{error}</p>}<button className="min-h-11 underline" disabled={pending} onClick={() => setRetry((n) => n + 1)}>Обновить</button>
     {loading ? <div aria-label="Загрузка выплат" className="h-36 animate-pulse rounded-xl bg-slate-900" /> : earnings && <section className="rounded-xl bg-slate-900 p-4">
-      <h2 className="text-lg font-semibold">Доступно для выплаты</h2><p className="mt-2 text-2xl">{money(earnings.availableAmountMinor, earnings.currency)}</p>
+      <p>Долг после корректировок: {money(earnings.debtAmountMinor ?? Math.max(0,-earnings.availableAmountMinor), earnings.currency)}. Учтённые сторно: {money(earnings.reversalAmountMinor ?? 0, earnings.currency)}.</p>
+      <h2 className="text-lg font-semibold">Доступно для выплаты</h2><p className="mt-2 text-2xl">{money(earnings.payoutBlocked ? 0 : Math.max(0,earnings.availableAmountMinor), earnings.currency)}</p>
       <p className="mt-2 text-slate-300">Минимальная сумма: {money(minimum, earnings.currency)}. Заявка будет создана на весь доступный баланс.</p>
       {disabledReason ? <p className="mt-3 text-amber-300">{disabledReason}</p> : <button className="mt-4 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50" disabled={pending} onClick={() => setConfirm(true)}>Запросить выплату</button>}
       <p className="mt-3 text-sm text-slate-400">Перевод выполняется оператором вне приложения. Платёжные реквизиты здесь не собираются.</p>

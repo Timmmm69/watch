@@ -10,6 +10,7 @@ export class CartError extends Error {
 }
 
 interface LineRow {
+  native_authority?: boolean; native_on_hand?: number | null; native_reserved_quantity?: number | null;
   variant_id: string; product_id: string; slug: string; title: string; sku: string; quantity: number;
   price_minor: number; currency: string; product_status: string; variant_status: string;
   source_status: InventorySourceStatus | null; source_quantity: number | null;
@@ -42,7 +43,8 @@ export class CartService {
   }
 
   private availability(row: LineRow) {
-    return computeInventoryAvailability({ sourceStatus: row.source_status, sourceQuantity: row.source_quantity,
+    return computeInventoryAvailability({ native: row.native_authority, nativeOnHand: row.native_on_hand,
+      nativeReservedQuantity: row.native_reserved_quantity, sourceStatus: row.source_status, sourceQuantity: row.source_quantity,
       lastSuccessfulSyncAt: row.last_successful_sync_at, safetyBuffer: row.safety_buffer ?? 0,
       activeReservations: Number(row.active_reservations), maxAgeSeconds: this.maxAgeSeconds });
   }
@@ -52,6 +54,7 @@ export class CartService {
       SELECT ci.variant_id, ci.quantity, v.product_id, v.sku, v.price_minor, v.currency,
         p.slug, p.title, p.status AS product_status, v.status AS variant_status,
         i.source_status, i.source_quantity, i.safety_buffer, i.last_successful_sync_at,
+        EXISTS(SELECT 1 FROM inventory_authority) AS native_authority,i.native_on_hand,i.native_reserved_quantity,
         (SELECT COALESCE(SUM(r.quantity), 0)::text FROM inventory_reservations r
           WHERE r.variant_id = v.id AND r.status = 'ACTIVE') AS active_reservations
       FROM cart_items ci JOIN product_variants v ON v.id = ci.variant_id

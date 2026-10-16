@@ -1,5 +1,6 @@
 import { z } from "zod";
 export * from "./admin-partners.js";
+export * from "./owner-analytics.js";
 
 export const analyticsQuerySchema = z.object({
   from: z.string().datetime({ offset: true }),
@@ -148,6 +149,26 @@ export const checkoutResponseSchema = z.object({
 });
 export type CheckoutOrder = z.infer<typeof checkoutResponseSchema>;
 
+// Expected D is a concurrency precondition, never a client-assigned price.
+export const dropshipCheckoutRequestSchema = checkoutRequestSchema.omit({
+  items: true, salesTermsDocumentId: true, salesTermsAccepted: true
+}).extend({
+  items: z.array(z.object({
+    variantId: checkoutUuid,
+    quantity: z.number().int().min(1).max(99),
+    expectedDropshipPriceMinor: z.number().int().min(0).max(MAX_ORDER_TOTAL_MINOR),
+    customerUnitPriceMinor: z.number().int().min(0).max(MAX_ORDER_TOTAL_MINOR)
+  }).strict()).min(1).max(MAX_CART_LINES)
+    .refine((items) => new Set(items.map((item) => item.variantId)).size === items.length, "Duplicate Variant IDs")
+    .transform((items) => items.sort((a, b) => a.variantId.localeCompare(b.variantId))),
+  partnerTermsDocumentId: checkoutUuid
+}).strict();
+export type DropshipCheckoutRequest = z.infer<typeof dropshipCheckoutRequestSchema>;
+export const dropshipCheckoutResponseSchema = checkoutResponseSchema.omit({
+  salesTermsDocumentId: true, salesTermsAcceptedAt: true
+}).extend({ partnerTermsDocumentId: z.string().uuid(), remunerationTotalMinor: moneyMinor });
+export type DropshipCheckoutOrder = z.infer<typeof dropshipCheckoutResponseSchema>;
+
 export const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20)
@@ -165,6 +186,8 @@ export const partnerCommissionSchema = z.object({
   eligibleAt: z.string().datetime().nullable(), availableAt: z.string().datetime().nullable()
 });
 export const partnerEarningsResponseSchema = z.object({
+  debtAmountMinor: ledgerBalanceMinor.nonnegative().optional(),
+  reversalAmountMinor: ledgerBalanceMinor.nonnegative().optional(), payoutBlocked: z.boolean().optional(),
   minimumPayoutMinor: moneyMinor.positive().optional(), payoutConfigurationResolved: z.boolean().optional(),
   currency: z.string().length(3), pendingAmountMinor: ledgerBalanceMinor,
   availableAmountMinor: ledgerBalanceMinor, items: z.array(partnerCommissionSchema),
@@ -194,13 +217,41 @@ export const payoutTransitionSchema = z.object({ target: z.enum(["PAID", "REJECT
 }).strict().refine((value) => value.target !== "PAID" || !!value.externalReference, { message: "PAID requires an external reference", path: ["externalReference"] });
 export type PayoutListQuery = z.infer<typeof adminPayoutListQuerySchema>;
 
+// Identifiers only: no URLs, account/card numbers, credentials or free-text payment details.
+export const safeFinancialReferenceSchema = z.string().trim().min(1).max(200)
+  .regex(/^[A-Za-z][A-Za-z0-9._:-]*$/).refine(value => !/\d{12}/.test(value));
+const observedFactSchema = z.object({ operationKey: z.string().uuid(),
+  reference: safeFinancialReferenceSchema, occurredAt: z.string().datetime({ offset: true }),
+  reason: z.string().trim().min(1).max(500), confirmed: z.literal(true) });
+export const orderMoneyRequestSchema = observedFactSchema.extend({
+  kind: z.enum(["RECEIPT", "REFUND", "CORRECTION"]),
+  amountMinor: z.number().int().min(-2_000_000_000).max(2_000_000_000).refine(n => n !== 0),
+  correctsEntryId: z.string().uuid().optional(), obligationId: z.string().uuid().optional()
+}).strict();
+export const orderExpenseRequestSchema = observedFactSchema.extend({
+  kind: z.enum(["DELIVERY", "PACKAGING", "PAYMENT_FEE", "OTHER"]),
+  amountMinor: z.number().int().min(-2_000_000_000).max(2_000_000_000).refine(n => n !== 0),
+  correctsExpenseId: z.string().uuid().optional()
+}).strict();
+export const orderExpenseReviewRequestSchema = z.object({ operationKey: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500), confirmed: z.literal(true),
+  expenseEntryCount: z.number().int().nonnegative(), reviewedTotalMinor: z.number().int().min(0).max(2_000_000_000)
+}).strict();
+export interface OrderFinanceResponse {
+  cashMinor: number; retainedSalesMinor: number; outstandingMinor: number; covered: boolean;
+  expensesMinor: number | null; expenseEntryCount: number; recordedExpensesMinor: number;
+  money: { id: string; kind: string; amountMinor: number; reference: string; occurredAt: string; actorUserId: string; correctsEntryId: string | null }[];
+  expenses: { id: string; kind: string; amountMinor: number; reference: string; occurredAt: string; actorUserId: string; correctsExpenseId: string | null }[];
+  obligations: { id: string; kind: string; outstandingMinor: number }[];
+}
+
 export const orderStatusSchema = z.enum(["PLACED", "CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "DELIVERY_FAILED"]);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 export const adminOrderTargets = ["CONFIRMED", "FULFILLING", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"] as const;
 export type AdminOrderTarget = typeof adminOrderTargets[number];
 export const allowedAdminOrderTransitions: Record<OrderStatus, readonly AdminOrderTarget[]> = {
   PLACED: ["CONFIRMED", "CANCELLED"], CONFIRMED: ["FULFILLING", "CANCELLED"],
-  FULFILLING: ["SHIPPED", "CANCELLED"], SHIPPED: ["DELIVERED", "DELIVERY_FAILED"],
+  FULFILLING: ["SHIPPED", "CANCELLED"], SHIPPED: ["DELIVERED"],
   DELIVERED: [], COMPLETED: [], CANCELLED: [], DELIVERY_FAILED: []
 };
 // Accept COMPLETED syntactically so the API can return SYSTEM_TRANSITION_ONLY.
@@ -239,7 +290,9 @@ export const buyerOrderItemSchema = z.object({
 });
 
 export const partnerOrderItemSchema = buyerOrderItemSchema.extend({
-  partnerCommissionUnitSnapshotMinor: moneyMinor
+  partnerCommissionUnitSnapshotMinor: moneyMinor,
+  dropshipUnitPriceMinor: moneyMinor.nullable().optional(),
+  remunerationTotalMinor: moneyMinor.nullable().optional()
 });
 
 export const orderTimelineEntrySchema = z.object({
@@ -311,7 +364,9 @@ export const partnerOrderDetailSchema = z.object({
   items: z.array(partnerOrderItemSchema),
   timeline: z.array(orderTimelineEntrySchema),
   supportContact: z.string(),
-  createdAt: z.string().datetime()
+  createdAt: z.string().datetime(),
+  economicRegime: z.enum(["LEGACY_FIXED", "DROPSHIP_MARKUP"]).optional(),
+  fulfillment: fulfillmentDetailSchema.nullable().optional()
 });
 
 export const storefrontProductsQuerySchema = pageQuerySchema.extend({
@@ -382,7 +437,7 @@ export const adminVariantPatchRequestSchema = z.object({
   safetyBuffer: z.number().int().min(0).optional()
 }).refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
-export const returnStatusSchema = z.enum(["OPEN", "COMPLETED", "CANCELLED"]);
+export const returnStatusSchema = z.enum(["REQUESTED", "COMPLETED", "REJECTED"]);
 export type ReturnStatus = z.infer<typeof returnStatusSchema>;
 
 export const adminReturnCreateRequestSchema = z.object({
@@ -399,6 +454,17 @@ export type AdminReturnCreateRequest = z.infer<typeof adminReturnCreateRequestSc
 export const adminReturnCompleteRequestSchema = z.object({
   note: z.string().trim().min(1).max(1000).optional()
 }).strict();
+
+export const adminReturnInspectionSchema = z.object({
+  operationKey: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500),
+  items: z.array(z.object({
+    returnItemId: z.string().uuid(), quantity: z.number().int().min(1).max(99),
+    saleableQuantity: z.number().int().min(0).max(99)
+  }).strict().refine(item => item.saleableQuantity <= item.quantity)).min(1).max(MAX_CART_LINES)
+    .refine(items => new Set(items.map(item => item.returnItemId)).size === items.length)
+}).strict();
+export type AdminReturnInspection = z.infer<typeof adminReturnInspectionSchema>;
 
 export const adminReturnListQuerySchema = pageQuerySchema.extend({
   status: returnStatusSchema.optional(),
@@ -426,10 +492,13 @@ export const adminReturnDetailItemSchema = z.object({
   title: z.string(),
   quantity: z.number().int().min(1),
   unitPriceMinor: moneyMinor,
-  partnerCommissionUnitSnapshotMinor: moneyMinor
+  partnerCommissionUnitSnapshotMinor: moneyMinor,
+  physicalAcceptanceAllowed: z.boolean().default(false), inspectedQuantity: z.number().int().min(0).default(0),
+  saleableQuantity: z.number().int().min(0).default(0)
 });
 
 export const adminReturnDetailSchema = z.object({
+  economicRegime: z.enum(["LEGACY_FIXED", "DROPSHIP_MARKUP"]).default("LEGACY_FIXED"),
   id: z.string().uuid(),
   orderId: z.string().uuid(),
   orderPublicNumber: z.string(),

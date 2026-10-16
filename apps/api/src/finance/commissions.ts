@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
+import { commissionPayable } from "./coverage.js";
 
 export class CommissionError extends Error {
   readonly code = "INTERNAL_INVARIANT_VIOLATION";
@@ -53,7 +54,7 @@ export async function holdOrderCommissions(client: PoolClient, orderId: string, 
     WHERE order_id=$1 AND state='PENDING'`, [orderId,eligibleAt,now]);
 }
 
-// T29 owns due-date/OPEN Return checks and Order completion. Exact retries return
+// Completion owns due-date/REQUESTED Return checks. Exact retries return
 // zero; only the first release emits COMMISSION_EARNED with the actual net amount.
 export async function releaseCommission(client: PoolClient, commissionId: string, now: Date) {
   const commission = (await client.query<Commission>("SELECT * FROM commissions WHERE id=$1 FOR UPDATE", [commissionId])).rows[0];
@@ -72,6 +73,7 @@ export async function releaseCommission(client: PoolClient, commissionId: string
   const net = commission.gross_amount_minor - commission.reversed_amount_minor;
   if (commission.state === "VOID" && net === 0) return 0;
   if (commission.state !== "HOLD" || net <= 0) throw new CommissionError();
+  if (!await commissionPayable(client, commissionId, now)) return 0;
   const group = randomUUID();
   await append(client,commission,"COMMISSION_RELEASE","PENDING",-net,pendingKey,group,now);
   await append(client,commission,"COMMISSION_RELEASE","AVAILABLE",net,availableKey,group,now);

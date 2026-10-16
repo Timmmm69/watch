@@ -1,5 +1,7 @@
 # T35 — Analytics and Admin dashboard
 
+> New requirements, 2026-10-14: FULL_BUILD_SPEC.md Section 30.6 and docs/inventory-and-analytics-operating-model.md define dropshipper-created Orders, D/R/procurement economics, observed money and SKU/dropshipper reporting. The snapshot below does not implement or certify these requirements. T51 owns alignment; referral-touch metrics are historical rather than the new primary sales flow.
+
 ## Current MVP requirements — 2026-10-02
 
 U04 does not block MVP, S11 or S15. Transaction-derived GMV, delivered/completed orders, active sellers, productivity, conversion, cancellation/return rates, commissions, first sale and retention may ship. Contribution margin/order, contribution after partner commission and contribution/active partner are unavailable until sufficient economics exist; unknown never means zero or estimated. New economic data snapshots into new OrderItems only. A covered settlement subtotal below is a historical implementation diagnostic, not an available contribution metric. Current pending Returns are REQUESTED; reconciliation queues are legacy-only.

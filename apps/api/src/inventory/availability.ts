@@ -5,6 +5,9 @@ export const DEFAULT_INVENTORY_SYNC_INTERVAL_SECONDS = 120;
 export const DEFAULT_INVENTORY_MAX_AGE_SECONDS = 600;
 
 export interface InventoryAvailabilityInput {
+  native?: boolean | undefined;
+  nativeOnHand?: number | null | undefined;
+  nativeReservedQuantity?: number | null | undefined;
   sourceStatus: InventorySourceStatus | null;
   sourceQuantity: number | null;
   lastSuccessfulSyncAt: Date | null;
@@ -21,6 +24,12 @@ export interface InventoryAvailabilityResult {
 }
 
 export function computeInventoryAvailability(input: InventoryAvailabilityInput): InventoryAvailabilityResult {
+  if (input.native) {
+    if (input.nativeOnHand == null || input.nativeReservedQuantity == null) return {availability:"UNKNOWN",sellable:0,deficit:false};
+    const sellable=Math.max(0,input.nativeOnHand-input.nativeReservedQuantity-input.safetyBuffer);
+    return {availability:sellable>0?"IN_STOCK":"OUT_OF_STOCK",sellable,
+      deficit:input.nativeOnHand<input.nativeReservedQuantity+input.safetyBuffer};
+  }
   const maxAgeSeconds = input.maxAgeSeconds ?? DEFAULT_INVENTORY_MAX_AGE_SECONDS;
   const now = input.now ?? new Date();
 
@@ -48,6 +57,10 @@ export function computeInventoryAvailability(input: InventoryAvailabilityInput):
 export function variantAvailabilitySql(maxAgeSeconds: number = DEFAULT_INVENTORY_MAX_AGE_SECONDS): string {
   const maxAge = Number.isInteger(maxAgeSeconds) && maxAgeSeconds > 0 ? maxAgeSeconds : DEFAULT_INVENTORY_MAX_AGE_SECONDS;
   return `CASE
+  WHEN EXISTS (SELECT 1 FROM inventory_authority) THEN CASE
+    WHEN i.native_initialization_id IS NULL THEN 'UNKNOWN'
+    WHEN i.native_on_hand > i.native_reserved_quantity + i.safety_buffer THEN 'IN_STOCK'
+    ELSE 'OUT_OF_STOCK' END
   WHEN i.source_status IS DISTINCT FROM 'OK' OR i.source_quantity IS NULL THEN 'UNKNOWN'
   WHEN i.last_successful_sync_at IS NULL OR i.last_successful_sync_at < now() - make_interval(secs => ${maxAge}) THEN 'STALE'
   WHEN i.source_quantity > i.safety_buffer +

@@ -8,8 +8,8 @@ import { adminReturnCreateRequestSchema, adminReturnListQuerySchema } from "@wat
 const id = "00000000-0000-4000-8000-000000000001";
 const secret = Buffer.alloc(32, 7);
 const cookie = `watch_session=${"a".repeat(43)}`;
-const headers = { cookie, origin: "https://app.example", "x-csrf-token": deriveCsrfToken(secret, "session-1") };
-const detail = { id, orderId: id, orderPublicNumber: "W-0123456789AB", status: "OPEN", reason: "Broken", note: null,
+const headers = { cookie, origin: "https://app.example", "x-csrf-token": deriveCsrfToken(secret, "session-1"), "idempotency-key": "test-return" };
+const detail = { id, orderId: id, orderPublicNumber: "W-0123456789AB", status: "REQUESTED", reason: "Broken", note: null,
   createdByAdminUserId: id, currency: "BYN", items: [], reversalPreviewMinor: 0,
   createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" };
 function setup(admin = true, blocked = false) {
@@ -57,7 +57,7 @@ describe("Admin Return API", () => {
     const response = await app.inject({ method: "POST", url: "/api/v1/admin/returns", headers,
       payload: { ...valid, reason: "x".repeat(1000) } });
     expect(response.statusCode).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
-    expect(returns.create).toHaveBeenCalledWith(id, expect.objectContaining({ orderId: id, reason: "x".repeat(1000) }), expect.any(String));
+    expect(returns.create).toHaveBeenCalledWith(id, expect.objectContaining({ orderId: id, reason: "x".repeat(1000) }), expect.any(String), "test-return");
     await app.close();
   });
   it("maps stable errors with correct statuses and requires valid identifiers", async () => {
@@ -74,8 +74,8 @@ describe("Admin Return API", () => {
     expect((await app.inject({ method: "POST", url: "/api/v1/admin/returns/bad/cancel", headers, payload: {} })).statusCode).toBe(400);
     for (const query of ["status=bad", "orderId=bad", "page=0", "limit=101"])
       expect((await app.inject({ url: `/api/v1/admin/returns?${query}`, headers })).statusCode).toBe(400);
-    expect((await app.inject({ url: "/api/v1/admin/returns?status=OPEN&orderId=" + id, headers })).statusCode).toBe(200);
-    expect(returns.list).toHaveBeenCalledWith({ page: 1, limit: 20, status: "OPEN", orderId: id });
+    expect((await app.inject({ url: "/api/v1/admin/returns?status=REQUESTED&orderId=" + id, headers })).statusCode).toBe(200);
+    expect(returns.list).toHaveBeenCalledWith({ page: 1, limit: 20, status: "REQUESTED", orderId: id });
     expect(adminReturnCreateRequestSchema.safeParse({ orderId: id, reason: "x".repeat(1000), items: [{ orderItemId: id, quantity: 99 }] }).success).toBe(true);
     expect(adminReturnListQuerySchema.safeParse({ status: "COMPLETED", page: "2" }).success).toBe(true);
     await app.close();

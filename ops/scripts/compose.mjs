@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, rmdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export async function withDeploymentLock(work) {
@@ -11,7 +12,9 @@ export async function withDeploymentLock(work) {
 }
 export function composeArgs(configFile = process.env.WATCH_CONFIG_FILE || "ops/docker/production.env") {
   const file = resolve(root, configFile);
-  return ["compose", "--env-file", file, "-f", resolve(root, "ops/docker/compose.production.yml")];
+  const native = /^\s*(?:export\s+)?INVENTORY_PROVIDER\s*=\s*(?:native|"native"|'native')\s*(?:#.*)?$/m.test(readFileSync(file, "utf8"));
+  return ["compose", "--env-file", file, "-f", resolve(root, "ops/docker/compose.production.yml"),
+    ...(native ? ["-f", resolve(root, "ops/docker/compose.native.yml")] : [])];
 }
 export function composeEnv(configFile = process.env.WATCH_CONFIG_FILE || "ops/docker/production.env") {
   return { ...process.env, WATCH_CONFIG_FILE: resolve(root, configFile) };

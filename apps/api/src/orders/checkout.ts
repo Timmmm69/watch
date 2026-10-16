@@ -11,6 +11,7 @@ export class CheckoutError extends Error {
   constructor(public readonly code: "VALIDATION_ERROR" | "USER_BLOCKED" | "AUTH_REQUIRED" | "CART_EMPTY" | "CART_CHANGED"
     | "CART_LINE_LIMIT_EXCEEDED" | "ORDER_TOTAL_LIMIT_EXCEEDED" | "PRICE_CHANGED" | "OUT_OF_STOCK"
     | "INVENTORY_STALE" | "INVENTORY_UNKNOWN" | "TERMS_VERSION_CHANGED" | "IDEMPOTENCY_CONFLICT"
+    | "PARTNER_REQUIRED" | "PARTNER_BLOCKED" | "TERMS_REACCEPT_REQUIRED" | "PRICE_BELOW_D"
     | "INTERNAL_INVARIANT_VIOLATION", public readonly details: Record<string, unknown> = {}) { super(code); }
 }
 
@@ -76,6 +77,8 @@ export class CheckoutService {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Before Buyer/Partner/catalog locks: serialize legacy checkout with cutover.
+      await client.query("SELECT pg_advisory_xact_lock_shared(1463899203,2)");
       const buyer = (await client.query<{ is_blocked: boolean }>("SELECT is_blocked FROM users WHERE id = $1 FOR UPDATE", [buyerId])).rows[0];
       if (!buyer) throw new CheckoutError("AUTH_REQUIRED");
       if (buyer.is_blocked) throw new CheckoutError("USER_BLOCKED");
@@ -85,6 +88,8 @@ export class CheckoutService {
         await client.query("COMMIT");
         return { order: project(existing), created: false };
       }
+      // T47 cutover closes the old writer; the dropshipper Order flow belongs to T48.
+      if ((await client.query("SELECT 1 FROM inventory_authority")).rowCount) throw new CheckoutError("INVENTORY_UNKNOWN");
       // Use the serialization time after waiting for Buyer, rather than a stale BEGIN timestamp.
       const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
       const touch = (await client.query<{ id: string; partner_id: string }>(`

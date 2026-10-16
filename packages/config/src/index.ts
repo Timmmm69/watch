@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { createPrivateKey } from "node:crypto";
 import { isIP } from "node:net";
+import { isProductionValue, isPublicProductionUrl, isProductionSupportContact, isProductionStorageEndpoint, readProductionApprovalWithDigest, type ProductionApproval } from "./production.js";
+export { productionApprovalSchema, readProductionApproval, assertApprovedLegalArtifact } from "./production.js";
+export type { ProductionApproval } from "./production.js";
 
 export interface GoogleSheetsServiceAccount {
   type: "service_account";
@@ -9,7 +12,7 @@ export interface GoogleSheetsServiceAccount {
   private_key: string;
 }
 
-function parseGoogleServiceAccount(value: string): GoogleSheetsServiceAccount {
+export function parseGoogleServiceAccount(value: string): GoogleSheetsServiceAccount {
   try {
     if (value.length > 65536 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error();
     const decoded = Buffer.from(value, "base64");
@@ -29,7 +32,7 @@ function parseGoogleServiceAccount(value: string): GoogleSheetsServiceAccount {
   }
 }
 
-function parseAdminIds(value: string): string[] {
+export function parseAdminIds(value: string): string[] {
   if (value.trim() === "") return [];
   const ids = value.split(",").map((part) => part.trim());
   if (ids.some((id) => !/^[1-9][0-9]*$/.test(id) || BigInt(id) > 9223372036854775807n || BigInt(id).toString() !== id)) {
@@ -52,6 +55,8 @@ const legalVersion = z.string().min(1).max(64);
 
 export const apiRuntimeConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  RELEASE_TAG: z.string().optional(),
+  WATCH_PRODUCTION_APPROVAL_FILE: z.string().optional(),
   // Only individual proxy addresses are accepted; no wildcard/CIDR/hop-count trust.
   API_TRUSTED_PROXY_IP: z.string().refine((value) => isIP(value) !== 0, "API_TRUSTED_PROXY_IP must be an exact IP address").optional(),
   APP_BASE_URL: z.url(),
@@ -76,7 +81,7 @@ export const apiRuntimeConfigSchema = z.object({
   ORDER_OVERDUE_SECONDS: z.coerce.number().int().min(1).max(31536000).optional(),
   INVENTORY_SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
   INVENTORY_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(86400).default(600),
-  INVENTORY_PROVIDER: z.literal("google_sheets").optional(),
+  INVENTORY_PROVIDER: z.enum(["google_sheets", "native"]).optional(),
   TELEGRAM_UPDATE_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(30),
   OBJECT_STORAGE_ENDPOINT: z.url().optional(),
   OBJECT_STORAGE_REGION: z.string().min(1).optional(),
@@ -97,6 +102,23 @@ export const apiRuntimeConfigSchema = z.object({
     const origin = new URL(value.APP_BASE_URL);
     if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
       ctx.addIssue({ code: "custom", message: "Production APP_BASE_URL must be a single HTTPS origin", path: ["APP_BASE_URL"] });
+    }
+    if (!isPublicProductionUrl(value.APP_BASE_URL)) {
+      ctx.addIssue({ code: "custom", message: "Production APP_BASE_URL requires a real public domain", path: ["APP_BASE_URL"] });
+    }
+    if (!isProductionSupportContact(value.SUPPORT_CONTACT)) {
+      ctx.addIssue({ code: "custom", message: "Production SUPPORT_CONTACT must be an actionable contact", path: ["SUPPORT_CONTACT"] });
+    }
+    for (const field of ["SUPPORT_CONTACT", "GOOGLE_SHEETS_SPREADSHEET_ID", "GOOGLE_SHEETS_WORKSHEET_NAME", "OBJECT_STORAGE_BUCKET",
+      "TELEGRAM_BOT_USERNAME", "TELEGRAM_BOT_TOKEN", "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY",
+      "LEGAL_PARTNER_TERMS_VERSION", "LEGAL_SALES_TERMS_VERSION", "LEGAL_PRIVACY_VERSION"] as const) {
+      if (value[field] && !isProductionValue(value[field])) ctx.addIssue({ code: "custom", message: `Production ${field} contains a placeholder`, path: [field] });
+    }
+    if (value.INVENTORY_PROVIDER === "google_sheets" && !/^[A-Za-z0-9_-]{20,}$/.test(value.GOOGLE_SHEETS_SPREADSHEET_ID ?? "")) {
+      ctx.addIssue({ code: "custom", message: "Production requires a real Google Sheet ID", path: ["GOOGLE_SHEETS_SPREADSHEET_ID"] });
+    }
+    if (value.OBJECT_STORAGE_ENDPOINT && !isProductionStorageEndpoint(value.OBJECT_STORAGE_ENDPOINT)) {
+      ctx.addIssue({ code: "custom", message: "Production storage requires a Cloudflare R2 account or Beget ru1 HTTPS endpoint", path: ["OBJECT_STORAGE_ENDPOINT"] });
     }
     if (!value.API_TRUSTED_PROXY_IP) {
       ctx.addIssue({ code: "custom", message: "Production requires an exact trusted reverse-proxy IP", path: ["API_TRUSTED_PROXY_IP"] });
@@ -129,7 +151,7 @@ export const apiRuntimeConfigSchema = z.object({
   }
 });
 
-export type ApiRuntimeConfig = z.infer<typeof apiRuntimeConfigSchema>;
+export type ApiRuntimeConfig = z.infer<typeof apiRuntimeConfigSchema> & { productionApproval?: ProductionApproval; productionApprovalSha256?: string };
 
 export type LegalDocumentType = "PARTNER_TERMS" | "SALES_TERMS" | "PRIVACY";
 
@@ -152,5 +174,30 @@ export function currentLegalDocuments(config: ApiRuntimeConfig): Partial<Record<
 }
 
 export function loadApiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ApiRuntimeConfig {
-  return apiRuntimeConfigSchema.parse(env);
+  // Native runtime has no live Google credential/worksheet dependency. The explicit
+  // one-shot importer reads its optional credentials independently.
+  const runtime = apiRuntimeConfigSchema.parse(env.INVENTORY_PROVIDER === "native" ? {
+    ...env, GOOGLE_SHEETS_SPREADSHEET_ID:undefined, GOOGLE_SHEETS_WORKSHEET_NAME:undefined,
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64:undefined,
+  } : env);
+  if (runtime.NODE_ENV !== "production") return runtime;
+  const { approval, sha256 } = readProductionApprovalWithDigest(runtime.WATCH_PRODUCTION_APPROVAL_FILE);
+  if (!env.ORDER_HOLD_DAYS || !env.ORDER_OVERDUE_SECONDS) throw new Error("Production requires explicit ORDER_HOLD_DAYS and ORDER_OVERDUE_SECONDS");
+  const bindings = [
+    [runtime.INVENTORY_PROVIDER, approval.operatingModel.inventoryProvider],
+    [runtime.RELEASE_TAG, approval.releaseSha], [runtime.APP_BASE_URL, approval.appBaseUrl],
+    [runtime.SUPPORT_CONTACT, approval.supportContact], [runtime.ORDER_HOLD_DAYS, approval.returns.holdDays],
+    [runtime.ORDER_OVERDUE_SECONDS, approval.fulfilment.overdueSeconds],
+    ...(runtime.INVENTORY_PROVIDER === "google_sheets" ? [
+      [runtime.GOOGLE_SHEETS_SPREADSHEET_ID, approval.infrastructure.spreadsheetId],
+      [runtime.GOOGLE_SHEETS_WORKSHEET_NAME, approval.infrastructure.worksheetName],
+    ] : []),
+    [runtime.OBJECT_STORAGE_ENDPOINT, approval.infrastructure.r2Endpoint], [runtime.OBJECT_STORAGE_BUCKET, approval.infrastructure.r2Bucket],
+    ...Object.entries(currentLegalDocuments(runtime)).flatMap(([type, ref]) => {
+      const doc = approval.legal[type as LegalDocumentType];
+      return [[ref.id, doc.id], [ref.version, doc.version]];
+    }),
+  ];
+  if (bindings.some(([actual, approved]) => actual !== approved)) throw new Error("Production configuration differs from approved release inputs");
+  return { ...runtime, productionApproval: approval, productionApprovalSha256: sha256 };
 }

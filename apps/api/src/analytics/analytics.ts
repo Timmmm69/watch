@@ -1,17 +1,19 @@
 import type { Pool } from "pg";
 import { adminDashboardSchema, analyticsSummarySchema, type AnalyticsQuery, type AnalyticsSummary } from "@watch/contracts";
+import { OwnerAnalyticsService } from "./owner.js";
 
 export function ratio(numerator: number, denominator: number): number | null {
   return denominator === 0 ? null : numerator / denominator;
 }
 
-// A completed return removes units, not necessarily the whole order. OPEN/CANCELLED returns have no effect.
+// A completed return removes units, not necessarily the whole order. REQUESTED/REJECTED returns have no effect.
 const retainedItems = `SELECT i.*, i.quantity - COALESCE((
   SELECT SUM(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id
   WHERE ri.order_item_id=i.id AND r.status='COMPLETED'),0) AS retained_quantity
   FROM order_items i`;
 
 export class AnalyticsService {
+  get owner() { return new OwnerAnalyticsService(this.pool, this.currency, this.overdueSeconds); }
   constructor(private readonly pool: Pool, private readonly currency: string,
     private readonly timezone = "UTC", private readonly inventoryMaxAgeSeconds = 600,
     private readonly overdueSeconds?: number) {}
@@ -83,8 +85,10 @@ export class AnalyticsService {
       SELECT v.id,i.*, COALESCE((SELECT SUM(r.quantity) FROM inventory_reservations r
         WHERE r.variant_id=v.id AND r.status='ACTIVE'),0) AS reserved FROM product_variants v
         LEFT JOIN inventory_items i ON i.variant_id=v.id),
-      health AS (SELECT *, source_status='OK' AND source_quantity IS NOT NULL
-        AND last_successful_sync_at >= now()-$1*interval '1 second' AS fresh FROM inventory)
+      health AS (SELECT *, EXISTS(SELECT 1 FROM inventory_authority) AS native,
+        CASE WHEN EXISTS(SELECT 1 FROM inventory_authority) THEN native_initialization_id IS NOT NULL
+        ELSE source_status='OK' AND source_quantity IS NOT NULL
+        AND last_successful_sync_at >= now()-$1*interval '1 second' END AS fresh FROM inventory)
       SELECT json_build_object(
         'products',(SELECT COUNT(*) FROM products),'activeProducts',(SELECT COUNT(*) FROM products WHERE status='ACTIVE'),
         'variants',(SELECT COUNT(*) FROM product_variants),'partners',(SELECT COUNT(*) FROM partners),
@@ -96,12 +100,12 @@ export class AnalyticsService {
         'placedOrders',(SELECT COUNT(*) FROM orders WHERE status='PLACED'),
         'reconciliationPending',(SELECT COUNT(*) FROM inventory_reservations r JOIN orders o ON o.id=r.order_id
           WHERE r.status='ACTIVE' AND o.status IN ('SHIPPED','DELIVERED','COMPLETED','DELIVERY_FAILED')),
-        'staleInventory',(SELECT COUNT(*) FROM health WHERE source_status='OK' AND source_quantity IS NOT NULL AND fresh IS NOT TRUE),
-        'unknownInventory',(SELECT COUNT(*) FROM health WHERE source_status IS DISTINCT FROM 'OK' OR source_quantity IS NULL),
-        'inventoryDeficits',(SELECT COUNT(*) FROM health WHERE fresh AND source_quantity<reserved+safety_buffer),
+        'staleInventory',(SELECT COUNT(*) FROM health WHERE NOT native AND source_status='OK' AND source_quantity IS NOT NULL AND fresh IS NOT TRUE),
+        'unknownInventory',(SELECT COUNT(*) FROM health WHERE CASE WHEN native THEN native_initialization_id IS NULL ELSE source_status IS DISTINCT FROM 'OK' OR source_quantity IS NULL END),
+        'inventoryDeficits',(SELECT COUNT(*) FROM health WHERE fresh AND (CASE WHEN native THEN native_on_hand ELSE source_quantity END)<reserved+safety_buffer),
         'failedSyncs',(SELECT COUNT(*) FROM (SELECT status FROM inventory_sync_runs ORDER BY started_at DESC,id DESC LIMIT 1) latest
-          WHERE status IN ('FAILED','PARTIAL')),
-        'openReturns',(SELECT COUNT(*) FROM returns WHERE status='OPEN'),
+          WHERE status IN ('FAILED','PARTIAL') AND NOT EXISTS(SELECT 1 FROM inventory_authority)),
+        'openReturns',(SELECT COUNT(*) FROM returns WHERE status='REQUESTED'),
         'requestedPayouts',(SELECT COUNT(*) FROM payouts WHERE status='REQUESTED'),
         'failedEvents',(SELECT COUNT(*) FROM events WHERE status='FAILED'),
         'failedTelegramUpdates',(SELECT COUNT(*) FROM telegram_updates WHERE status='FAILED')) AS actionable`,

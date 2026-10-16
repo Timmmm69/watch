@@ -17,4 +17,5 @@ ops/bootstrap
 ops/deployment.lock
 ops/docker/production.env
 .local-postgres-test
+outputs
 *.log

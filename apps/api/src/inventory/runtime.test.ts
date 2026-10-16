@@ -10,6 +10,7 @@ describe("inventory runtime", () => {
   it("keeps integration disabled when provider is unset and constructs the existing orchestrator when configured", () => {
     const pool = {} as Pool;
     expect(createConfiguredInventoryOrchestrator(pool, {} as ApiRuntimeConfig)).toBeUndefined();
+    expect(createConfiguredInventoryOrchestrator(pool, {INVENTORY_PROVIDER:"native"} as ApiRuntimeConfig)).toBeUndefined();
     expect(createConfiguredInventoryOrchestrator(pool, {
       INVENTORY_PROVIDER: "google_sheets", GOOGLE_SHEETS_SPREADSHEET_ID: "sheet",
       GOOGLE_SHEETS_WORKSHEET_NAME: "Stock", GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64: {

@@ -1,5 +1,7 @@
 # Google Sheets inventory (T18 / resolved U01)
 
+> Superseded for the new dropshipping mode on 2026-10-14: FULL_BUILD_SPEC.md Section 30.3 selects native application stock; Sheets is initial preparation only. The adapter and requirements below describe the earlier integration, not a requirement to keep manually updating Sheets after every new-mode sale. Implementation alignment is T46–T52.
+
 ## Current MVP requirements — 2026-10-02
 
 Google Sheets remains authoritative for stock quantity. New SHIPPED consumes reservations atomically; sync does not mutate them, and completed Return never locally increases stock. MANUAL snapshot-bound reconciliation below is legacy pre-amendment remediation only.
