@@ -33,6 +33,26 @@ function fakePool(existing?: typeof existingSession) {
 }
 
 describe("Session store", () => {
+  it("rejects a private outsider before acquiring a DB client or writing a User", async () => {
+    const { pool, query } = fakePool();
+    await expect(new SessionStore(pool, new Set(), new Set(["99"]))
+      .upsertUserAndIssueSession(identity)).rejects.toThrow("User is blocked");
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("admits an explicitly allowed private identity through normal session validation", async () => {
+    const { pool } = fakePool();
+    const issued = await new SessionStore(pool, new Set(), new Set(["42"]))
+      .upsertUserAndIssueSession(identity);
+    expect(issued.user.telegramUserId).toBe("42");
+  });
+
+  it("rejects an existing session after its identity is removed from the private allowlist", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ ...user, ...existingSession, current_user_id: user.id }] });
+    const store = new SessionStore({ query } as unknown as Pool, new Set(), new Set(["99"]));
+    expect(await store.loadCurrent(oldToken)).toBeNull();
+  });
   it("reuses only a live same-user session without extending absolute expiry", async () => {
     const { pool, query } = fakePool(existingSession);
     const issued = await new SessionStore(pool).upsertUserAndIssueSession(identity, oldToken);

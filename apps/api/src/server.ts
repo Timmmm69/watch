@@ -56,7 +56,8 @@ const app = createApp({
     runtimeConfig.INVENTORY_MAX_AGE_SECONDS, runtimeConfig.ORDER_OVERDUE_SECONDS),
   checkReadiness,
   auth: {
-    store: new SessionStore(pool, adminTelegramIds),
+    store: new SessionStore(pool, adminTelegramIds, runtimeConfig.WATCH_PRIVATE_ACCESS === "1"
+      ? new Set([...runtimeConfig.ADMIN_TELEGRAM_IDS, ...(runtimeConfig.PRIVATE_TELEGRAM_IDS ?? [])]) : undefined),
     csrfSecret: runtimeConfig.CSRF_SECRET,
     appBaseUrl: runtimeConfig.APP_BASE_URL,
     adminIds: () => adminTelegramIds,

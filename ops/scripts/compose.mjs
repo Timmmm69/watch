@@ -13,8 +13,10 @@ export async function withDeploymentLock(work) {
 export function composeArgs(configFile = process.env.WATCH_CONFIG_FILE || "ops/docker/production.env") {
   const file = resolve(root, configFile);
   const native = /^\s*(?:export\s+)?INVENTORY_PROVIDER\s*=\s*(?:native|"native"|'native')\s*(?:#.*)?$/m.test(readFileSync(file, "utf8"));
+  const privateAccess = /^\s*WATCH_PRIVATE_ACCESS\s*=\s*(?:1|"1"|'1')\s*(?:#.*)?$/m.test(readFileSync(file, "utf8"));
   return ["compose", "--env-file", file, "-f", resolve(root, "ops/docker/compose.production.yml"),
-    ...(native ? ["-f", resolve(root, "ops/docker/compose.native.yml")] : [])];
+    ...(native ? ["-f", resolve(root, "ops/docker/compose.native.yml")] : []),
+    ...(privateAccess ? ["-f", resolve(root, "ops/docker/compose.private.yml")] : [])];
 }
 export function composeEnv(configFile = process.env.WATCH_CONFIG_FILE || "ops/docker/production.env") {
   return { ...process.env, WATCH_CONFIG_FILE: resolve(root, configFile) };

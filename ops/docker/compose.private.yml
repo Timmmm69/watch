@@ -1,0 +1,16 @@
+# Owner-operated friends-only profile. HTTPS, production cookies, roles and CSRF
+# remain enabled. The API enforces the Telegram allowlist on login and sessions.
+x-private: &private
+  environment:
+    WATCH_PRIVATE_ACCESS: "1"
+    WATCH_PRODUCTION_APPROVAL_FILE: ""
+  volumes: !reset []
+services:
+  api:
+    <<: *private
+  worker:
+    <<: *private
+  bootstrap:
+    <<: *private
+    volumes: !override
+      - ${WATCH_BOOTSTRAP_DIR:-../bootstrap}:/run/bootstrap:ro

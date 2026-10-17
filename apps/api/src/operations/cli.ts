@@ -16,7 +16,9 @@ let stage = "config";
 try {
   const runtime = loadApiRuntimeConfig();
   if (command === "config") {
-    console.log(JSON.stringify({ status: "ok", command, productionApprovalSha256: runtime.productionApprovalSha256 }));
+    console.log(JSON.stringify({ status: "ok", command, privateAccess: runtime.WATCH_PRIVATE_ACCESS === "1",
+      allowedTelegramIds: runtime.WATCH_PRIVATE_ACCESS === "1" ? [...new Set([...runtime.ADMIN_TELEGRAM_IDS, ...(runtime.PRIVATE_TELEGRAM_IDS ?? [])])] : undefined,
+      productionApprovalSha256: runtime.productionApprovalSha256 }));
   } else if (command === "database-name") {
     const database = decodeURIComponent(new URL(runtime.DATABASE_URL).pathname.slice(1));
     if (!/^(watch|watch_restore_[a-z0-9_]+)$/.test(database)) throw new Error("Unsupported deployment database name");

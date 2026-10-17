@@ -104,7 +104,8 @@ export function serializeSessionCookie(token: string, expiresAt: Date, secure: b
 }
 
 export class SessionStore {
-  constructor(private readonly pool: Pool, private readonly adminTelegramIds: ReadonlySet<string> = new Set()) {}
+  constructor(private readonly pool: Pool, private readonly adminTelegramIds: ReadonlySet<string> = new Set(),
+    private readonly allowedTelegramIds?: ReadonlySet<string>) {}
 
   async loadCurrent(token: string): Promise<AuthenticatedSession | null> {
     if (!isSessionToken(token)) return null;
@@ -117,6 +118,7 @@ export class SessionStore {
     `, [hashSessionToken(token)]);
     const row = result.rows[0];
     if (!row) return null;
+    if (this.allowedTelegramIds && !this.allowedTelegramIds.has(row.telegram_user_id)) return null;
     return { session: mapSession(row), user: mapUser({ ...row, id: row.current_user_id }) };
   }
 
@@ -125,6 +127,7 @@ export class SessionStore {
     currentToken?: string | null,
     onLockedUser?: (client: PoolClient, user: CurrentUser) => Promise<string | null>
   ): Promise<IssuedSession> {
+    if (this.allowedTelegramIds && !this.allowedTelegramIds.has(identity.telegramUserId)) throw new BlockedUserError();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
