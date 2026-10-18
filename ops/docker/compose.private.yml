@@ -4,12 +4,13 @@ x-private: &private
   environment:
     WATCH_PRIVATE_ACCESS: "1"
     WATCH_PRODUCTION_APPROVAL_FILE: ""
-  volumes: !reset []
 services:
   api:
     <<: *private
+    volumes: !override []
   worker:
     <<: *private
+    volumes: !override []
   bootstrap:
     <<: *private
     volumes: !override
