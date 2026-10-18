@@ -35,7 +35,7 @@ export async function deploy(mode, run = compose, smoke = productionSmoke, servi
       // Leave every application writer and the proxy stopped until upgrade verifies it.
       if (mode === "prepare" || mode === "fresh") return;
       await run(["up", "-d", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web", "worker"]);
-      await run(["exec", "-T", "api", "node", "apps/api/dist/operations/cli.js", "verify"]);
+      await run(["exec", "-T", "api", "runtime-secrets", "node", "apps/api/dist/operations/cli.js", "verify"]);
       if (mode === "stage") return; // Internal services only; keep the public proxy stopped.
       await run(["up", "-d", "--no-deps", "--force-recreate", "reverse-proxy"]);
       const origin = await services();
