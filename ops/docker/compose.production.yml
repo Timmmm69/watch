@@ -199,6 +199,8 @@ networks:
     ipam:
       config:
         - subnet: 172.30.36.0/24
+          # Keep automatic API/web addresses away from the trusted proxy's .2.
+          ip_range: 172.30.36.128/25
   # API/worker need outbound Telegram, Google Sheets and object-storage access.
   # No ports on this network are published; Caddy needs ACME outbound access.
   egress: {}
