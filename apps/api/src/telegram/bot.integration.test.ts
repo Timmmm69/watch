@@ -28,7 +28,7 @@ describe.skipIf(!pool)("Bot navigation against PostgreSQL", () => {
     await pool!.query("UPDATE partners SET status='BLOCKED', block_reason='T43', blocked_at=now() WHERE user_id=$1", [user.id]);
     await processTelegramUpdate(pool!, message("/start"), config, send);
     const blockedMenu = send.mock.calls.at(-1)![1];
-    expect(blockedMenu.text).toContain("Доступен только просмотр");
+    expect(blockedMenu.text).toContain("Можно просматривать историю");
     expect(JSON.stringify(blockedMenu.reply_markup)).not.toContain("/shop");
     await pool!.query("UPDATE users SET is_blocked=true WHERE id=$1", [user.id]);
     await processTelegramUpdate(pool!, message("/balance"), config, send);

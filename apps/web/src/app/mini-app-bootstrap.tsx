@@ -69,7 +69,7 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
       }
       launchNavigationHandled = true;
       setState({ auth: result });
-    }).catch(() => setState({ error: "Не удалось войти. Откройте приложение заново через Telegram." }));
+    }).catch(() => setState({ error: "Не удалось войти. Закройте приложение и откройте его через Telegram." }));
   }, []);
 
   const accepted = (auth: AuthResponse) => {
@@ -85,35 +85,35 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
   if (state.auth && screen === "orders") return <OrdersScreen key={publicNumber ?? "list"} publicNumber={publicNumber} />;
   if (state.auth && screen === "partnerOrders") return state.auth.partner
     ? <OrdersScreen key={publicNumber ?? "list"} partner blocked={state.auth.partner.status === "BLOCKED"} publicNumber={publicNumber} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Заказы доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Это заказы партнёра. Чтобы открыть их, зарегистрируйтесь в партнёрской программе.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminPartners") return state.auth.isAdmin
     ? <AdminPartnersScreen key={partnerId ?? "list"} csrfToken={state.auth.csrfToken} partnerId={partnerId} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Этот раздел доступен только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminInventory") return state.auth.isAdmin
     ? <AdminInventoryScreen csrfToken={state.auth.csrfToken} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Этот раздел доступен только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && (screen === "adminCatalog" || screen === "adminProduct")) return state.auth.isAdmin
     ? screen === "adminProduct" && productId ? <AdminProductScreen key={productId} csrfToken={state.auth.csrfToken} productId={productId} /> : <AdminCatalogScreen csrfToken={state.auth.csrfToken} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Этот раздел доступен только администратору.</p><a href="/shop">В каталог</a></main>;
 
   if (state.auth && (screen === "adminDashboard" || screen === "adminAnalytics")) return state.auth.isAdmin
     ? state.auth.nativeCommerce ? <OwnerAnalyticsScreen dashboard={screen === "adminDashboard"} /> : <AdminAnalyticsScreen dashboard={screen === "adminDashboard"} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Этот раздел доступен только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "earnings") return state.auth.partner
     ? <EarningsScreen blocked={state.auth.partner.status === "BLOCKED"} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доходы доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Начисления доступны только партнёрам.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "payouts") return state.auth.partner
     ? <PartnerPayoutsScreen csrfToken={state.auth.csrfToken} blocked={state.auth.partner.status === "BLOCKED"} termsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Выплаты доступны участникам партнёрской программы.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Запрашивать выплаты могут только партнёры.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminOrders") return state.auth.isAdmin
     ? <AdminOrdersScreen key={orderId ?? "list"} csrfToken={state.auth.csrfToken} orderId={orderId} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к заказам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Заказы в этом разделе доступны только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminReturns") return state.auth.isAdmin
     ? <AdminReturnsScreen key={returnId ?? "list"} csrfToken={state.auth.csrfToken} returnId={returnId} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к возвратам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Возвраты в этом разделе доступны только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth && screen === "adminPayouts") return state.auth.isAdmin
     ? <AdminPayoutsScreen key={payoutId ?? partnerId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} partnerId={partnerId} />
-    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Доступ к выплатам разрешён только администратору.</p><a href="/shop">В каталог</a></main>;
+    : <main className="min-h-screen bg-slate-950 p-8 text-slate-100"><p role="alert">Выплаты в этом разделе доступны только администратору.</p><a href="/shop">В каталог</a></main>;
   if (state.auth?.nativeCommerce && (screen === "cart" || screen === "checkout")) return <DropshipCheckoutScreen csrfToken={state.auth.csrfToken}
     partner={state.auth.partner ?? null} termsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
@@ -125,6 +125,6 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
     nativeCommerce={state.auth.nativeCommerce ?? false} partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
     <div className="text-center"><h1 className="text-2xl font-semibold">Watch</h1>
-      <p className="mt-4">{state.error ?? "Вход через Telegram…"}</p></div>
+      <p className="mt-4">{state.error ?? "Проверяем вход через Telegram…"}</p></div>
   </main>;
 }

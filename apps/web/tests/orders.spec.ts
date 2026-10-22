@@ -23,11 +23,11 @@ test("Buyer history → public number detail → retained PII and support → re
   await page.route(`**/api/v1/orders/${publicNumber}`, (route) => route.fulfill({ json: detail }));
   await page.goto("/orders");
   await expect(page.getByRole("heading", { name: "Мои заказы" })).toBeVisible();
-  await expect(page.getByText("Позиций: 1")).toBeVisible();
+  await expect(page.getByText("Товаров в заказе: 1")).toBeVisible();
   await page.getByRole("link", { name: `Заказ ${publicNumber}` }).click();
   await expect(page.getByRole("heading", { name: `Заказ ${publicNumber}` })).toBeVisible();
   await expect(page.getByText("Private Address")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Связаться по заказу" })).toHaveAttribute("href", "https://t.me/support");
+  await expect(page.getByRole("link", { name: "Связаться с поддержкой" })).toHaveAttribute("href", "https://t.me/support");
   await expect(page.getByText(/Комиссия/)).toHaveCount(0);
   await page.reload(); await expect(page.getByText("Private Phone")).toBeVisible();
 });
@@ -49,14 +49,14 @@ test("blocked Partner history and direct Telegram detail use public number witho
   // Defense in depth: even an unexpected fulfillment field must never render in Partner context.
   await page.route(`**/api/v1/partner/orders/${publicNumber}`, (route) => route.fulfill({ json: detail }));
   await page.goto("/partner/orders");
-  await expect(page.getByText(/Доступен только просмотр истории/)).toBeVisible();
+  await expect(page.getByText(/История заказов доступна для просмотра/)).toBeVisible();
   await page.getByRole("link", { name: `Заказ ${publicNumber}` }).click();
-  await expect(page.getByText("Комиссия по снимку за заказ: 20.00 BYN")).toBeVisible();
+  await expect(page.getByText("Комиссия при оформлении за заказ: 20.00 BYN")).toBeVisible();
   await expect(page.getByText(/Private/)).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Данные доставки" })).toHaveCount(0);
   await page.goto(`/partner/orders/${publicNumber}`);
-  await expect(page.getByText("Комиссия по снимку за единицу: 10.00 BYN")).toBeVisible();
-  await page.reload(); await expect(page.getByText(/Доступен только просмотр истории/)).toBeVisible();
+  await expect(page.getByText("Комиссия при оформлении за единицу: 10.00 BYN")).toBeVisible();
+  await page.reload(); await expect(page.getByText(/История заказов доступна для просмотра/)).toBeVisible();
   expect(launches).toHaveLength(2);
 });
 
@@ -72,7 +72,7 @@ for (const base of ["/orders", "/partner/orders"]) {
     fail = false; await page.getByRole("button", { name: "Повторить" }).click();
     await expect(page.getByText("SKU-40", { exact: false })).toBeVisible();
     await page.getByRole("link", { name: "Все заказы" }).click();
-    await expect(page.getByText("Заказов пока нет")).toBeVisible();
+    await expect(page.getByText("Заказов пока нет.")).toBeVisible();
   });
 }
 
@@ -117,7 +117,7 @@ test("non-Partner cannot request Partner history; organic order shows no commiss
   let partnerReads = 0;
   await page.route("**/api/v1/partner/orders**", (route) => { partnerReads++; return route.fulfill({ status: 403, json: {} }); });
   await page.goto("/partner/orders");
-  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Заказы доступны участникам партнёрской программы.");
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Это заказы партнёра. Чтобы открыть их, зарегистрируйтесь в партнёрской программе.");
   expect(partnerReads).toBe(0);
   await page.route(`**/api/v1/orders/${publicNumber}`, (route) => route.fulfill({ json: { ...detail, commissionEligibleSnapshot: false, fulfillment: null } }));
   await page.goto(`/orders/${publicNumber}`);

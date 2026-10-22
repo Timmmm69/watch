@@ -30,7 +30,7 @@ describe("Telegram bot commands", () => {
       if (command === "/start" && !status) expect(urls).toEqual(["/partner/onboarding", "/shop"]);
       if (command === "/start" && status === "ACTIVE") expect(urls).toEqual(["/partner", "/shop", "/partner/orders", "/partner/earnings", "/shop"]);
       if (status === "BLOCKED") {
-        expect(body.text).toContain("Доступен только просмотр");
+        expect(body.text).toContain("Можно просматривать историю");
         expect(JSON.stringify(body.reply_markup)).not.toMatch(/Стать партнёром|Партнёрский каталог|Открыть магазин/);
       }
     }
@@ -54,7 +54,7 @@ describe("Telegram bot commands", () => {
     await processTelegramUpdate({ query } as unknown as Pool, message(command), config, send);
     expect(paths(send.mock.calls[0]![1])).toEqual([]);
     expect(send.mock.calls[0]![1].text).toContain("@support");
-    expect(send.mock.calls[0]![1].text).toContain("Доступ к приложению ограничен");
+    expect(send.mock.calls[0]![1].text).toContain("Ваш аккаунт заблокирован");
   });
 
   it.each(commands)("ignores group command %s", async (command) => {
