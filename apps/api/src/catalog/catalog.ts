@@ -1111,7 +1111,7 @@ export class CatalogService {
     query: StorefrontProductsQuery,
     partnerCtx?: PartnerViewContext
   ): Promise<Paginated<StorefrontProductCard>> {
-    const priceColumn = this.nativeCommerce ? "v.dropship_price_minor" : "v.price_minor";
+    const priceColumn = "v.price_minor";
     const availabilitySql = variantAvailabilitySql(this.inventoryMaxAgeSeconds);
     const stockSql = this.nativeCommerce ? `CASE WHEN i.native_initialization_id IS NULL THEN 'UNKNOWN' ELSE ${availabilitySql} END` : availabilitySql;
     const values: unknown[] = [];
@@ -1187,7 +1187,7 @@ export class CatalogService {
        ORDER BY sort_order, created_at, id`,
       [items.rows.map((row) => row.id)]
     );
-    const commissionRows = partnerCtx?.partner && !this.nativeCommerce
+    const commissionRows = partnerCtx?.partner
       ? await this.pool.query<{ product_id: string; partner_commission_unit_minor: number }>(
           `SELECT product_id, partner_commission_unit_minor FROM product_variants
             WHERE product_id = ANY($1::uuid[]) AND status = 'ACTIVE'`,
@@ -1211,7 +1211,7 @@ export class CatalogService {
           currency: this.platformCurrency, availability: row.availability,
           gallery: assets.rows.filter((asset) => asset.product_id === row.id).map(mapAsset)
         };
-        if (partnerCtx?.partner && !this.nativeCommerce) {
+        if (partnerCtx?.partner) {
           card.partnerView = {
             commissionFromMinor: commissions.length > 0 ? Math.min(...commissions) : 0,
             commissionToMinor: commissions.length > 0 ? Math.max(...commissions) : 0,
@@ -1244,7 +1244,7 @@ export class CatalogService {
       [product.id]
     );
     const variants = await this.pool.query<VariantRow & { availability: StorefrontAvailability; dropship_price_minor: number | null; sellable: number }>(
-      `SELECT v.*, ${this.nativeCommerce ? "v.dropship_price_minor AS price_minor," : ""}
+      `SELECT v.*,
         GREATEST(0,COALESCE(i.native_on_hand-i.native_reserved_quantity-i.safety_buffer,0)) AS sellable,
         ${stockSql} AS availability FROM product_variants v
         LEFT JOIN inventory_items i ON i.variant_id = v.id
@@ -1286,14 +1286,14 @@ export class CatalogService {
       variants: variants.rows.map((row) => ({
         id: row.id, sku: row.sku, attributes: row.attributes,
         priceMinor: row.price_minor, currency: row.currency, availability: row.availability,
-        ...(this.nativeCommerce ? { dropshipPriceMinor: row.dropship_price_minor, sellable: row.sellable } : {})
+        ...(this.nativeCommerce ? { sellable: row.sellable } : {})
       }))
     };
     if (partnerCtx?.partner) {
       result.partnerView = {
-        referralEligible: !this.nativeCommerce && referralEligible,
+        referralEligible,
         readOnlyReason,
-        variants: this.nativeCommerce ? [] : variants.rows.map((row) => ({
+        variants: variants.rows.map((row) => ({
           id: row.id,
           commissionUnitMinor: row.partner_commission_unit_minor,
           referralEligible,

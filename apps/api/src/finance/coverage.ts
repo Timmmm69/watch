@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
+import { usesNativeInventory } from "../inventory/native.js";
 
 // Caller serializes Partner -> Order. Read fresh facts only AFTER acquiring locks.
 export async function orderMoneyCoverage(client: PoolClient, orderId: string) {
-  const order = (await client.query("SELECT economic_regime,status FROM orders WHERE id=$1", [orderId])).rows[0];
-  const retained = (await client.query(`SELECT COALESCE(sum(oi.customer_unit_price_minor::bigint * (oi.quantity-
+  const order = (await client.query("SELECT * FROM orders WHERE id=$1", [orderId])).rows[0];
+  const retained = (await client.query(`SELECT COALESCE(sum(oi.unit_price_minor::bigint * (oi.quantity-
     COALESCE((SELECT sum(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id
       WHERE ri.order_item_id=oi.id AND r.status='COMPLETED'),0))),0)::text AS amount
     FROM order_items oi WHERE oi.order_id=$1`, [orderId])).rows[0]!.amount;
@@ -16,7 +17,7 @@ export async function orderMoneyCoverage(client: PoolClient, orderId: string) {
   const outstanding = obligations.reduce((sum, row) => sum + BigInt(row.outstanding), 0n);
   const retainedSales = ["CANCELLED", "DELIVERY_FAILED"].includes(order?.status) ? 0n : BigInt(retained);
   return { cashMinor: Number(cash), retainedSalesMinor: Number(retainedSales), outstandingMinor: Number(outstanding),
-    covered: order?.economic_regime !== "DROPSHIP_MARKUP" || BigInt(cash) - outstanding >= retainedSales,
+    covered: !order || !usesNativeInventory(order) || BigInt(cash) - outstanding >= retainedSales,
     obligations: obligations.map(row => ({ id: row.id as string, kind: row.kind as string, outstandingMinor: Number(row.outstanding) })) };
 }
 
@@ -41,12 +42,12 @@ export async function reconcileOverpayment(client: PoolClient, orderId: string, 
 }
 
 export async function commissionPayable(client: PoolClient, id: string, now: Date) {
-  const row = (await client.query(`SELECT c.*,o.economic_regime,o.status,o.delivered_at,o.completion_eligible_at,
+  const row = (await client.query(`SELECT c.*,to_jsonb(o)->>'inventory_mode' AS inventory_mode,o.economic_regime,o.status,o.delivered_at,o.completion_eligible_at,
     EXISTS(SELECT 1 FROM return_items ri JOIN returns r ON r.id=ri.return_id
       WHERE ri.order_item_id=c.order_item_id AND r.status='REQUESTED') AS blocked
     FROM commissions c JOIN orders o ON o.id=c.order_id WHERE c.id=$1`, [id])).rows[0];
   if (!row) return false;
-  if (row.economic_regime !== "DROPSHIP_MARKUP") return true;
+  if (!usesNativeInventory(row)) return true;
   return ["DELIVERED", "COMPLETED"].includes(row.status) && !!row.delivered_at
     && !!row.completion_eligible_at && row.completion_eligible_at <= now
     && !!row.eligible_at && row.eligible_at <= now && !row.blocked

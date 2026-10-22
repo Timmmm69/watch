@@ -5,6 +5,10 @@ import { INVENTORY_SYNC_LOCK } from "./orchestrator.js";
 // Distinct from sync: ordinary legacy checkout must not contend with periodic sync.
 export const INVENTORY_CUTOVER_LOCK = [1463899203,2] as const;
 
+/** Null mode is historical: T46 native orders were identified by their regime. */
+export function usesNativeInventory(order: { inventory_mode?: string | null; economic_regime?: string }): boolean {
+  return order.inventory_mode === "native" || (order.inventory_mode == null && order.economic_regime === "DROPSHIP_MARKUP");
+}
 export class NativeInventoryError extends Error {}
 export interface InventoryOperation {
   actorUserId: string; operationKey: string; reason: string; occurredAt: Date;
@@ -169,8 +173,10 @@ export class NativeInventoryService {
     if (quantity>free-stock.safety_buffer) throw new NativeInventoryError("INSUFFICIENT_STOCK");
     const cost=allocateCost(stock.native_free_value_minor,free,quantity);
     const id=randomUUID();
-    await client.query(`INSERT INTO inventory_reservations(id,order_id,variant_id,quantity,economic_regime,allocated_procurement_cost_minor)
-      VALUES($1,$2,$3,$4,'DROPSHIP_MARKUP',$5)`,[id,orderId,stock.variant_id,quantity,cost]);
+    // Economics belong to the immutable parent Order, never to stock authority.
+    const inserted = await client.query(`INSERT INTO inventory_reservations(id,order_id,variant_id,quantity,economic_regime,allocated_procurement_cost_minor)
+      SELECT $1,id,$3,$4,economic_regime,$5 FROM orders WHERE id=$2`,[id,orderId,stock.variant_id,quantity,cost]);
+    if (inserted.rowCount !== 1) throw new NativeInventoryError("UNKNOWN_ORDER");
     stock.native_reserved_quantity+=quantity;
     stock.native_free_value_minor=quantity===free ? 0 : cost===null ? null : stock.native_free_value_minor!-cost;
     stock.native_reserved_known_value_minor+=cost ?? 0;
@@ -191,7 +197,7 @@ export class NativeInventoryService {
    * Order and reservation before InventoryItem, and commits Order effects too. */
   async release(client: PoolClient, op: InventoryOperation, stock: NativeStock, row:NativeReservation):Promise<void> {
     validateOperation(op);
-    if(!row || row.variant_id!==stock.variant_id || row.economic_regime!=="DROPSHIP_MARKUP")throw new NativeInventoryError("UNKNOWN_RESERVATION");
+    if(!row || row.variant_id!==stock.variant_id)throw new NativeInventoryError("UNKNOWN_RESERVATION");
     if(row.status==="RELEASED")return;
     if(row.status!=="ACTIVE")throw new NativeInventoryError("RESERVATION_NOT_ACTIVE");
     const free=stock.native_on_hand-stock.native_reserved_quantity;
@@ -207,7 +213,7 @@ export class NativeInventoryService {
 
   /** Caller holds catalog → Order → OrderItems → Reservations → Stock locks. */
   async ship(client: PoolClient, op: InventoryOperation, stock: NativeStock, row: NativeReservation): Promise<void> {
-    if (row.variant_id !== stock.variant_id || row.economic_regime !== "DROPSHIP_MARKUP" || row.status !== "ACTIVE")
+    if (row.variant_id !== stock.variant_id || row.status !== "ACTIVE")
       throw new NativeInventoryError("RESERVATION_NOT_ACTIVE");
     const cost = row.allocated_procurement_cost_minor;
     stock.native_on_hand -= row.quantity;

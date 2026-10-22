@@ -4,7 +4,7 @@ import type { Pool } from "pg";
 import { adminReturnCreateRequestSchema, adminReturnInspectionSchema,
   type AdminReturnInspection, type AdminReturnCreateRequest, type AdminReturnListQuery, type ReturnStatus } from "@watch/contracts";
 import { CommissionError, reverseCommission } from "../finance/commissions.js";
-import { NativeInventoryError, NativeInventoryService } from "../inventory/native.js";
+import { NativeInventoryError, NativeInventoryService, usesNativeInventory } from "../inventory/native.js";
 import { releaseUnaffectedCommissions } from "../orders/completion.js";
 
 export class ReturnError extends Error {
@@ -18,7 +18,7 @@ interface ReturnRow {
 interface ItemRow {
   id: string; order_item_id: string; quantity: number; variant_id: string; sku_snapshot: string;
   title_snapshot: string; unit_price_minor: number; partner_commission_unit_snapshot_minor: number;
-  economic_regime: string; inspected_quantity: number; saleable_quantity: number;
+  economic_regime: string; inventory_mode?: string | null; inspected_quantity: number; saleable_quantity: number;
 }
 
 export class AdminReturnService {
@@ -55,6 +55,7 @@ export class AdminReturnService {
     const items = (await this.pool.query<ItemRow>(
       `SELECT ri.id,ri.order_item_id,ri.quantity,oi.variant_id,oi.sku_snapshot,oi.title_snapshot,
         oi.unit_price_minor,oi.partner_commission_unit_snapshot_minor,oi.economic_regime,
+        (SELECT to_jsonb(o)->>'inventory_mode' FROM orders o WHERE o.id=oi.order_id) AS inventory_mode,
         COALESCE((SELECT sum(m.quantity)::int FROM inventory_movements m WHERE m.return_item_id=ri.id),0) AS inspected_quantity,
         COALESCE((SELECT sum(m.saleable_quantity)::int FROM inventory_movements m WHERE m.return_item_id=ri.id),0) AS saleable_quantity
        FROM return_items ri JOIN order_items oi ON oi.id=ri.order_item_id AND oi.order_id=ri.order_id
@@ -67,7 +68,7 @@ export class AdminReturnService {
         id: item.id, orderItemId: item.order_item_id, variantId: item.variant_id, sku: item.sku_snapshot,
         title: item.title_snapshot, quantity: item.quantity, unitPriceMinor: item.unit_price_minor,
         partnerCommissionUnitSnapshotMinor: item.partner_commission_unit_snapshot_minor,
-        physicalAcceptanceAllowed: item.economic_regime === "DROPSHIP_MARKUP" && row.status === "COMPLETED",
+        physicalAcceptanceAllowed: usesNativeInventory(item) && row.status === "COMPLETED",
         inspectedQuantity: item.inspected_quantity, saleableQuantity: item.saleable_quantity
       })),
       reversalPreviewMinor: items.reduce((sum, item) =>
@@ -181,9 +182,9 @@ export class AdminReturnService {
             item.partner_commission_unit_snapshot_minor * item.returned_quantity, `return:${id}:completed`, now);
         }
         await client.query("UPDATE returns SET status='COMPLETED',note=$2,updated_at=$3 WHERE id=$1", [id, note ?? null, now]);
-        const economics = (await client.query("SELECT economic_regime FROM orders WHERE id=$1", [identity.order_id])).rows[0];
-        if (economics.economic_regime === "DROPSHIP_MARKUP") {
-          const amount = Number((await client.query(`SELECT sum(oi.customer_unit_price_minor::bigint*ri.quantity)::text AS amount
+        const economics = (await client.query("SELECT * FROM orders WHERE id=$1", [identity.order_id])).rows[0];
+        if (usesNativeInventory(economics)) {
+          const amount = Number((await client.query(`SELECT sum(oi.unit_price_minor::bigint*ri.quantity)::text AS amount
             FROM return_items ri JOIN order_items oi ON oi.id=ri.order_item_id WHERE ri.return_id=$1`, [id])).rows[0].amount);
           if (amount > 0) await client.query(`INSERT INTO customer_obligations(id,order_id,operation_key,kind,amount_minor,return_id,actor_user_id,reason,occurred_at)
             VALUES($1,$2,$3,'RETURN_REFUND',$4,$5,$6,'Completed return',$7)`,
@@ -255,10 +256,10 @@ export class AdminReturnService {
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [key]);
-      const identity = (await client.query(`SELECT r.order_id,o.partner_id_snapshot,o.economic_regime FROM returns r
+      const identity = (await client.query(`SELECT r.order_id,o.partner_id_snapshot,o.economic_regime,to_jsonb(o)->>'inventory_mode' AS inventory_mode FROM returns r
         JOIN orders o ON o.id=r.order_id WHERE r.id=$1`, [id])).rows[0];
       if (!identity) throw new ReturnError("NOT_FOUND");
-      if (identity.economic_regime !== "DROPSHIP_MARKUP") throw new ReturnError("RETURN_NOT_ALLOWED");
+      if (!usesNativeInventory(identity)) throw new ReturnError("RETURN_NOT_ALLOWED");
       if (identity.partner_id_snapshot) await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [identity.partner_id_snapshot]);
       const inventory = new NativeInventoryService(this.pool);
       const lines = (await client.query(`SELECT oi.id,oi.variant_id,oi.quantity AS original_quantity,oi.allocated_procurement_cost_minor,

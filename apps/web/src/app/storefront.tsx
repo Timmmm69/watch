@@ -15,7 +15,7 @@ type Product = { id: string; slug: string; title: string; description: string; b
   priceFromMinor: number | null; currency: string; availability: Availability;
   gallery: Asset[]; partnerView?: ProductCardPartnerView };
 type VariantPartnerView = { id: string; commissionUnitMinor: number; referralEligible: boolean; readOnlyReason: PartnerViewReason };
-type Detail = Product & { variants: { id: string; sku: string; priceMinor: number; availability: Availability; sellable?: number; dropshipPriceMinor?: number | null }[];
+type Detail = Product & { variants: { id: string; sku: string; priceMinor: number; availability: Availability; sellable?: number }[];
   partnerView?: { referralEligible: boolean; readOnlyReason: PartnerViewReason; variants: VariantPartnerView[]; assets: Asset[] } };
 type Category = { id: string; slug: string; name: string };
 type Filters = { q: string; category: string; brand: string; minPrice: string; maxPrice: string; availability: string };
@@ -27,10 +27,9 @@ const reasonLabel = (reason: PartnerViewReason) => reason === "PARTNER_BLOCKED" 
 const price = (minor: number | null, currency: string) => minor === null ? "Цена пока недоступна" :
   new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(minor / 100);
 
-export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequired, nativeCommerce = false }: {
+export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequired }: {
   name: string; csrfToken: string; partner: { id: string; status: "ACTIVE" | "BLOCKED" } | null;
   partnerTermsReacceptRequired: boolean;
-  nativeCommerce?: boolean;
 }) {
   const router = useRouter();
   const [items, setItems] = useState<Product[]>([]);
@@ -121,14 +120,14 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     <header className="mb-8 flex items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Watch</h1>
       <span className="text-sm text-slate-400">Здравствуйте, {name}</span></header>
     <nav className="mb-5 flex gap-4">
-      <Link className="min-h-11 underline" href={nativeCommerce ? "/partner/orders" : "/orders"}>История заказов</Link>
+      <Link className="min-h-11 underline" href="/orders">История заказов</Link>
       {partner ? <Link className="min-h-11 underline" href="/partner">Кабинет партнёра</Link>
         : <Link className="min-h-11 underline" href="/partner/onboarding">Стать партнёром</Link>}
       {partnerTermsReacceptRequired && <Link className="min-h-11 underline" href="/partner/onboarding">Принять новые условия</Link>}
     </nav>
-    {!nativeCommerce && !detail && <CartIndicator csrfToken={csrfToken} />}
+    {!detail && <CartIndicator csrfToken={csrfToken} />}
     {partner && !detail && <PartnerEarnings compact blocked={partner.status === "BLOCKED"} />}
-    {!nativeCommerce && partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Ссылка партнёра">
+    {partner && !detail && <section className="mb-6 rounded-xl bg-slate-900 p-4" aria-label="Ссылка партнёра">
       <h2 className="text-lg font-semibold">Ссылка на магазин</h2>
       {partner.status === "ACTIVE" && !partnerTermsReacceptRequired
         ? <button type="button" disabled={linkLoading} className="mt-3 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50"
@@ -152,32 +151,27 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-slate-900" />
           : asset.text ? <p key={asset.id} className="rounded-xl bg-slate-900 p-4">{asset.text}</p> : null)}</div>
       {detail.partnerView && <div className="mt-6 rounded-xl bg-slate-900 p-4">
-        <h3 className="mb-3 text-lg font-semibold">{nativeCommerce ? "Материалы для продажи" : "Для партнёра"}</h3>
-        {!nativeCommerce && (detail.partnerView.referralEligible
+        <h3 className="mb-3 text-lg font-semibold">Для партнёра</h3>
+        {detail.partnerView.referralEligible
           ? <button type="button" disabled={linkLoading} className="mb-3 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50"
               onClick={() => void copyReferral(detail.id)}>Скопировать ссылку на товар</button>
-          : <p className="mb-3 text-amber-300">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Ссылка сейчас недоступна"}</p>)}
+          : <p className="mb-3 text-amber-300">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Ссылка сейчас недоступна"}</p>}
         {link && <p className="mb-3 break-all text-sm text-emerald-300">Ссылка скопирована: {link}</p>}
         {linkError && <p role="alert" className="mb-3 text-rose-300">{linkError}</p>}
-        {!nativeCommerce && <table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия</th></tr></thead><tbody>
+        <table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия</th></tr></thead><tbody>
           {detail.partnerView.variants.map((variant) => <tr key={variant.id} className="border-t border-slate-700">
             <td className="py-2">{detail.variants.find((v) => v.id === variant.id)?.sku ?? variant.id}</td>
             <td className="py-2 text-emerald-300">{price(variant.commissionUnitMinor, detail.currency)}</td>
           </tr>)}
-        </tbody></table>}
+        </tbody></table>
         {detail.partnerView.assets.length > 0 && <div className="mt-4 grid gap-4 sm:grid-cols-2">{detail.partnerView.assets.map((asset) => asset.type === "IMAGE" && asset.mediaUrl
           ? <img key={asset.id} src={asset.mediaUrl} alt="Материал для продажи" className="w-full rounded-xl bg-slate-950 object-contain" />
           : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-slate-950" />
             : asset.text ? <p key={asset.id} className="rounded-xl bg-slate-950 p-4">{asset.text}</p> : null)}</div>}
       </div>}
-      <p className="mt-6 text-lg font-medium">{nativeCommerce ? "Цена дропу (D) от " : "Цена от "}{price(detail.priceFromMinor, detail.currency)}</p>
+      <p className="mt-6 text-lg font-medium">Цена от {price(detail.priceFromMinor, detail.currency)}</p>
       <p className="mt-2">{labels[detail.availability]}</p>
-      {nativeCommerce ? <section className="mt-5 space-y-3" aria-label="Выбор SKU">{detail.variants.map((variant) => <div key={variant.id} className="rounded-xl bg-slate-900 p-4">
-        <p>{variant.sku} · D: {price(variant.dropshipPriceMinor ?? null, detail.currency)} · Доступно: {variant.sellable ?? 0}</p>
-        {variant.dropshipPriceMinor !== null && variant.availability === "IN_STOCK" && partner?.status === "ACTIVE" && !partnerTermsReacceptRequired
-          ? <Link className="inline-flex min-h-11 items-center underline" href={`/checkout?product=${encodeURIComponent(detail.slug)}&variant=${variant.id}`}>Оформить заказ</Link>
-          : <p>{partnerTermsReacceptRequired ? "Примите текущие условия в кабинете." : "Оформление недоступно."}</p>}
-      </div>)}</section> : <ProductCartActions key={detail.id} variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />}
+      <ProductCartActions key={detail.id} variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />
     </section> : <>
       <form onSubmit={apply} className="mb-5 flex gap-2"><label className="sr-only" htmlFor="shop-search">Поиск товаров</label>
         <input id="shop-search" value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })}
@@ -221,7 +215,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
             : <div className="flex aspect-square items-center justify-center text-slate-500">Watch</div>}
           <div className="p-4"><h2 className="text-lg font-semibold">{product.title}</h2>
             {product.brand && <p className="text-sm text-slate-300">{product.brand}</p>}
-            <p className="mt-2 text-sm text-slate-300">{nativeCommerce ? "Цена дропу (D) от " : "Цена от "}{price(product.priceFromMinor, product.currency)}</p>
+            <p className="mt-2 text-sm text-slate-300">Цена от {price(product.priceFromMinor, product.currency)}</p>
             <p className="mt-2 text-sm">{labels[product.availability]}</p>
             {product.partnerView && <div className="mt-3 border-t border-slate-700 pt-2 text-sm">
               <p className="text-emerald-300">Комиссия: {price(product.partnerView.commissionFromMinor, product.currency)} – {price(product.partnerView.commissionToMinor, product.currency)}</p>

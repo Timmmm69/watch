@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # T47 — внутренний склад и первоначальный импорт
 
 Источник требований: FULL_BUILD_SPEC.md §30. T48 и последующие процессы этим этапом не реализованы. Первоначальный импорт не является открытием магазина: после выбора native старый checkout закрыт, новый будет в T48; интеграция отгрузки/возвратов — T49.

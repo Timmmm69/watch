@@ -1,7 +1,7 @@
 # Codex Implementation Tasks
 
 **Project:** Telegram Partner Commerce Platform  
-**Authoritative specification:** `FULL_BUILD_SPEC.md` v1.4-dropshipping, Section 30 takes precedence for amended business behavior
+**Authoritative specification:** `FULL_BUILD_SPEC.md` v1.5-referral-native, Section 31 takes precedence for current business behavior
 **Purpose:** implementation queue for Codex  
 **Status:** active execution plan
 
@@ -615,7 +615,9 @@ The documentation amendment does not certify existing code or authorize code cha
 
 Targeted future acceptance: required checkout fields; no payment semantics for CONFIRMED; shipping consumption exactly once; failed shipment handled by Return without false DELIVERED; partial Return blocks only affected release; rejection after expiry does not restart hold; late paid return appends debt/reversal; Return does not restock; economics missing means unavailable.
 
-# Required corrective queue — native inventory and dropshipping (2026-10-14)
+# Historical corrective queue — native inventory and dropshipping (2026-10-14)
+
+> New-sales requirements in this queue are superseded by FULL_BUILD_SPEC.md Section 31 (2026-10-22). T46–T52 explain the historical implementation. Do not restore partner-set R or disable buyer/referral checkout.
 
 Owner confirmed the business inputs recorded in `FULL_BUILD_SPEC.md` Section 30. The earlier Google-authoritative/fixed-commission/Buyer-checkout assumptions no longer describe new production Orders. This is planning, not completion of these tasks. Execute one explicitly bounded task at a time; preserve old records and reuse existing services. These tasks precede certification of a production release under the amended model. Historical T01–T45 validation is not acceptance of T46–T52.
 
@@ -667,3 +669,14 @@ Owner confirmed the business inputs recorded in `FULL_BUILD_SPEC.md` Section 30.
 - Initial real catalog/stock import and matching prepared photos/economics; no fictitious data or external acceptance flags.
 - Real Telegram drop-created order → observed receipt → shipment/delivery → remuneration → payout → partial/late return, with expected balances/stock; encrypted restore and external network checks.
 - Production complete only after actual new-workflow evidence for the release. This task does not invent hosting credentials, legal text, costs or approval of live money transfers.
+
+
+# Current corrective task — Referral commerce restoration (2026-10-22)
+
+Authority: FULL_BUILD_SPEC.md Section 31. Final model: Referral-based commerce with fixed SKU commissions and native PostgreSQL inventory.
+
+- Restore signed Telegram attribution, personal links, retail catalog/cart/buyer checkout and partner fixed commissions using existing modules.
+- Separate economic_regime from per-order inventory_mode; reuse native allocation, shipment, cancellation, physical returns and immutable money/ledger/payout mechanisms.
+- Remove active partner-set price controls, keep all historical markup snapshots and operations.
+- Apply additive migration and require updated production attestation. Run PostgreSQL concurrency/financial/upgrade tests and browser checkout/price-confirmation/retry checks.
+- Code/test evidence does not replace real Telegram-device, production inventory/legal/configuration or actual-transfer verification. See docs/referral-native-commerce.md for operation and verification commands.

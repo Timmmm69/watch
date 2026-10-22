@@ -35,6 +35,10 @@ describe("production launch gate", () => {
       GOOGLE_SHEETS_WORKSHEET_NAME:undefined,GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64:undefined}).INVENTORY_PROVIDER).toBe("native");
   });
   it("rejects old attestations, source drift and missing new-workflow evidence", () => {
+    const oldMarkup = productionApprovalFixture({...env,INVENTORY_PROVIDER:"native"});
+    publish({...oldMarkup,schemaVersion:2,operatingModel:{...oldMarkup.operatingModel,
+      orderFlow:"DROPSHIPPER_MARKUP",ownerReceives:"R",remuneration:"R_MINUS_D"}});
+    expect(() => loadApiRuntimeConfig({...env,INVENTORY_PROVIDER:"native"})).toThrow();
     publish({...approval,schemaVersion:1});
     expect(() => loadApiRuntimeConfig(env)).toThrow();
     publish();

@@ -39,10 +39,10 @@ const evidence = z.object({ passed: z.boolean(), report: text, sha256: hash }).s
 
 // An operator attestation binds approved inputs; it never substitutes for real-device smoke evidence.
 export const productionApprovalSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   operatingModel: z.discriminatedUnion("inventoryProvider", [
-    z.object({ inventoryProvider: z.literal("native"), orderFlow: z.literal("DROPSHIPPER_MARKUP"),
-      recipientTelegramRequired: z.literal(false), ownerReceives: z.literal("R"), remuneration: z.literal("R_MINUS_D"),
+    z.object({ inventoryProvider: z.literal("native"), orderFlow: z.literal("REFERRAL_BUYER_FIXED"),
+      recipientTelegramRequired: z.literal(false), ownerReceives: z.literal("RETAIL"), remuneration: z.literal("FIXED_SKU"),
       termsCoverRecipientData: z.literal(true) }).strict(),
     z.object({ inventoryProvider: z.literal("google_sheets"), orderFlow: z.literal("LEGACY_BUYER_FIXED") }).strict(),
   ]),

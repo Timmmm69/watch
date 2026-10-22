@@ -229,7 +229,7 @@ describe.skipIf(!url)("T47 native inventory on disposable PostgreSQL",()=>{
     expect((await stock(v.id)).last_successful_sync_at.toISOString()).toBe("2020-01-01T00:00:00.000Z");
     expect((await new InventoryService(pool).listItems({page:1,limit:20})).items[0]).toMatchObject({sellable:3,availability:"IN_STOCK"});
     const historical=(await pool.query("SELECT * FROM orders WHERE id=$1",[orderId])).rows[0];
-    await expect(pool.query(`INSERT INTO orders SELECT * FROM orders WHERE id=$1`,[orderId])).rejects.toThrow("Legacy checkout disabled");
+    await expect(pool.query(`INSERT INTO orders SELECT * FROM orders WHERE id=$1`,[orderId])).rejects.toThrow("New referral checkout must use native inventory");
     expect(historical.economic_regime).toBe("LEGACY_FIXED");
   });
 

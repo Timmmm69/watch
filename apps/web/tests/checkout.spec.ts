@@ -161,7 +161,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       VALUES ($1,'SALES_TERMS',$2,$3,'Новые тестовые условия',now())`, [next.id, next.version, randomBytes(32).toString("hex")]);
     docs.SALES_TERMS = next;
     await page.getByRole("button", { name: "Создать заказ" }).click();
-    await expect(page.getByRole("main").getByRole("alert")).toContainText("Документы изменились");
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("Условия обновились");
     await expect(page.getByLabel("Принимаю текущие условия продажи")).not.toBeChecked();
     await expect(page.getByLabel("Ознакомлен(а) с текущей политикой конфиденциальности")).toBeChecked();
     expect((await pool.query("SELECT count(*)::int AS count FROM orders")).rows[0].count).toBe(0);

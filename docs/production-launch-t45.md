@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # T45/T52 — checklist запуска native-дропшиппинга
 
 Источник: FULL_BUILD_SPEC.md §30. Старые результаты T45 не подтверждают T46–T52.

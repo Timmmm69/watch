@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # Google Sheets inventory (T18 / resolved U01)
 
 > Superseded for the new dropshipping mode on 2026-10-14: FULL_BUILD_SPEC.md Section 30.3 selects native application stock; Sheets is initial preparation only. The adapter and requirements below describe the earlier integration, not a requirement to keep manually updating Sheets after every new-mode sale. Implementation alignment is T46–T52.

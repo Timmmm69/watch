@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { orderMoneyRequestSchema, orderExpenseRequestSchema, orderExpenseReviewRequestSchema, type OrderFinanceResponse } from "@watch/contracts";
+import { usesNativeInventory } from "../inventory/native.js";
 import { orderMoneyCoverage, reconcileOverpayment } from "./coverage.js";
 
 export class MoneyError extends Error {
@@ -41,9 +42,9 @@ export class OrderMoneyService {
       await client.query("BEGIN");
       const keys = [data.operationKey, ...("reference" in data ? [data.reference] : [])].sort();
       for (const key of keys) await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`money:${key}`]);
-      const owner = (await client.query("SELECT partner_id_snapshot,currency,economic_regime FROM orders WHERE id=$1", [orderId])).rows[0];
+      const owner = (await client.query("SELECT * FROM orders WHERE id=$1", [orderId])).rows[0];
       if (!owner) throw new MoneyError("NOT_FOUND");
-      if (owner.economic_regime !== "DROPSHIP_MARKUP") throw new MoneyError("LEGACY_FLOW_DISABLED");
+      if (!usesNativeInventory(owner)) throw new MoneyError("LEGACY_FLOW_DISABLED");
       if (owner.currency !== "BYN") throw new MoneyError("VALIDATION_ERROR");
       if (owner.partner_id_snapshot) await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [owner.partner_id_snapshot]);
       await client.query("SELECT id FROM orders WHERE id=$1 FOR UPDATE", [orderId]);

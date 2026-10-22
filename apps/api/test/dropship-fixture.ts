@@ -7,6 +7,7 @@ import { InitialInventoryImport, INVENTORY_HEADERS } from "../src/inventory/init
 import { CatalogService } from "../src/catalog/catalog.js";
 import { AssetService, type ObjectStorage } from "../src/catalog/assets.js";
 import { DropshipCheckoutService } from "../src/orders/dropship-checkout.js";
+import { CheckoutService } from "../src/orders/checkout.js";
 import { OrderViewService } from "../src/orders/views.js";
 import { LegalDocuments } from "../src/legal/legal.js";
 import { PartnerService } from "../src/partner/partner.js";
@@ -31,7 +32,7 @@ export function disposableUrl() {
   return url;
 }
 
-export async function dropshipFixture(quantity = 10, cost = "800.02", adminAccess = false) {
+export async function dropshipFixture(quantity = 10, cost = "800.02", adminAccess = false, migrationThrough = "99999999999999") {
   const url = disposableUrl();
   if (!url) throw new Error("WATCH_T48_DATABASE_URL is required");
   const schema = `t48_${randomUUID().replaceAll("-", "")}`;
@@ -40,7 +41,7 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   const pool = new Pool({ connectionString: url, max: 12, options: `-c search_path=${schema},public` });
   // Both package test runners start in apps/api or apps/web.
   const migrations = resolve(process.cwd(), "../../packages/db/prisma/migrations");
-  for (const name of (await readdir(migrations)).filter((name) => /^\d/.test(name)).sort())
+  for (const name of (await readdir(migrations)).filter((name) => /^\d/.test(name) && name <= migrationThrough).sort())
     await pool.query(await readFile(join(migrations, name, "migration.sql"), "utf8"));
   await pool.query("INSERT INTO platform_settings(singleton_id,platform_currency) VALUES(1,'BYN')");
   const owners = [];
@@ -54,7 +55,8 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   }
   const supplier = randomUUID();
   await pool.query("INSERT INTO suppliers(id,name) VALUES($1,'TEST ONLY Supplier')", [supplier]);
-  const docs = { PARTNER_TERMS: { id: randomUUID(), version: "t48-partner" }, PRIVACY: { id: randomUUID(), version: "t48-privacy" } };
+  const docs = { PARTNER_TERMS: { id: randomUUID(), version: "t48-partner" }, PRIVACY: { id: randomUUID(), version: "t48-privacy" },
+    SALES_TERMS: { id: randomUUID(), version: "referral-sales" } };
   for (const [type, doc] of Object.entries(docs)) await pool.query(`INSERT INTO legal_documents
     (id,type,version,sha256,content_markdown,effective_at,requires_reacceptance) VALUES($1,$2,$3,$4,$5,now(),true)`,
   [doc.id, type, doc.version, randomBytes(32).toString("hex"), `TEST ONLY ${type}`]);
@@ -83,10 +85,11 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   const adminIds = adminAccess ? new Set(["3"]) : new Set<string>();
   const orders = new AdminOrderService(pool), returns = new AdminReturnService(pool);
   const app = createApp({ nativeCommerce: true, logger: false, checkReadiness: async () => undefined,
-    auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl: "http://127.0.0.1:3000", adminIds: () => adminIds },
+    auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl: "http://127.0.0.1:3000", adminIds: () => adminIds,
+      botToken: "123456:TEST_ONLY_referral" },
     ...(adminAccess ? { orders, returns, money: new OrderMoneyService(pool), payouts: new PayoutService(pool, "BYN", docs.PARTNER_TERMS, 1),
       analytics: new AnalyticsService(pool, "BYN", "Europe/Minsk", 600, 86400) } : {}),
-    checkout: service, legal, partner: new PartnerService(pool, legal), orderViews: views,
+    checkout: new CheckoutService(pool, "BYN", docs), legal, partner: new PartnerService(pool, legal), orderViews: views,
     catalog: { service: catalog }, assets: { service: new AssetService(pool, storage) },
     cart: new CartService(pool, "BYN"), referral: new ReferralService(pool, legal, "test_bot") });
   const request = (r = 14500, q = 1) => ({ items: [{ variantId: variant.id, quantity: q, expectedDropshipPriceMinor: 10000, customerUnitPriceMinor: r }],

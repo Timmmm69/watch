@@ -29,8 +29,6 @@ import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
-import type { DropshipCheckoutService } from "./orders/dropship-checkout.js";
-import { dropshipCheckoutRequestSchema, dropshipCheckoutResponseSchema } from "@watch/contracts";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
 import { adminReturnCreateRequestSchema, adminReturnListQuerySchema, adminReturnCompleteRequestSchema, adminReturnInspectionSchema } from "@watch/contracts";
 import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
@@ -95,7 +93,7 @@ export interface AppDependencies {
   inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
-  checkout?: Pick<CheckoutService | DropshipCheckoutService, "checkout">;
+  checkout?: Pick<CheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
   returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete"> & Partial<Pick<AdminReturnService, "reject" | "inspect">>;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
@@ -196,7 +194,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
       try {
         const identity = verifyTelegramInitData((body as { initData: string }).initData, auth.botToken!);
         const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie),
-          referral && !nativeCommerce ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
+          referral ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
         reply.header("Set-Cookie", serializeSessionCookie(current.token, current.session.expiresAt,
           new URL(auth.appBaseUrl).protocol === "https:"));
         const state = await partnerState(current.user.id);
@@ -402,7 +400,6 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
 
     if (referral) {
       app.post("/api/v1/partner/referral-links", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
-        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         const body = request.body;
         if (!body || typeof body !== "object" || Array.isArray(body) ||
             !Object.hasOwn(body, "productId") || Object.keys(body).some((key) => key !== "productId") ||
@@ -492,14 +489,14 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
     }
     if (checkout) app.post("/api/v1/orders", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
       reply.header("Cache-Control", "no-store");
-      const parsed = (nativeCommerce ? dropshipCheckoutRequestSchema : checkoutRequestSchema).safeParse(request.body);
+      const parsed = checkoutRequestSchema.safeParse(request.body);
       const key = request.headers["idempotency-key"];
       if (!parsed.success || typeof key !== "string" || key.length < 1 || key.length > 100 || !key.trim()) {
         return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid checkout request", details: {}, requestId: request.id } });
       }
       try {
         const result = await checkout.checkout(request.auth!.user.id, key, parsed.data);
-        return reply.code(result.created ? 201 : 200).send((nativeCommerce ? dropshipCheckoutResponseSchema : checkoutResponseSchema).parse(result.order));
+        return reply.code(result.created ? 201 : 200).send(checkoutResponseSchema.parse(result.order));
       } catch (error) {
         if (!(error instanceof CheckoutError)) throw error;
         const status = error.code === "VALIDATION_ERROR" ? 400 : ["USER_BLOCKED", "PARTNER_REQUIRED", "PARTNER_BLOCKED", "TERMS_REACCEPT_REQUIRED"].includes(error.code) ? 403
@@ -621,7 +618,6 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
     if (cart) {
       const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {
         reply.header("Cache-Control", "no-store");
-        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         try { return cartResponseSchema.parse(await action()); }
         catch (error) {
           if (!(error instanceof CartError)) throw error;
@@ -659,10 +655,6 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
     if (catalog) {
       const service = catalog.service;
       const requireAdmin = createRequireAdmin(auth.adminIds);
-      const requireCatalogPartner = async (request: FastifyRequest, reply: FastifyReply) => {
-        if (nativeCommerce && !(await partnerState(request.auth!.user.id)).partner)
-          reply.code(403).send({ error: { code: "PARTNER_REQUIRED", message: "Partner account required", details: {}, requestId: request.id } });
-      };
 
       app.get("/api/v1/catalog/categories", { preHandler: requireSession }, async () => {
         return service.listStorefrontCategories();
@@ -678,7 +670,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
         return context;
       };
 
-      app.get("/api/v1/catalog/products", { preHandler: [requireSession, requireCatalogPartner] }, async (request, reply) => {
+      app.get("/api/v1/catalog/products", { preHandler: [requireSession] }, async (request, reply) => {
         const parsed = storefrontProductsQuerySchema.safeParse(request.query ?? {});
         if (!parsed.success) {
           return reply.code(400).send({
@@ -689,7 +681,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
         return service.listStorefrontProducts(parsed.data, partnerContext);
       });
 
-      app.get("/api/v1/catalog/products/:slug", { preHandler: [requireSession, requireCatalogPartner] }, async (request, reply) => {
+      app.get("/api/v1/catalog/products/:slug", { preHandler: [requireSession] }, async (request, reply) => {
         const slug = (request.params as { slug?: string }).slug ?? "";
         try {
           const partnerContext = await buildPartnerContext(request.auth!.user);
