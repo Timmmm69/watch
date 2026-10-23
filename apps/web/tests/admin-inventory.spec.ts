@@ -22,9 +22,9 @@ test("inventory shows authoritative states, snapshots, deficits and reconciliati
   await expect(page.getByText("Доступность: Остатки неизвестны", { exact: false })).toBeVisible(); await expect(page.getByText("Дефицит", { exact: true })).toBeVisible();
   await expect(page.getByText("Версия источника: sheet-v1", { exact: true })).toHaveCount(4);
   await expect(page.getByRole("link", { name: "Часы · SKU-42", exact: true })).toHaveAttribute("href", `/admin/products/${id}`);
-  await expect(page.getByRole("link", { name: "Открыть заказы на сверку", exact: true }).first()).toHaveAttribute("href", "/admin/orders?reconciliationPending=true");
+  await expect(page.getByRole("link", { name: "Посмотреть заказы для сверки", exact: true }).first()).toHaveAttribute("href", "/admin/orders?reconciliationPending=true");
   await expect(page.locator('input[name="sourceQuantity"],input[name="source_quantity"]')).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "История синхронизаций" })).toContainText("Обработано: 3");
+  await expect(page.getByRole("region", { name: "История синхронизаций" })).toContainText("Проверено позиций: 3");
 });
 test("manual sync uses existing synchronous API, prevents duplicate submit; buffer mutation never sends stock", async ({ page }) => {
   await auth(page); let item = { ...initial }; let syncCalls = 0; let finish: (() => void) | undefined;
@@ -44,8 +44,8 @@ test("manual sync uses existing synchronous API, prevents duplicate submit; buff
   await expect.poll(() => syncCalls).toBe(1); finish!(); await expect(sync).toBeEnabled();
   await expect(page.getByText(`Синхронизация ${id}: SUCCESS`, { exact: true })).toBeVisible();
   const form = page.getByRole("form", { name: "Резерв SKU-42", exact: true });
-  await form.getByLabel("Новый страховой резерв").fill("4"); await form.getByRole("button").click();
-  await expect(form.getByLabel("Новый страховой резерв")).toHaveValue("4"); await expect(page.getByText("Доступно: 5", { exact: false })).toBeVisible(); expect(item.sourceQuantity).toBe(10);
+  await form.getByLabel("Новый резерв безопасности").fill("4"); await form.getByRole("button").click();
+  await expect(form.getByLabel("Новый резерв безопасности")).toHaveValue("4"); await expect(page.getByText("Доступно: 5", { exact: false })).toBeVisible(); expect(item.sourceQuantity).toBe(10);
 });
 test("sync already running, provider failure, retry and empty inventory remain usable", async ({ page }) => {
   await auth(page); let fail = true;
@@ -53,8 +53,8 @@ test("sync already running, provider failure, retry and empty inventory remain u
   await page.route("**/api/v1/admin/inventory/sync-runs?**", r => r.fulfill({ json: { items: [{ ...run, status: "FAILED", errorSummary: "SOURCE_UNAVAILABLE" }], total: 1, page: 1, limit: 10 } }));
   await page.route("**/api/v1/admin/inventory/sync", r => r.fulfill({ status: 409, json: { error: { code: "SYNC_ALREADY_RUNNING", details: { runSummary: null } } } }));
   await page.goto("/admin/inventory"); await expect(page.getByRole("main").getByRole("alert")).toBeVisible(); fail = false;
-  await page.getByRole("button", { name: "Обновить", exact: true }).click(); await expect(page.getByText("Инвентарь пуст", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Обновить", exact: true }).click(); await expect(page.getByText("Товаров на складе пока нет.", { exact: true })).toBeVisible();
   await expect(page.getByText("SOURCE_UNAVAILABLE", { exact: true })).toBeVisible(); page.on("dialog", d => d.accept());
-  await page.getByRole("button", { name: "Синхронизировать сейчас", exact: true }).click(); await expect(page.getByRole("main").getByRole("alert")).toContainText("Синхронизация уже выполняется");
+  await page.getByRole("button", { name: "Синхронизировать сейчас", exact: true }).click(); await expect(page.getByRole("main").getByRole("alert")).toContainText("Остатки уже обновляются");
   await expect(page.getByRole("button", { name: "Обновить", exact: true })).toBeEnabled();
 });

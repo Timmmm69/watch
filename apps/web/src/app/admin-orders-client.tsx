@@ -10,7 +10,7 @@ const labels: Record<string, string> = { PLACED: "Создан", CONFIRMED: "П�
 const actions: Record<string, string> = { CONFIRMED: "Подтвердить заказ", FULFILLING: "Начать сборку", SHIPPED: "Подтвердить отправку",
   DELIVERED: "Подтвердить доставку покупателю", CANCELLED: "Отменить заказ" };
 const reservationLabels: Record<string, string> = { ACTIVE: "Активен", RELEASED: "Освобождён", CONSUMED: "Использован" };
-const sourceLabels: Record<string, string> = { OK: "В порядке", UNINITIALIZED: "Не загружен", MISSING: "Товар отсутствует в источнике", INVALID: "Некорректные данные" };
+const sourceLabels: Record<string, string> = { OK: "Данные доступны", UNINITIALIZED: "Нет данных об остатке", MISSING: "Товар не найден в источнике остатков", INVALID: "Ошибка данных остатков" };
 type Order = { id: string; publicNumber: string; status: string; totalMinor: number; currency: string; overdue: boolean;
   economicRegime?: string; nativeInventory?: boolean;
   partnerIdSnapshot: string | null; attributionTouchId: string | null; commissionEligibleSnapshot: boolean; allowedTransitions: string[];
@@ -71,8 +71,8 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         throw new Error(response.status === 401 ? "Откройте приложение заново через Telegram." : "Доступ запрещён. Изменение заказов недоступно.");
       }
       throw Object.assign(new Error(body.error?.code === "INVENTORY_SNAPSHOT_CHANGED"
-        ? "Снимок остатков изменился. Проверьте обновлённые данные и подтвердите результат заново."
-        : body.error?.code === "INVALID_ORDER_TRANSITION" ? "Статус уже изменился. Обновите заказ и выберите доступное действие."
+        ? "Данные об остатках изменились. Проверьте их и подтвердите действие ещё раз."
+        : body.error?.code === "INVALID_ORDER_TRANSITION" ? "Статус заказа изменился. Обновите карточку перед следующим действием."
         : body.error?.code === "NOT_FOUND" ? "Заказ не найден." : "Не удалось загрузить или изменить заказ. Повторите попытку."), { code: body.error?.code });
     }
     return body;
@@ -146,7 +146,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
   const turnPage = (page: number) => { const next = new URLSearchParams(query); next.set("page", String(page)); setQuery(next.toString()); };
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={orderId ? "/admin/orders" : "/shop"}>← {orderId ? "Все заказы" : "Каталог"}</Link>
-    <h1 className="text-2xl font-semibold">{orderId ? "Заказ" : "Заказы администратора"}</h1>
+    <h1 className="text-2xl font-semibold">{orderId ? "Заказ" : "Управление заказами"}</h1>
     <nav className="flex gap-5" aria-label="Администрирование"><Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/analytics">Аналитика</Link></nav>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
     <button className="min-h-11 underline" disabled={!!pending || blocked} onClick={() => void refresh()}>Обновить</button>
@@ -158,11 +158,11 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
       {(["dateFrom", "dateTo"] as const).map((key) => <label key={key}>{key === "dateFrom" ? "Начало периода" : "Конец периода"}
         <input className="block min-h-11 w-full bg-slate-900" type="datetime-local" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
       <label><input type="checkbox" checked={draft.overdue} onChange={(e) => setDraft({ ...draft, overdue: e.target.checked })} /> Просроченные</label>
-      <label><input type="checkbox" checked={draft.reconciliationPending} onChange={(e) => setDraft({ ...draft, reconciliationPending: e.target.checked })} /> Ожидают сверки резерва</label>
+      <label><input type="checkbox" checked={draft.reconciliationPending} onChange={(e) => setDraft({ ...draft, reconciliationPending: e.target.checked })} /> Требуют сверки остатков</label>
       <button className="min-h-11 rounded bg-blue-600 px-4">Применить фильтры</button></form>}
     {loading && <div aria-label="Загрузка заказов" className="h-24 animate-pulse rounded bg-slate-900" />}
     {!orderId && result && !blocked && <>
-      {!result.items.length && <p>Заказов по выбранным фильтрам нет. Измените фильтры или обновите список.</p>}
+      {!result.items.length && <p>По выбранным условиям заказов нет. Измените фильтры.</p>}
       <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded bg-slate-900 p-4">
         <Link className="inline-flex min-h-11 items-center underline" href={`/admin/orders/${item.id}`}>{item.publicNumber}</Link>
         <p>{labels[item.status]} · {money(item.totalMinor, item.currency)}{item.overdue ? " · Просрочен" : ""}</p></li>)}</ul>
@@ -180,10 +180,10 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         <p>{JSON.stringify(item.attributes)}</p><p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
         {item.supplierSettlementUnitMinor !== null && <p>Расчёт с поставщиком за единицу: {money(item.supplierSettlementUnitMinor, order.currency)}</p>}</article>)}</section>
       <section><h2 className="font-semibold">Атрибуция</h2><p>Партнёр: {order.partnerIdSnapshot ?? "Органический заказ"}</p>
-        <p>Касание: {order.attributionTouchId ?? "Нет"}</p><p>Право на комиссию при создании: {order.commissionEligibleSnapshot ? "Да" : "Нет"}</p></section>
+        <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Касание:" : "Реферальный переход:"} {order.attributionTouchId ?? (order.economicRegime === "DROPSHIP_MARKUP" ? "Нет" : "Нет реферального перехода")}</p><p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Право на комиссию при создании:" : "Комиссия предусмотрена при оформлении:"} {order.commissionEligibleSnapshot ? "Да" : "Нет"}</p></section>
       <section><h2 className="font-semibold">Резервы</h2>{order.reservations?.map((r) => <div key={r.id} className="my-3 break-all rounded bg-slate-900 p-4">
-        <p>{r.id} · {reservationLabels[r.status] ?? "Неизвестен"} · {r.quantity} шт.</p><p>Сверка: {r.reconciliationMethod === "MANUAL" ? "Ручная" : r.reconciliationMethod === "SOURCE_PROOF" ? "Подтверждение источника" : "Не выполнена"} {r.reconciliationReference}</p>
-        <p>Источник: {sourceLabels[r.sourceStatus ?? ""] ?? "Нет данных"} · версия {r.sourceVersion ?? "Нет"}</p><p>Снимок: {r.lastSuccessfulSyncRunId ?? "Нет"}</p>
+        <p>{r.id} · {reservationLabels[r.status] ?? "Неизвестен"} · {r.quantity} шт.</p><p>Способ сверки: {r.reconciliationMethod === "MANUAL" ? "Ручная" : r.reconciliationMethod === "SOURCE_PROOF" ? "Подтверждение источника" : "Не выполнена"} {r.reconciliationReference}</p>
+        <p>Источник: {sourceLabels[r.sourceStatus ?? ""] ?? "Нет данных"} · версия {r.sourceVersion ?? "Нет"}</p><p>Данные синхронизации: {r.lastSuccessfulSyncRunId ?? "Нет"}</p>
         {r.lastSuccessfulSyncAt && <p>Обновлён: {date(r.lastSuccessfulSyncAt)}</p>}
         {r.reconciledAt && <p>Сверен: {date(r.reconciledAt)} · администратор {r.reconciledByAdminUserId}
           · снимок {r.reconciliationInventorySyncRunId} · версия {r.reconciliationSourceVersion ?? "Нет"}</p>}
@@ -191,24 +191,24 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
           disabled={!!pending || loading || r.sourceStatus !== "OK" || !r.lastSuccessfulSyncRunId}
           onClick={() => { setReconcile({ id: r.id, target, snapshot: r.lastSuccessfulSyncRunId! }); setReason(""); setEvidence(""); setAttested(false); setConfirm(""); }}>
           {target === "CONSUMED" ? "Подтвердить списание резерва" : "Подтвердить возврат резерва"}</button>)}
-        {reconcile?.id === r.id && <form aria-label="Сверка резерва" onSubmit={reconcileReservation} className="mt-3 space-y-3">
+        {reconcile?.id === r.id && <form aria-label="Сверка складского резерва" onSubmit={reconcileReservation} className="mt-3 space-y-3">
           <p>{reconcile.target === "CONSUMED" ? "Товар отгружен, и текущие остатки источника уже отражают списание." : "Товар возвращён, и текущие остатки источника уже отражают возврат."}</p>
-          <label className="block">Причина сверки<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+          <label className="block">Причина корректировки<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
           <label className="block">Ссылка на подтверждение (необязательно)<input className="block min-h-11 w-full bg-slate-800" maxLength={500} value={evidence} onChange={(e) => setEvidence(e.target.value)} /></label>
           <label className="block"><input type="checkbox" checked={attested} onChange={(e) => setAttested(e.target.checked)} /> Подтверждаю, что показанный снимок остатков уже отражает физический результат.</label>
           <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
-          <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Отмена сверки</button>
+          <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Закрыть форму сверки</button>
         </form>}</div>)}</section>
       {(order.nativeInventory || order.economicRegime === "DROPSHIP_MARKUP") && <OrderFinance orderId={order.id} request={request} />}
       <section><h2 className="font-semibold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
-        {order.completionEligibleAt && <p>Завершение системой возможно после {date(order.completionEligibleAt)}.</p>}</section>
+        {order.completionEligibleAt && <p>Автоматическое завершение возможно не раньше {date(order.completionEligibleAt)}.</p>}</section>
       <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-blue-600 px-4"
         disabled={!!pending || loading} onClick={() => { setConfirm(target); setReconcile(null); setAttested(false); }}>{pending === target ? "Сохранение…" : actions[target]}</button>)}</section>
       {confirm && <section aria-label="Подтверждение действия" className="rounded border border-slate-600 p-4">
         <p>{actions[confirm]}?</p>{confirm === "DELIVERED" && <p>Подтвердите, что покупатель получил заказ.</p>}
         {confirm === "CANCELLED" && <p>Заказ будет отменён, его резервы освобождены.</p>}
-        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void transition(confirm)}>Да, подтвердить</button>
-        <button className="min-h-11 px-4 underline" onClick={() => setConfirm("")}>Вернуться</button></section>}
+        <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void transition(confirm)}>Подтвердить действие</button>
+        <button className="min-h-11 px-4 underline" onClick={() => setConfirm("")}>Не менять статус</button></section>}
     </>}
   </div></main>;
 }

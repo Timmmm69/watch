@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import { AdminCatalogLayout, Field, Pagination, StatusOptions, availabilityLabels, buttonClass, inputClass,
+import { AdminCatalogLayout, Field, Pagination, StatusOptions, productStatusLabels, categoryStatusLabels, variantStatusLabels, availabilityLabels, buttonClass, inputClass,
   useAdminCatalogApi, type Category, type PageData, type ProductCard } from "./admin-catalog-common";
 
 export function AdminCatalogScreen({ csrfToken }: { csrfToken: string }) {
@@ -31,35 +31,35 @@ export function AdminCatalogScreen({ csrfToken }: { csrfToken: string }) {
       router.push(`/admin/products/${product.id}`);
     });
   };
-  return <AdminCatalogLayout title="Управление каталогом">
+  return <AdminCatalogLayout title="Каталог товаров">
     {api.error && <p role="alert" className="text-amber-300">{api.error}</p>}
-    {api.denied ? <p>Управление каталогом недоступно.</p> : <>
+    {api.denied ? <p>Вы не можете редактировать каталог.</p> : <>
       <button className={buttonClass} disabled={api.busy} onClick={refresh}>Обновить</button>
       {(!products || !categories) && !api.error && <p role="status">Загрузка каталога…</p>}
       <fieldset disabled={api.busy} className="space-y-5">
         <form aria-label="Создать товар" className="space-y-3 rounded bg-slate-900 p-4" onSubmit={createProduct}>
-          <h2 className="text-lg font-semibold">Новый товар</h2><Field label="Название нового товара"><input className={inputClass} name="title" required maxLength={200} /></Field>
-          <button className={buttonClass}>Создать DRAFT</button>
+          <h2 className="text-lg font-semibold">Новый товар</h2><Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} /></Field>
+          <button className={buttonClass}>Создать черновик</button>
         </form>
         <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
           event.preventDefault(); const form = new FormData(event.currentTarget); const next = new URLSearchParams({ page: "1", limit: "20" });
           for (const key of ["q", "status"]) if (form.get(key)) next.set(key, String(form.get(key)));
           setQuery(next.toString());
         }}><Field label="Поиск товаров"><input name="q" maxLength={100} className={inputClass} /></Field>
-          <Field label="Статус товаров"><select name="status" className={inputClass}><option value="">Все</option><option>DRAFT</option><option>ACTIVE</option><option>ARCHIVED</option></select></Field>
+          <Field label="Статус товаров"><select name="status" className={inputClass}><option value="">Все статусы</option><option value="DRAFT">{productStatusLabels.DRAFT}</option><option value="ACTIVE">{productStatusLabels.ACTIVE}</option><option value="ARCHIVED">{productStatusLabels.ARCHIVED}</option></select></Field>
           <button className={buttonClass}>Применить</button></form>
         {products && <section aria-label="Товары">
-          <h2 className="text-lg font-semibold">Товары</h2>{products.items.length === 0 && <p>Товаров нет</p>}
+          <h2 className="text-lg font-semibold">Товары</h2>{products.items.length === 0 && <p>Товаров пока нет.</p>}
           <ul className="space-y-3">{products.items.map(product => <li key={product.id} className="rounded bg-slate-900 p-4">
             <Link className="underline" href={`/admin/products/${product.id}`}>{product.title}</Link>
-            <p>{product.status} · {product.brand ?? "Без бренда"} · {availabilityLabels[product.availability] ?? product.availability}</p>
-            <p>Категории: {product.categories.map(c => `${c.name} (${c.status})`).join(", ") || "не назначены"}</p>
-            <p>Варианты: {product.variants.map(v => `${v.sku} (${v.status}) — ${v.priceMinor / 100} ${v.currency}`).join(", ") || "не созданы"}</p>
+            <p>{productStatusLabels[product.status] ?? "Статус уточняется"} · {product.brand ?? "Бренд не указан"} · {availabilityLabels[product.availability] ?? product.availability}</p>
+            <p>Категории: {product.categories.map(c => `${c.name} (${categoryStatusLabels[c.status] ?? "Статус уточняется"})`).join(", ") || "Нет категорий"}</p>
+            <p>Варианты: {product.variants.map(v => `${v.sku} (${variantStatusLabels[v.status] ?? "Статус уточняется"}) — ${v.priceMinor / 100} ${v.currency}`).join(", ") || "Нет вариантов"}</p>
           </li>)}</ul><Pagination data={products} onPage={page => { const next = new URLSearchParams(query); next.set("page", String(page)); setQuery(next.toString()); }} />
         </section>}
         <section aria-label="Категории" className="space-y-4"><h2 className="text-lg font-semibold">Категории</h2>
           <CategoryForm save={async (payload) => { await api.request("/api/v1/admin/categories", "POST", payload); refresh(); }} mutate={api.mutate} />
-          {categories?.items.length === 0 && <p>Категорий нет</p>}
+          {categories?.items.length === 0 && <p>Категорий пока нет.</p>}
           {categories?.items.map(category => <CategoryForm key={`${category.id}:${category.updatedAt}`} category={category}
             save={async payload => { await api.request(`/api/v1/admin/categories/${category.id}`, "PATCH", payload); refresh(); }} mutate={api.mutate} />)}
           {categories && <Pagination data={categories} onPage={setCategoryPage} />}
@@ -74,13 +74,13 @@ function CategoryForm({ category, save, mutate }: { category?: Category; save: (
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element);
     const payload = { name: String(form.get("name")), ...(form.get("slug") ? { slug: String(form.get("slug")) } : {}),
       sortOrder: Number(form.get("sortOrder")), ...(category ? { status: String(form.get("status")) } : {}) };
-    void mutate(async () => { await save(payload); if (!category) element.reset(); }, payload.status && payload.status !== category?.status ? `Изменить статус категории на ${payload.status}? Сервер проверит активные товары.` : undefined);
+    void mutate(async () => { await save(payload); if (!category) element.reset(); }, payload.status && payload.status !== category?.status ? `Изменить статус категории на ${categoryStatusLabels[payload.status] ?? "Статус уточняется"}? Сервер проверит активные товары.` : undefined);
   }}>
-    <h3>{category ? `${category.name} · ${category.status}` : "Новая категория"}</h3>
+    <h3>{category ? `${category.name} · ${categoryStatusLabels[category.status] ?? "Статус уточняется"}` : "Новая категория"}</h3>
     <Field label="Название категории"><input className={inputClass} name="name" required maxLength={120} defaultValue={category?.name} /></Field>
-    <Field label="Slug категории"><input className={inputClass} name="slug" maxLength={140} defaultValue={category?.slug} /></Field>
-    <Field label="Порядок категории"><input className={inputClass} name="sortOrder" type="number" required min={0} step={1} defaultValue={category?.sortOrder ?? 0} /></Field>
-    {category && <Field label="Статус категории"><select className={inputClass} name="status" defaultValue={category.status}><StatusOptions current={category.status} /></select></Field>}
+    <Field label="Адрес категории (slug)"><input className={inputClass} name="slug" maxLength={140} defaultValue={category?.slug} /></Field>
+    <Field label="Порядок в каталоге"><input className={inputClass} name="sortOrder" type="number" required min={0} step={1} defaultValue={category?.sortOrder ?? 0} /></Field>
+    {category && <Field label="Статус категории"><select className={inputClass} name="status" defaultValue={category.status}><StatusOptions current={category.status} labels={categoryStatusLabels} /></select></Field>}
     <button className={buttonClass}>{category ? "Сохранить категорию" : "Создать категорию"}</button>
   </form>;
 }

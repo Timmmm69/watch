@@ -40,9 +40,9 @@ test("keeps range on retry, renders N/A with coverage and distinct productivity 
   await expect.poll(() => queries.length).toBe(initialRequests + 1);
   fail = false;
   await page.getByRole("button", { name: "Обновить" }).click();
-  await expect(page.locator("dl > div").filter({ hasText: "Конверсия переходов в заказ" })).toContainText("50%");
-  await expect(page.locator("dl > div").filter({ hasText: "Заказов на переход" })).toContainText("1,5");
-  await expect(page.locator("dl > div").filter({ hasText: "Маржа покрытых товаров" })).toContainText("N/A");
+  await expect(page.locator("dl > div").filter({ hasText: "Заказы из переходов" })).toContainText("50%");
+  await expect(page.locator("dl > div").filter({ hasText: "Заказов на один переход" })).toContainText("1,5");
+  await expect(page.locator("dl > div").filter({ hasText: "Маржа покрытых товаров" })).toContainText("Нет данных");
   expect(queries.at(-1)).toBe(queries.at(-2));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByLabel("До даты, не включая (UTC)").fill("2026-08-01");
@@ -53,7 +53,7 @@ test("handles no-data periods and server permission revocation", async ({ page }
   let denied = false;
   await page.route("**/api/v1/admin/analytics/summary?*", route => route.fulfill(denied ? { status: 403, json: {} } :
     { json: { ...summary, orders: 0, referralTouches: 0 } }));
-  await page.goto("/admin/analytics"); await expect(page.getByText("В выбранном периоде нет заказов", { exact: false })).toBeVisible();
+  await page.goto("/admin/analytics"); await expect(page.getByText("За указанный период нет заказов", { exact: false })).toBeVisible();
   denied = true; await page.getByRole("button", { name: "Обновить" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("только администратору"); await expect(page.locator("dl")).toHaveCount(0);
 });

@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation";
 import type { AdminDashboard, AnalyticsSummary } from "../../../../packages/contracts/src/index";
 
-const percent = (value: number | null) => value === null ? "N/A" : `${(value * 100).toLocaleString("ru", { maximumFractionDigits: 1 })}%`;
-const number = (value: number | null) => value === null ? "N/A" : value.toLocaleString("ru", { maximumFractionDigits: 2 });
-const money = (value: number | null, currency: string) => value === null ? "N/A" :
+const percent = (value: number | null) => value === null ? "Нет данных" : `${(value * 100).toLocaleString("ru", { maximumFractionDigits: 1 })}%`;
+const number = (value: number | null) => value === null ? "Нет данных" : value.toLocaleString("ru", { maximumFractionDigits: 2 });
+const money = (value: number | null, currency: string) => value === null ? "Нет данных" :
   new Intl.NumberFormat("ru", { style: "currency", currency }).format(value / 100);
 const inputClass = "min-h-11 rounded border border-slate-600 bg-slate-900 p-2";
 
@@ -62,17 +62,17 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
   const cards: [string, string, string?][] = [];
   if (summary) {
     const s = summary;
-    cards.push(["Заказы", number(s.orders)], ["Оборот", money(s.gmvMinor, s.currency)],
+    cards.push(["Заказы", number(s.orders)], ["Сумма заказов", money(s.gmvMinor, s.currency)],
       ["Завершённые заказы с сохранёнными товарами", number(s.retainedCompletedOrders)],
-      ["Активные продавцы", number(s.activeSellingPartners)], ["Сохранённые заказы на активного продавца", number(s.retainedOrdersPerActivePartner)],
-      ["Реферальные переходы", number(s.referralTouches)], ["Конверсия переходов в заказ", percent(s.touchConversionRate)],
-      ["Заказов на переход", number(s.ordersPerTouch)], ["Доставка", percent(s.deliveryRate)],
+      ["Партнёры с продажами", number(s.activeSellingPartners)], ["Сохранённые заказы на активного продавца", number(s.retainedOrdersPerActivePartner)],
+      ["Переходы по партнёрским ссылкам", number(s.referralTouches)], ["Заказы из переходов", percent(s.touchConversionRate)],
+      ["Заказов на один переход", number(s.ordersPerTouch)], ["Доставка", percent(s.deliveryRate)],
       ["Отмены", percent(s.cancellationRate)], ["Неуспешная доставка", percent(s.deliveryFailureRate)], ["Возвраты", percent(s.returnRate)],
       ["Комиссии после возвратов", money(s.netPartnerCommissionMinor, s.currency)],
       ["До первой сохранённой продажи, дней", number(s.firstSale.averageSeconds === null ? null : s.firstSale.averageSeconds / 86400)],
       ["Покрытие расчёта settlement", percent(s.contribution.coverageRate)],
-      ["Маржа после settlement и комиссии", money(s.contribution.settlementMarginMinor, s.currency)],
-      ["Маржа покрытых товаров", money(s.contribution.coveredUnits > 0 ? s.contribution.coveredSettlementMarginMinor : null, s.currency)], ["Полная contribution", "N/A"]);
+      ["Маржа после расчёта с поставщиком и комиссии", money(s.contribution.settlementMarginMinor, s.currency)],
+      ["Маржа покрытых товаров", money(s.contribution.coveredUnits > 0 ? s.contribution.coveredSettlementMarginMinor : null, s.currency)], ["Полная contribution", "Нет данных"]);
   }
   if (operations) {
     const a = operations.actionable, s = operations.summaries;
@@ -89,9 +89,9 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
   return <main className="min-h-screen space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5">
       <Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/orders">Заказы</Link><Link href="/admin/returns">Возвраты</Link>
-      <Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Инвентарь</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/admin/catalog">Каталог</Link><Link href="/shop">Магазин</Link>
+      <Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Склад</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/admin/catalog">Каталог</Link><Link href="/shop">Магазин</Link>
     </nav>
-    <h1 className="text-2xl font-semibold">{dashboard ? "Обзор администратора" : "Аналитика"}</h1>
+    <h1 className="text-2xl font-semibold">{dashboard ? "Обзор" : "Аналитика"}</h1>
     {!dashboard && !blocked && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">
       <label className="grid gap-2">С даты (UTC)<input className={inputClass} type="date" required value={dates.from} onChange={e => setDates({ ...dates, from: e.target.value })} /></label>
       <label className="grid gap-2">До даты, не включая (UTC)<input className={inputClass} type="date" required value={dates.to} onChange={e => setDates({ ...dates, to: e.target.value })} /></label>
@@ -102,14 +102,14 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
     {loading && <div role="status" aria-label="Загрузка показателей" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-24 animate-pulse rounded bg-slate-800" />)}</div>}
     {!loading && !blocked && <>
-      {summary && summary.orders === 0 && summary.referralTouches === 0 && <p>В выбранном периоде нет заказов и реферальных переходов. Выберите другой период.</p>}
+      {summary && summary.orders === 0 && summary.referralTouches === 0 && <p>За указанный период нет заказов и переходов по ссылкам. Выберите другие даты.</p>}
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{cards.map(([label, value, href]) => <div key={label} className="rounded border border-slate-700 p-4">
         <dt>{href ? <Link className="underline" href={href}>{label}</Link> : label}</dt><dd className="mt-3 text-2xl">{value}</dd></div>)}</dl>
-      {summary && <section className="space-y-3"><h2 className="text-xl">Удержание партнёров по неделям</h2>
+      {summary && <section className="space-y-3"><h2 className="text-xl">Возвращаемость партнёров по неделям</h2>
         <p>Полные соседние недели в часовом поясе {summary.timezone}. Активность учитывает право на комиссию на момент заказа.</p>
-        {summary.weeklyRetention.length === 0 && <p>Для удержания выберите период с двумя полными неделями.</p>}
+        {summary.weeklyRetention.length === 0 && <p>Выберите период, который включает не менее двух полных недель.</p>}
         {summary.weeklyRetention.map(w => <p key={w.week}>{w.week}: {percent(w.rate)} · {w.retainedPartners} из {w.activePartners}</p>)}
-        <p>Заказы сгруппированы по дате создания. Переходы — по дате перехода; учитываются заказы до истечения перехода, включая заказы вне периода. N/A означает отсутствие знаменателя или данных о расходах.</p>
+        <p>Заказы сгруппированы по дате создания. Переходы — по дате перехода; учитываются заказы до истечения перехода, включая заказы вне периода. «Нет данных» означает, что показатель нельзя рассчитать из имеющихся сведений.</p>
         <p>Первая продажа: от первого принятия условий до первого сохранённого завершённого заказа; учитываются первые продажи, завершённые в периоде ({summary.firstSale.partners}).</p>
         <p>Маржа рассчитана только по сохранённым товарам завершённых заказов с settlement. Полная contribution недоступна до определения переменных расходов U04.</p>
       </section>}

@@ -90,7 +90,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     });
     const act = async (name: string) => {
       await page.getByRole("button", { name,exact: true }).click();
-      await page.getByRole("button", { name: "Да, подтвердить",exact: true }).click();
+      await page.getByRole("button", { name: "Подтвердить действие",exact: true }).click();
       await expect(page.getByLabel("Подтверждение действия")).toHaveCount(0);
       await expect(page.getByLabel("Загрузка заказов")).toHaveCount(0);
     };
@@ -98,7 +98,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     else {
       if (outcome === "delivered") {
         await page.getByRole("button", { name: "Подтвердить заказ",exact: true }).click();
-        await page.getByRole("button", { name: "Да, подтвердить",exact: true }).click();
+        await page.getByRole("button", { name: "Подтвердить действие",exact: true }).click();
         await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
       }
       await act("Подтвердить заказ"); await act("Начать сборку"); await act("Подтвердить отправку");

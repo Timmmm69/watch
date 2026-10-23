@@ -40,7 +40,7 @@ test("list preserves filters through a failed read and retry, shows empty and pa
   await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
   await expect(page.getByLabel("Статус")).toHaveValue("REJECTED");
   await page.getByRole("button", { name: "Обновить", exact: true }).click();
-  await expect(page.getByText("Возвратов по выбранным фильтрам нет.", { exact: false })).toBeVisible();
+  await expect(page.getByText("По выбранным условиям возвратов нет.", { exact: false })).toBeVisible();
 });
 test("detail shows items and preview, cancels REQUESTED Return with confirmation and CSRF", async ({ page }) => {
   const submissions: unknown[] = [];
@@ -55,10 +55,10 @@ test("detail shows items and preview, cancels REQUESTED Return with confirmation
   });
   await page.goto(`/admin/returns/${returnId}`);
   await expect(page.getByText("Повреждён", { exact: true })).toBeVisible();
-  await expect(page.getByText("Предполагаемый возврат комиссии", { exact: false })).toBeVisible();
+  await expect(page.getByText("Ожидаемое уменьшение комиссии", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Отклонить возврат", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Подтверждение отклонения возврата" })).toBeVisible();
-  await page.getByRole("button", { name: "Да, отклонить возврат" }).click();
+  await expect(page.getByRole("region", { name: "Отклонение возврата" })).toBeVisible();
+  await page.getByRole("region", { name: "Отклонение возврата" }).getByRole("button", { name: "Отклонить возврат", exact: true }).click();
   await expect(page.getByText("Отклонён", { exact: false })).toBeVisible();
   expect(submissions).toEqual([{}]);
   await expect(page.getByRole("button", { name: "Отклонить возврат", exact: true })).toHaveCount(0);
@@ -81,11 +81,11 @@ test("completion confirms exact reversal, preserves note after failure and hides
   const confirmation = page.getByRole("region", { name: "Подтверждение завершения возврата" });
   await expect(confirmation).toContainText("задолженность партнёра");
   await page.getByLabel("Комментарий (необязательно)").fill("Принято");
-  await page.getByRole("button", { name: "Да, завершить возврат" }).click();
+  await confirmation.getByRole("button", { name: "Завершить возврат", exact: true }).click();
   await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
   await page.getByRole("button", { name: "Завершить возврат", exact: true }).click();
   await expect(page.getByLabel("Комментарий (необязательно)")).toHaveValue("Принято");
-  await page.getByRole("button", { name: "Да, завершить возврат" }).click();
+  await confirmation.getByRole("button", { name: "Завершить возврат", exact: true }).click();
   await expect(page.getByText("Возвращённая комиссия", { exact: false })).toBeVisible();
   await expect(page.getByText("Комментарий: Принято")).toBeVisible();
   await expect(page.getByRole("button", { name: "Завершить возврат", exact: true })).toHaveCount(0);
@@ -109,8 +109,8 @@ test("create loads a DELIVERED Order via preset, previews the effect and submits
   await expect(page.getByText("Заказ W-0123456789AB", { exact: false })).toBeVisible();
   await page.getByLabel("Количество к возврату").fill("1");
   await page.getByLabel("Причина возврата").fill("Брак при доставке");
-  await expect(page.getByText("Предполагаемый возврат комиссии", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Создать возврат" }).click();
+  await expect(page.getByText("Ожидаемое уменьшение комиссии", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Зарегистрировать возврат" }).click();
   expect(submissions).toEqual([{ orderId: id, reason: "Брак при доставке", items: [{ orderItemId, quantity: 1 }] }]);
   await expect(page.getByText("Брак при доставке", { exact: true })).toBeVisible();
 });
@@ -120,15 +120,15 @@ test("create rejects non-DELIVERED Orders and quantity overruns without losing t
   await page.route("**/api/v1/admin/returns", (route) => route.fulfill({ status: 409, json: { error: { code: "RETURN_QUANTITY_EXCEEDED" } } }));
   await page.route("**/api/v1/admin/returns?**", (route) => route.fulfill({ json: { items: [], total: 0, page: 1, limit: 20 } }));
   await page.goto("/admin/returns");
-  await expect(page.getByRole("button", { name: "Загрузить заказ" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Найти заказ" })).toBeVisible();
   await page.getByLabel("ID заказа", { exact: true }).last().fill(id);
-  await page.getByRole("button", { name: "Загрузить заказ" }).click();
+  await page.getByRole("button", { name: "Найти заказ" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("после отправки");
   await page.route(`**/api/v1/admin/orders/${id}`, (route) => route.fulfill({ json: order }));
-  await page.getByRole("button", { name: "Загрузить заказ" }).click();
+  await page.getByRole("button", { name: "Найти заказ" }).click();
   await page.getByLabel("Количество к возврату").fill("1");
   await page.getByLabel("Причина возврата").fill("Брак");
-  await page.getByRole("button", { name: "Создать возврат" }).click();
+  await page.getByRole("button", { name: "Зарегистрировать возврат" }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Превышено доступное к возврату количество");
   await expect(page.getByLabel("Причина возврата")).toHaveValue("Брак");
   await expect(page.getByLabel("Количество к возврату")).toHaveValue("1");
