@@ -68,7 +68,7 @@ test("non-partner sees explanation and does not request finance", async ({ page 
   let requested = false;
   await page.route("**/api/v1/partner/earnings?*", () => { requested = true; });
   await page.goto("/partner/earnings");
-  await expect(page.locator("main").getByRole("alert")).toContainText("Доходы доступны участникам партнёрской программы");
+  await expect(page.locator("main").getByRole("alert")).toContainText("Начисления доступны только партнёрам");
   expect(requested).toBe(false);
 });
 

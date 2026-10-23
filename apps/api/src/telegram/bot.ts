@@ -51,30 +51,30 @@ export async function processTelegramUpdate(pool: Pool, payload: unknown, config
   const partner = !!user?.partner_status;
   const blocked = user?.partner_status === "BLOCKED";
   const button = (text: string, path: string) => ({ text, web_app: { url: new URL(path, config.appBaseUrl).toString() } });
-  const history = [button("Заказы", partner ? "/partner/orders" : "/orders")];
+  const history = [button("История заказов", partner ? "/partner/orders" : "/orders")];
   const menu = user?.is_blocked ? [] : partner
     ? blocked
-      ? [[button("Партнёрский кабинет", "/partner")], history, [button("Доходы", "/partner/earnings")]]
-      : [[button("Партнёрский кабинет", "/partner")], [button("Партнёрский каталог", "/shop")], history,
-        [button("Доходы", "/partner/earnings")], [button("Открыть магазин", "/shop")]]
-    : [[button("Стать партнёром", "/partner/onboarding")], [button("Открыть магазин", "/shop")]];
+      ? [[button("Кабинет партнёра", "/partner")], history, [button("Доходы", "/partner/earnings")]]
+      : [[button("Кабинет партнёра", "/partner")], [button("Каталог товаров", "/shop")], history,
+        [button("Доходы", "/partner/earnings")], [button("Каталог товаров", "/shop")]]
+    : [[button("Стать партнёром", "/partner/onboarding")], [button("Каталог товаров", "/shop")]];
   let text = "Делитесь товарами и получайте комиссию за завершённые заказы. Примите условия в приложении, чтобы стать партнёром.";
   let keyboard = menu;
   if (partner) text = "Откройте партнёрский кабинет, каталог, историю заказов или доходы.";
-  if (command === "/help") text = `Бот помогает открыть магазин, заказы и партнёрский кабинет. Поддержка: ${config.supportContact}`;
+  if (command === "/help") text = `Здесь можно открыть каталог, заказы и кабинет партнёра. Поддержка: ${config.supportContact}`;
   if (command === "/catalog") {
-    text = partner ? "Партнёрский каталог в приложении." : "Каталог магазина в приложении.";
-    keyboard = [[button(partner ? "Просмотреть каталог" : "Открыть магазин", "/shop")]];
+    text = partner ? "Каталог товаров доступен в приложении." : "Откройте каталог товаров в приложении.";
+    keyboard = [[button(partner ? "Просмотреть каталог" : "Каталог товаров", "/shop")]];
   }
-  if (command === "/orders") { text = "История заказов в приложении."; keyboard = [history]; }
+  if (command === "/orders") { text = "Посмотреть историю заказов можно в приложении."; keyboard = [history]; }
   if (command === "/balance" && partner) {
-    text = "Доходы и история начислений в приложении.";
+    text = "Ожидаемые и доступные начисления, а также их история находятся в приложении.";
     keyboard = [[button("Доходы", "/partner/earnings")]];
   }
   if (command === "/balance" && !partner) keyboard = [[button("Стать партнёром", "/partner/onboarding")]];
-  if (blocked) text = `Партнёрский аккаунт заблокирован. Доступен только просмотр, продажи и новые ссылки недоступны. ${text}`;
+  if (blocked) text = `Партнёрский аккаунт заблокирован. Можно просматривать историю, но нельзя создавать ссылки или запрашивать выплаты. ${text}`;
   if (user?.is_blocked) {
-    text = "Доступ к приложению ограничен. Обратитесь в поддержку.";
+    text = "Ваш аккаунт заблокирован. По вопросам доступа обратитесь в поддержку.";
     keyboard = [];
   }
   if (command !== "/help" || user?.is_blocked) text += ` Поддержка: ${config.supportContact}`;

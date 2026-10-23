@@ -4,10 +4,10 @@ import { createHash } from "node:crypto";
 export const fixturePolicy = "Acceptance fixture: manual fulfilment PII retention and redaction runbook.";
 export function productionApprovalFixture(env) {
   return {
-    schemaVersion: 2, releaseSha: env.RELEASE_TAG, approvedBy: "Acceptance runner", approvedAt: "2026-01-01T00:00:00.000Z",
+    schemaVersion: 3, releaseSha: env.RELEASE_TAG, approvedBy: "Acceptance runner", approvedAt: "2026-01-01T00:00:00.000Z",
     operatingModel: env.INVENTORY_PROVIDER === "native" ? {
-      inventoryProvider: "native", orderFlow: "DROPSHIPPER_MARKUP", recipientTelegramRequired: false,
-      ownerReceives: "R", remuneration: "R_MINUS_D", termsCoverRecipientData: true,
+      inventoryProvider: "native", orderFlow: "REFERRAL_BUYER_FIXED", recipientTelegramRequired: false,
+      ownerReceives: "RETAIL", remuneration: "FIXED_SKU", termsCoverRecipientData: true,
     } : { inventoryProvider: "google_sheets", orderFlow: "LEGACY_BUYER_FIXED" },
     appBaseUrl: env.APP_BASE_URL, supportContact: env.SUPPORT_CONTACT,
     fulfilment: { accepted: true, mode: "MANUAL", onlinePayment: false, fields: "NAME_PHONE_ADDRESS_OPTIONAL_COMMENT", statusOperator: "Acceptance operator", overdueSeconds: Number(env.ORDER_OVERDUE_SECONDS) },

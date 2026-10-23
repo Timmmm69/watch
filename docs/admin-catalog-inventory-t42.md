@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # T42 — Admin Catalog and Inventory
 
 > New requirements, 2026-10-14: FULL_BUILD_SPEC.md Section 30 replaces live Sheets authority and fixed catalog commissions for new dropshipping Orders. The existing UI below is reusable implementation, but does not yet provide native stock movements or D/R/cost/remuneration pricing. T46–T51 must align it before production certification.

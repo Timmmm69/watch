@@ -36,7 +36,7 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
     await page.screenshot({path:"../../outputs/t51/owner-mobile.png",fullPage:true});
     await page.getByRole("region",{name:"Товары (SKU)",exact:true}).screenshot({path:"../../outputs/t51/sku-mobile.png"});
     await page.setViewportSize({width:1440,height:1000});
-    await page.getByRole("region",{name:"Дропшипперы",exact:true}).screenshot({path:"../../outputs/t51/drops-desktop.png"});
+    await page.getByRole("region",{name:"Партнёры",exact:true}).screenshot({path:"../../outputs/t51/drops-desktop.png"});
   });
   test("opens exact unpaid queue then existing Order/finance form; refreshed payment clears the queue",async({page})=>{
     await page.goto("/admin"); await page.getByRole("link",{name:"Недостающая оплата после доставки",exact:true}).click();
@@ -56,7 +56,7 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
     await page.getByLabel("С даты (Минск)",{exact:true}).fill("2026-10-01");await page.getByLabel("До даты, не включая (Минск)").fill("2026-10-02");
     fail=true;await page.getByRole("button",{name:"Применить",exact:true}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось загрузить");
     fail=false;await page.getByRole("button",{name:"Обновить",exact:true}).click();
-    await expect(page.getByText("В выбранном периоде нет новых заказов дропшипперов.")).toBeVisible();
+    await expect(page.getByText("В выбранном периоде нет новых заказов.")).toBeVisible();
     expect(urls.at(-1)).toBe(urls.at(-2));const query=new URL(urls.at(-1)!).searchParams;
     expect(query.get("from")).toBe("2026-10-01T00:00:00+03:00");expect(query.get("to")).toBe("2026-10-02T00:00:00+03:00");
     await page.getByLabel("До даты, не включая (Минск)").fill("2026-09-01");await page.getByRole("button",{name:"Применить",exact:true}).click();

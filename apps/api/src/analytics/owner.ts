@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { ownerReportSchema, ownerWorkSchema, type AnalyticsQuery, type OwnerQueue,
   type OwnerReport, type OwnerWork } from "@watch/contracts";
+import { usesNativeInventory } from "../inventory/native.js";
 import { commissionPayable } from "../finance/coverage.js";
 
 // Shared by counter and paginated queue: no UI-only approximation of membership.
@@ -8,7 +9,7 @@ const workFacts = `WITH stock AS (
   SELECT v.id,p.id AS product_id,v.sku,p.title,i.*,
     COALESCE((SELECT sum(r.quantity) FROM inventory_reservations r WHERE r.variant_id=v.id AND r.status='ACTIVE'),0) AS reserved
   FROM product_variants v JOIN products p ON p.id=v.product_id LEFT JOIN inventory_items i ON i.variant_id=v.id),
-  retained AS (SELECT oi.order_id,sum(oi.customer_unit_price_minor::bigint*(oi.quantity-COALESCE((
+  retained AS (SELECT oi.order_id,sum(oi.unit_price_minor::bigint*(oi.quantity-COALESCE((
     SELECT sum(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id
     WHERE ri.order_item_id=oi.id AND r.status='COMPLETED'),0))) AS sales FROM order_items oi GROUP BY oi.order_id),
   cash AS (SELECT order_id,sum(amount_minor) AS amount FROM order_money_entries GROUP BY order_id),
@@ -20,18 +21,18 @@ const workSelects: Record<OwnerQueue, string> = {
   overdue: `SELECT o.id::text,o.public_number AS label,o.status::text AS detail,'/admin/orders/'||o.id AS href
     FROM orders o WHERE o.status IN ('PLACED','CONFIRMED','FULFILLING','SHIPPED')
     AND COALESCE(o.shipped_at,o.fulfilling_at,o.confirmed_at,o.created_at)<=now()-$1::int*interval '1 second'
-    AND NOT(o.economic_regime='DROPSHIP_MARKUP' AND o.status='SHIPPED'
+    AND NOT(order_uses_native_inventory(o.id) AND o.status='SHIPPED'
       AND NOT EXISTS(SELECT 1 FROM order_items i WHERE i.order_id=o.id AND i.quantity>COALESCE((
         SELECT sum(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id
         WHERE ri.order_item_id=i.id AND r.status='COMPLETED'),0)))`,
   unpaid: `SELECT o.id::text,o.public_number AS label,'Недостающее покрытие: '||
     (r.sales-COALESCE(c.amount,0)+COALESCE(d.amount,0))::text||' коп.' AS detail,'/admin/orders/'||o.id AS href
     FROM orders o JOIN retained r ON r.order_id=o.id LEFT JOIN cash c ON c.order_id=o.id LEFT JOIN owed d ON d.order_id=o.id
-    WHERE o.economic_regime='DROPSHIP_MARKUP' AND o.status IN ('DELIVERED','COMPLETED')
+    WHERE order_uses_native_inventory(o.id) AND o.status IN ('DELIVERED','COMPLETED')
     AND COALESCE(c.amount,0)-COALESCE(d.amount,0)<r.sales`,
   returns: `SELECT r.id::text,o.public_number AS label,r.status::text||' · '||r.reason AS detail,'/admin/returns/'||r.id AS href
     FROM returns r JOIN orders o ON o.id=r.order_id WHERE r.status='REQUESTED' OR (r.status='COMPLETED'
-    AND o.economic_regime='DROPSHIP_MARKUP' AND (EXISTS(SELECT 1 FROM return_items ri WHERE ri.return_id=r.id
+    AND order_uses_native_inventory(o.id) AND (EXISTS(SELECT 1 FROM return_items ri WHERE ri.return_id=r.id
       AND ri.quantity>COALESCE((SELECT sum(m.quantity) FROM inventory_movements m WHERE m.return_item_id=ri.id
         AND m.kind IN ('RETURN_INSPECTION','SHIPMENT_LOSS')),0)) OR EXISTS(SELECT 1 FROM customer_obligations d
       WHERE d.return_id=r.id AND d.kind='RETURN_REFUND' AND d.amount_minor+COALESCE((SELECT sum(m.amount_minor)
@@ -99,7 +100,8 @@ export class OwnerAnalyticsService {
         LEFT JOIN LATERAL(SELECT sum(amount_minor) AS total,count(*) AS entries FROM order_direct_expenses WHERE order_id=o.id) e ON true
         LEFT JOIN LATERAL(SELECT * FROM order_expense_reviews WHERE order_id=o.id ORDER BY created_at DESC,id DESC LIMIT 1) review ON true
         WHERE o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz ORDER BY o.created_at,o.id`, [query.from,query.to])).rows;
-      const lines = (await client.query<Line & { order_id: string }>(`SELECT i.*,
+      const lines = (await client.query<Line & { order_id: string }>(`SELECT i.*,i.unit_price_minor AS customer_unit_price_minor,
+        i.unit_price_minor-CASE WHEN o.commission_eligible_snapshot THEN i.partner_commission_unit_snapshot_minor ELSE 0 END AS dropship_unit_price_minor,
         COALESCE((SELECT sum(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id
           WHERE ri.order_item_id=i.id AND r.status='COMPLETED'),0)::text AS returned,
         COALESCE(m.inspected,0)::text AS inspected,COALESCE(m.recovered,0)::text AS recovered,
@@ -110,7 +112,7 @@ export class OwnerAnalyticsService {
           bool_or(m.saleable_quantity>0 AND m.saleable_cost_minor IS NULL) AS unknown
           FROM inventory_movements m JOIN return_items ri ON ri.id=m.return_item_id
           WHERE ri.order_item_id=i.id AND m.kind IN ('RETURN_INSPECTION','SHIPMENT_LOSS')) m ON true
-        WHERE o.economic_regime='DROPSHIP_MARKUP' AND o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz
+        WHERE order_uses_native_inventory(o.id) AND o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz
         ORDER BY i.order_id,i.id`, [query.from,query.to])).rows;
       const stock = (await client.query(`${workFacts} SELECT id,product_id,sku,title,native_on_hand,native_initialization_id,
         reserved::text,GREATEST(0,native_on_hand-reserved-safety_buffer)::text AS sellable FROM stock`, [])).rows;
@@ -139,7 +141,7 @@ export class OwnerAnalyticsService {
       const cohort=result(), details: OwnerReport["orders"]=[];
       const byOrder = new Map<string,Line[]>();
       for (const l of lines) { const list=byOrder.get(l.order_id) ?? []; list.push(l); byOrder.set(l.order_id,list); }
-      for (const o of orders.filter(o=>o.economic_regime==='DROPSHIP_MARKUP')) {
+      for (const o of orders.filter(o=>usesNativeInventory(o))) {
         const items=byOrder.get(o.id) ?? [];
         // T49 keeps refused native Orders SHIPPED, without a false delivery or a
         // new DELIVERY_FAILED transition. Completed full Returns close their outcome.
@@ -173,7 +175,7 @@ export class OwnerAnalyticsService {
         }
         const known=closed && limitations.size===0 ? value : null;
         for (const [id,amount] of skuValues) addContribution(skus.get(id)!.contribution,closed,known===null ? null : amount);
-        for (const group of [cohort,drops.get(o.partner_id_snapshot)!]) {
+        for (const group of [cohort,...(o.partner_id_snapshot ? [drops.get(o.partner_id_snapshot)!] : [])]) {
           group.orders++; group.createdValueRMinor+=o.total_minor;
           if (!closed) group.unfinishedOrders++;
           if (o.delivered_at) group.deliveredOrders++;
@@ -194,7 +196,7 @@ export class OwnerAnalyticsService {
           contributionMinor:known,limitations:[...limitations] });
       }
       for (const group of [cohort,...drops.values()]) {
-        const ids=orders.filter(o=>o.economic_regime==='DROPSHIP_MARKUP' && o.delivered_at &&
+        const ids=orders.filter(o=>usesNativeInventory(o) && o.delivered_at &&
           (!('partnerId' in group) || group.partnerId===o.partner_id_snapshot)).map(o=>o.id);
         const returned=ids.filter(id=>(byOrder.get(id)??[]).some(i=>Number(i.returned)>0)).length;
         group.returnRate=ids.length ? returned/ids.length : null;
@@ -205,14 +207,14 @@ export class OwnerAnalyticsService {
       const flow=(await client.query(`SELECT count(*)::int AS orders,COALESCE(sum((SELECT sum(i.quantity-COALESCE((
         SELECT sum(ri.quantity) FROM return_items ri JOIN returns r ON r.id=ri.return_id WHERE ri.order_item_id=i.id
           AND r.status='COMPLETED' AND r.updated_at<=o.delivered_at),0)) FROM order_items i WHERE i.order_id=o.id)),0)::text AS units
-        FROM orders o WHERE o.economic_regime='DROPSHIP_MARKUP' AND o.delivered_at >= $1::timestamptz AND o.delivered_at < $2::timestamptz`,[query.from,query.to])).rows[0];
+        FROM orders o WHERE order_uses_native_inventory(o.id) AND o.delivered_at >= $1::timestamptz AND o.delivered_at < $2::timestamptz`,[query.from,query.to])).rows[0];
       const cash=(await client.query(`SELECT COALESCE(sum(m.amount_minor) FILTER(WHERE m.kind='RECEIPT'),0)::text AS receipts,
         COALESCE(-sum(m.amount_minor) FILTER(WHERE m.kind='REFUND'),0)::text AS refunds,
         COALESCE(sum(m.amount_minor) FILTER(WHERE m.kind='CORRECTION'),0)::text AS corrections,COALESCE(sum(m.amount_minor),0)::text AS net
-        FROM order_money_entries m JOIN orders o ON o.id=m.order_id WHERE o.economic_regime='DROPSHIP_MARKUP'
+        FROM order_money_entries m JOIN orders o ON o.id=m.order_id WHERE order_uses_native_inventory(o.id)
         AND m.occurred_at >= $1::timestamptz AND m.occurred_at < $2::timestamptz`,[query.from,query.to])).rows[0];
       return ownerReportSchema.parse({ ...query,timezone:'Europe/Minsk',currency:this.currency,asOf:asOf.toISOString(),
-        legacyOrdersExcluded:orders.filter(o=>o.economic_regime!=='DROPSHIP_MARKUP').length,queues,overdueConfigured:this.overdueSeconds!==undefined,
+        legacyOrdersExcluded:orders.filter(o=>!usesNativeInventory(o)).length,queues,overdueConfigured:this.overdueSeconds!==undefined,
         cohort,obligations:totals,deliveries:{orders:flow.orders,units:Number(flow.units)},
         cash:{receiptsMinor:Number(cash.receipts),refundsMinor:Number(cash.refunds),correctionsMinor:Number(cash.corrections),netMinor:Number(cash.net)},
         skus:[...skus.values()].sort((a,b)=>b.retainedUnits-a.retainedUnits || a.sku.localeCompare(b.sku)),drops:[...drops.values()],orders:details });

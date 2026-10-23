@@ -29,7 +29,7 @@ describe.skipIf(!pool)("Admin notification authority against PostgreSQL", () => 
     const config = { appBaseUrl: "https://app.example", supportContact: "@support", botUsername: "watch_bot", adminTelegramIds };
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool!, event, config, send);
-    expect(send).toHaveBeenCalledExactlyOnceWith(telegramIds[0], expect.stringContaining("Ошибка синхронизации"));
+    expect(send).toHaveBeenCalledExactlyOnceWith(telegramIds[0], expect.stringContaining("Не удалось обновить остатки"));
     // No auth/mirror sync occurs between the config revocation and dispatch.
     adminTelegramIds.delete(telegramIds[0]!); send.mockClear();
     await dispatchEvent(pool!, event, config, send);

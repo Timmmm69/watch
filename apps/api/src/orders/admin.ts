@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { reconcileOverpayment } from "../finance/coverage.js";
 import type { Pool, PoolClient } from "pg";
 import { CommissionError, holdOrderCommissions, reverseOrderCommissions } from "../finance/commissions.js";
-import { NativeInventoryService, type NativeReservation } from "../inventory/native.js";
+import { NativeInventoryService, usesNativeInventory, type NativeReservation } from "../inventory/native.js";
 import { allowedAdminOrderTransitions, allowedReservationTargets, reservationReconcileSchema,
   type ReservationReconcileRequest, type AdminOrderListQuery, type OrderStatus } from "@watch/contracts";
 
@@ -16,7 +16,7 @@ interface OrderRow {
   created_at: Date; updated_at: Date; confirmed_at: Date | null; fulfilling_at: Date | null; shipped_at: Date | null;
   delivered_at: Date | null; completed_at: Date | null; cancelled_at: Date | null; delivery_failed_at: Date | null;
   completion_eligible_at: Date | null;
-  economic_regime: string;
+  economic_regime: string; inventory_mode?: string | null;
 }
 const timestampColumns = {
   CONFIRMED: "confirmed_at", FULFILLING: "fulfilling_at", SHIPPED: "shipped_at", DELIVERED: "delivered_at",
@@ -30,7 +30,7 @@ export class AdminOrderService {
   private project(row: OrderRow, now = new Date()) {
     const stateAt = row.shipped_at ?? row.fulfilling_at ?? row.confirmed_at ?? row.created_at;
     return { id: row.id, publicNumber: row.public_number, status: row.status, currency: row.currency, totalMinor: row.total_minor,
-      economicRegime: row.economic_regime,
+      economicRegime: row.economic_regime, nativeInventory: usesNativeInventory(row),
       partnerIdSnapshot: row.partner_id_snapshot, attributionTouchId: row.attribution_touch_id,
       commissionEligibleSnapshot: row.commission_eligible_snapshot,
       createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
@@ -83,7 +83,7 @@ export class AdminOrderService {
       i.last_successful_sync_run_id AS "lastSuccessfulSyncRunId"
       FROM inventory_reservations r LEFT JOIN inventory_items i ON i.variant_id=r.variant_id WHERE r.order_id=$1 ORDER BY r.id`, [id])).rows;
     return { ...this.project(row), fulfillment, items, reservations: reservations.map((reservation) => ({ ...reservation,
-      allowedManualTargets: this.reconciliationMode === "MANUAL" && reservation.economic_regime === "LEGACY_FIXED" && reservation.status === "ACTIVE"
+      allowedManualTargets: this.reconciliationMode === "MANUAL" && !usesNativeInventory(row) && reservation.economic_regime === "LEGACY_FIXED" && reservation.status === "ACTIVE"
         ? allowedReservationTargets[row.status] : [] })) };
   }
 
@@ -98,9 +98,10 @@ export class AdminOrderService {
       // Immutable ownership lookup only; business locks are always Order → Reservation → InventoryItem.
       const owner = (await client.query<{ order_id: string }>("SELECT order_id FROM inventory_reservations WHERE id=$1", [id])).rows[0];
       if (!owner) throw new OrderTransitionError("NOT_FOUND");
-      const order = (await client.query<{ status: OrderStatus }>("SELECT status FROM orders WHERE id=$1 FOR UPDATE", [owner.order_id])).rows[0];
+      const order = (await client.query<OrderRow>("SELECT * FROM orders WHERE id=$1 FOR UPDATE", [owner.order_id])).rows[0];
       const reservation = (await client.query("SELECT * FROM inventory_reservations WHERE id=$1 FOR UPDATE", [id])).rows[0];
       if (!order || !reservation) throw new OrderTransitionError("INTERNAL_INVARIANT_VIOLATION");
+      if (usesNativeInventory(order)) throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
       if (reservation.economic_regime !== "LEGACY_FIXED") throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
       if (!allowedReservationTargets[order.status].includes(data.target)) throw new OrderTransitionError("INVALID_ORDER_TRANSITION");
       if (reservation.status !== "ACTIVE") {
@@ -139,7 +140,7 @@ export class AdminOrderService {
       const owner = (await client.query<OrderRow>("SELECT * FROM orders WHERE id=$1", [id])).rows[0];
       if (owner?.partner_id_snapshot) await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [owner.partner_id_snapshot]);
       const inventory = new NativeInventoryService(this.pool);
-      const nativeStockChange = owner?.economic_regime === "DROPSHIP_MARKUP" && ["SHIPPED", "CANCELLED"].includes(target);
+      const nativeStockChange = !!owner && usesNativeInventory(owner) && ["SHIPPED", "CANCELLED"].includes(target);
       if (nativeStockChange) {
         const ids = (await client.query<{ variant_id: string }>("SELECT variant_id FROM order_items WHERE order_id=$1", [id])).rows;
         await inventory.lockCatalog(client, ids.map(item => item.variant_id));
@@ -180,7 +181,7 @@ export class AdminOrderService {
         ${target === "DELIVERED" ? ",completion_eligible_at=$4" : ""} WHERE id=$1 RETURNING *`,
       [id, target, now, ...(target === "DELIVERED" ? [new Date(now.getTime() + this.holdDays * 86400000)] : [])])).rows[0]!;
       if (target === "DELIVERED") await holdOrderCommissions(client,id,updated.completion_eligible_at!,now);
-      if (target === "CANCELLED" && row.economic_regime === "DROPSHIP_MARKUP") await reconcileOverpayment(client,id,actorUserId,now);
+      if (target === "CANCELLED" && usesNativeInventory(row)) await reconcileOverpayment(client,id,actorUserId,now);
       if (target === "CANCELLED")
         await reverseOrderCommissions(client,id,`order:${id}:${target.toLowerCase()}`,now);
       await this.event(client, id, "ORDER_STATUS_CHANGED", `order:${id}:status:${target}`,

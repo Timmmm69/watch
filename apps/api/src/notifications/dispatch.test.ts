@@ -106,7 +106,7 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1",telegram_user_id: "111" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool,event(`PAYOUT_${status}`,{ v: 1,payoutId: "payout",partnerId: "partner",amountMinor: 5000,status }),config,send);
-    expect(send).toHaveBeenCalledExactlyOnceWith("111",expect.stringContaining(`50.00 BYN ${label}`));
+    expect(send).toHaveBeenCalledExactlyOnceWith("111",expect.stringContaining(`50.00 BYN: ${label}`));
     expect(send).toHaveBeenCalledWith("111",expect.stringContaining("/partner/payouts"));
     expect(pool.queries.some((query) => query.sql.includes("is_admin = true"))).toBe(false);
   });
@@ -126,7 +126,7 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("PARTNER_ACTIVATED", { partnerId: "p1" }), config, send);
-    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Поздравляем"));
+    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Партнёрский аккаунт создан."));
   });
 
   it("notifies partner and admin on ORDER_CREATED", async () => {
@@ -138,9 +138,9 @@ describe("dispatchEvent", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("ORDER_CREATED", { orderId: "o1", publicNumber: "W-ABC", partnerIdSnapshot: "p1", commissionEligibleSnapshot: true }), config, send);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Новый заказ W-ABC"));
+    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Новый заказ № W-ABC"));
     expect(send).toHaveBeenCalledWith("111", expect.not.stringContaining("по вашей ссылке"));
-    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Новый заказ W-ABC"));
+    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Новый заказ № W-ABC"));
   });
 
   it.each(["CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"])("notifies buyer on ORDER_STATUS_CHANGED to %s", async (toStatus) => {
@@ -207,7 +207,7 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("INVENTORY_SYNC_FAILED", { runId: "r1", providerKey: "google_sheets" }), config, send);
-    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Ошибка синхронизации"));
+    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Не удалось обновить остатки"));
   });
 
   it("sets bot_can_message=false on BlockedError and does not throw", async () => {

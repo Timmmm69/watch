@@ -31,18 +31,18 @@ test("new Telegram user explicitly accepts current Terms, becomes Partner and re
   await page.goto("/");
   await expect(page).toHaveURL(/\/shop$/);
   await page.getByRole("link", { name: "Стать партнёром" }).click();
-  await expect(page.getByRole("article", { name: "Текст Partner Terms" })).toContainText(terms.contentMarkdown);
+  await expect(page.getByRole("article", { name: "Условия партнёрской программы" })).toContainText(terms.contentMarkdown);
   await expect(page.getByRole("button", { name: "Стать партнёром", exact: true })).toBeDisabled();
   expect(submissions).toHaveLength(0);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Стать партнёром", exact: true }).click();
   await expect(page).toHaveURL(/\/partner$/);
-  await expect(page.getByRole("heading", { name: "Партнёрский кабинет" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Кабинет партнёра" })).toBeVisible();
   await expect(page.getByText(/W-1/)).toBeVisible();
   expect(submissions).toEqual([{ documentId: terms.id, documentVersion: terms.version, accept: true }]);
   expect(launches).toEqual(["fresh-signed"]);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Партнёрский кабинет" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Кабинет партнёра" })).toBeVisible();
   expect(launches).toEqual(["fresh-signed"]);
 });
 
@@ -60,8 +60,8 @@ test("blocked Partner reads history and cannot generate links", async ({ page })
   let requests = 0;
   await page.route("**/api/v1/partner/referral-links", (route) => { requests++; return route.fulfill({ json: { url: "https://t.me/example" } }); });
   await page.goto("/partner");
-  await expect(page.getByText(/Доступен только просмотр истории/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Получить ссылку" })).toBeDisabled();
+  await expect(page.getByText(/История доступна/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Получить ссылку на магазин" })).toBeDisabled();
   await expect(page.getByText(/W-1/)).toBeVisible();
   expect(requests).toBe(0);
 });
@@ -75,13 +75,13 @@ test("reaccept preserves Partner and enables generic link without duplicate fina
     return route.fulfill({ json: { url: "https://t.me/watch?startapp=r_generic" } });
   });
   await page.goto("/partner");
-  await expect(page.getByRole("button", { name: "Получить ссылку" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Получить ссылку на магазин" })).toBeDisabled();
   await expect(page.getByText("Продаж пока нет")).toBeVisible();
   const initialFinanceReads = financeReads;
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Принять новые условия", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Получить ссылку" })).toBeEnabled();
-  await page.getByRole("button", { name: "Получить ссылку" }).click();
+  await expect(page.getByRole("button", { name: "Получить ссылку на магазин" })).toBeEnabled();
+  await page.getByRole("button", { name: "Получить ссылку на магазин" }).click();
   await expect(page.getByText("https://t.me/watch?startapp=r_generic", { exact: true })).toBeVisible();
   expect(state.partner?.id).toBe("p1"); expect(submissions).toHaveLength(1); expect(financeReads).toBe(initialFinanceReads);
 });
@@ -143,12 +143,12 @@ test("server terms mutation error opens reaccept and returns to dashboard", asyn
     return route.fulfill({ json: { url: "https://t.me/watch?startapp=r_after" } });
   });
   await page.goto("/partner");
-  await page.getByRole("button", { name: "Получить ссылку" }).click();
+  await page.getByRole("button", { name: "Получить ссылку на магазин" }).click();
   await expect(page).toHaveURL(/\/partner\/onboarding\?returnTo=/);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Принять новые условия", exact: true }).click();
   await expect(page).toHaveURL(/\/partner$/);
-  await page.getByRole("button", { name: "Получить ссылку" }).click();
+  await page.getByRole("button", { name: "Получить ссылку на магазин" }).click();
   await expect(page.getByText("https://t.me/watch?startapp=r_after", { exact: true })).toBeVisible();
 });
 
@@ -169,14 +169,29 @@ test("product referral wins over explicit Partner path", async ({ page }) => {
 test("explicit Admin route uses session authority, client route grants no role", async ({ page }) => {
   await fixture(page, active, false, true);
   await page.goto("/admin");
-  await expect(page.locator("main").getByRole("alert")).toHaveText("Доступ разрешён только администратору.");
+  await expect(page.locator("main").getByRole("alert")).toHaveText("Этот раздел доступен только администратору.");
   await expect(page).toHaveURL(/\/admin$/);
 });
 
 test("optional new Terms does not force existing Partner onboarding", async ({ page }) => {
   const { submissions } = await fixture(page, active, false);
   await page.goto("/partner");
-  await expect(page.getByRole("button", { name: "Получить ссылку" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Получить ссылку на магазин" })).toBeEnabled();
   await expect(page.getByRole("article")).toHaveCount(0);
   expect(submissions).toHaveLength(0);
+});
+
+
+test("clipboard rejection preserves the visible referral link for manual copying", async ({ page }) => {
+  await fixture(page, active);
+  const url = "https://t.me/watch_bot/shop?startapp=ref_test";
+  await page.route("**/api/v1/partner/referral-links", (route) => route.fulfill({ json: { url } }));
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("Clipboard denied")) } });
+  });
+  await page.goto("/partner");
+  await page.getByRole("button", { name: "Получить ссылку на магазин" }).click();
+  await page.getByRole("button", { name: "Скопировать ссылку", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Не удалось скопировать ссылку. Выделите её и скопируйте вручную.");
+  await expect(page.getByText(url, { exact: true })).toBeVisible();
 });

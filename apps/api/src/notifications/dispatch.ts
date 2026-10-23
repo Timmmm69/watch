@@ -124,6 +124,7 @@ async function sendAll(
 
 function statusLabel(status: string): string {
   switch (status) {
+    case "PLACED": return "создан";
     case "CONFIRMED": return "подтверждён";
     case "FULFILLING": return "собирается";
     case "SHIPPED": return "отправлен";
@@ -131,21 +132,23 @@ function statusLabel(status: string): string {
     case "CANCELLED": return "отменён";
     case "DELIVERY_FAILED": return "не доставлен";
     case "COMPLETED": return "завершён";
-    default: return status;
+    default:
+      console.warn("Unknown order notification status", status);
+      return "статус уточняется";
   }
 }
 
 function pendingCommissionText(summary: OrderSummary): string {
   const total = summary.items.reduce((sum, item) =>
     sum + BigInt(item.partnerCommissionUnitMinor) * BigInt(item.quantity), 0n);
-  if (total === 0n) return "Комиссия: 0 (заказ без партнёрского вознаграждения)";
+  if (total === 0n) return "Вознаграждение по заказу: 0";
   return `Ожидаемая комиссия: ${formatMoney(Number(total), summary.currency)}`;
 }
 
 function productSummaryText(summary: OrderSummary): string {
   const first = summary.items[0]!;
   if (summary.items.length === 1) return first.title;
-  return `${first.title} и ещё ${summary.items.length - 1} поз.`;
+  return `${first.title} и ещё ${summary.items.length - 1} позиций`;
 }
 
 async function dispatchPartnerActivated(
@@ -155,7 +158,7 @@ async function dispatchPartnerActivated(
   if (!partnerId) return [];
   const recipient = await loadPartnerRecipient(pool, partnerId);
   if (!recipient) return [];
-  const text = `Поздравляем! Вы стали партнёром. Откройте дашборд: ${config.appBaseUrl}/partner`;
+  const text = `Партнёрский аккаунт создан. Открыть кабинет: ${config.appBaseUrl}/partner`;
   return sendAll(pool, [recipient], text, send);
 }
 
@@ -174,18 +177,18 @@ async function dispatchOrderCreated(
     const recipient = await loadPartnerRecipient(pool, payload.partnerIdSnapshot);
     if (recipient) {
       const text = [
-        `Новый заказ ${publicNumber}.`,
-        `Товар: ${product}.`,
-        `Сумма: ${formatMoney(summary.totalMinor, summary.currency)}.`,
+        `Новый заказ № ${publicNumber}.`,
+        `Товары: ${product}.`,
+        `Сумма заказа: ${formatMoney(summary.totalMinor, summary.currency)}.`,
         pendingCommissionText(summary),
-        `Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`
+        `Посмотреть заказ: ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`
       ].join("\n");
       errors.push(...await sendAll(pool, [recipient], text, send));
     }
   }
   const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
   if (admins.length) {
-    const text = `Новый заказ ${publicNumber} (${formatMoney(summary.totalMinor, summary.currency)}). ${product}. ${orderUrl(config.appBaseUrl, orderId, "admin")}`;
+    const text = `Новый заказ № ${publicNumber} (${formatMoney(summary.totalMinor, summary.currency)}). ${product}. ${orderUrl(config.appBaseUrl, orderId, "admin")}`;
     errors.push(...await sendAll(pool, admins, text, send));
   }
   return errors;
@@ -204,7 +207,7 @@ async function dispatchOrderStatusChanged(
   if (!recipient) return [];
   const publicNumber = typeof payload.publicNumber === "string" ? payload.publicNumber : (await loadOrderSummary(pool, orderId))?.publicNumber;
   if (!publicNumber) return [];
-  const text = `Заказ ${publicNumber}: ${statusLabel(toStatus)}. Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, recipient.role)}`;
+  const text = `Заказ № ${publicNumber}: ${statusLabel(toStatus)}. Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, recipient.role)}`;
   return sendAll(pool, [recipient], text, send);
 }
 
@@ -227,8 +230,8 @@ async function dispatchOrderTerminal(
   const totalCommission = summary.items.reduce((sum, item) =>
     sum + BigInt(item.partnerCommissionUnitMinor) * BigInt(item.quantity), 0n);
   const impact = totalCommission === 0n
-    ? "Комиссия по заказу не начислялась."
-    : `Влияние на комиссию: ${formatMoney(Number(totalCommission), summary.currency)} не будет начислено.`;
+    ? "Вознаграждение за этот заказ не предусмотрено."
+    : `Ожидаемое вознаграждение ${formatMoney(Number(totalCommission), summary.currency)} не будет начислено.`;
   const text = `Заказ ${publicNumber} ${label}. ${impact} ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
   return sendAll(pool, [recipient], text, send);
 }
@@ -241,7 +244,7 @@ async function dispatchInventorySyncFailed(
   if (!runId) return [];
   const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
   if (!admins.length) return [];
-  const text = `Ошибка синхронизации запасов ${runId}. Проверьте инвентарь: ${config.appBaseUrl}/admin/inventory`;
+  const text = `Не удалось обновить остатки (запуск ${runId}). Проверьте склад: ${config.appBaseUrl}/admin/inventory`;
   return sendAll(pool, admins, text, send);
 }
 
@@ -259,7 +262,7 @@ async function dispatchCommissionEarned(
   if (!summary) return [];
   const currency = summary?.currency ?? "";
   const publicNumber = summary.publicNumber;
-  const text = `Комиссия ${formatMoney(amountMinor, currency)} по заказу ${publicNumber} доступна к выплате. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
+  const text = `Вознаграждение ${formatMoney(amountMinor, currency)} по заказу № ${publicNumber} теперь доступно к выплате. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
   return sendAll(pool, [recipient], text, send);
 }
 
@@ -277,7 +280,7 @@ async function dispatchReturnCompleted(
   if (!summary) return [];
   const currency = summary?.currency ?? "";
   const publicNumber = summary.publicNumber;
-  const text = `По заказу ${publicNumber} оформлен возврат. Удержано из комиссии: ${formatMoney(reversal, currency)}. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
+  const text = `Возврат по заказу № ${publicNumber} завершён. Вознаграждение уменьшено на ${formatMoney(reversal, currency)}. ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`;
   return sendAll(pool, [recipient], text, send);
 }
 
@@ -298,13 +301,13 @@ async function dispatchPayout(
     if (status === "REQUESTED") label = "запрошена";
     else if (status === "PAID") label = "выплачена";
     else if (status === "REJECTED") label = "отклонена";
-    const text = `Выплата ${formatMoney(amountMinor, currency)} ${label}. ${config.appBaseUrl}/partner/payouts`;
+    const text = `Заявка на выплату ${formatMoney(amountMinor, currency)}: ${label}. ${config.appBaseUrl}/partner/payouts`;
     errors.push(...await sendAll(pool, [recipient], text, send));
   }
   if (status === "REQUESTED") {
     const admins = await loadAdminRecipients(pool, config.adminTelegramIds);
     if (admins.length) {
-      const text = `Партнёр запросил выплату ${formatMoney(amountMinor, currency)}. ${config.appBaseUrl}/admin/payouts`;
+      const text = `Новая заявка партнёра на выплату: ${formatMoney(amountMinor, currency)}. ${config.appBaseUrl}/admin/payouts`;
       errors.push(...await sendAll(pool, admins, text, send));
     }
   }

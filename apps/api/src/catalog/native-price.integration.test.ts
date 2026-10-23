@@ -2,12 +2,12 @@ import {afterEach, describe, expect, it} from 'vitest';
 import {dropshipFixture, disposableUrl} from '../../test/dropship-fixture.js';
 let f: Awaited<ReturnType<typeof dropshipFixture>>;
 afterEach(async()=>{await f?.close();});
-describe.skipIf(!disposableUrl())('Admin native D through Session/CSRF API',()=>{
+describe.skipIf(!disposableUrl())('Historical admin D compatibility through Session/CSRF API',()=>{
  it('changes D independently, requires checkout reconfirmation and preserves existing snapshots',async()=>{
   f=await dropshipFixture(10,'800.02',true);
   const patch=(payload:object,headers=f.owners[2]!.headers)=>f.app.inject({method:'PATCH',url:`/api/v1/admin/variants/${f.variant}`,headers,payload});
-  const checkout=(key:string,payload=f.request())=>f.app.inject({method:'POST',url:'/api/v1/orders',headers:{...f.owners[0]!.headers,'idempotency-key':key},payload});
-  const original=await checkout('before'); expect(original.statusCode).toBe(201);
+  const checkout=(key:string,payload=f.request())=>f.service.checkout(f.owners[0]!.user,key,payload);
+  const original=await checkout('before'); expect(original.created).toBe(true);
   const snapshot=(await f.pool.query('SELECT * FROM order_items')).rows;
   const reserves=(await f.pool.query('SELECT * FROM inventory_reservations')).rows;
   expect((await patch({priceMinor:11000})).statusCode).toBe(200);
@@ -16,14 +16,13 @@ describe.skipIf(!disposableUrl())('Admin native D through Session/CSRF API',()=>
   expect(changed.json()).toMatchObject({priceMinor:11000,dropshipPriceMinor:12000});
   const product=await f.app.inject({method:'GET',url:`/api/v1/admin/products/${f.product}`,headers:f.owners[2]!.headers});
   expect(product.json().variants[0].dropshipPriceMinor).toBe(12000);
-  const stale=await checkout('after'); expect(stale.statusCode).toBe(409);
-  expect(stale.json().error).toMatchObject({code:'PRICE_CHANGED',details:{items:[{variantId:f.variant,dropshipPriceMinor:12000}]}});
+  await expect(checkout('after')).rejects.toMatchObject({code:'PRICE_CHANGED',details:{items:[{variantId:f.variant,dropshipPriceMinor:12000}]}});
   expect((await f.pool.query('SELECT * FROM order_items')).rows).toEqual(snapshot);
   expect((await f.pool.query('SELECT * FROM inventory_reservations')).rows).toEqual(reserves);
   const confirmed=f.request(); confirmed.items[0]!.expectedDropshipPriceMinor=12000;
-  const next=await checkout('after',confirmed); expect(next.statusCode).toBe(201); expect(next.json().remunerationTotalMinor).toBe(2500);
-  expect((await f.pool.query('SELECT * FROM order_items WHERE order_id=$1',[original.json().id])).rows).toEqual(snapshot);
-  expect((await checkout('before')).statusCode).toBe(200);
+  const next=await checkout('after',confirmed); expect(next.created).toBe(true); expect(next.order.remunerationTotalMinor).toBe(2500);
+  expect((await f.pool.query('SELECT * FROM order_items WHERE order_id=$1',[original.order.id])).rows).toEqual(snapshot);
+  expect((await checkout('before')).created).toBe(false);
  });
  it('creates D explicitly without assigning a default from legacy price',async()=>{
   f=await dropshipFixture(2,'160.00',true);

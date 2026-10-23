@@ -5,6 +5,7 @@ import { checkoutRequestSchema, MAX_CART_LINES, MAX_ORDER_TOTAL_MINOR, type Chec
 import { computeInventoryAvailability, DEFAULT_INVENTORY_MAX_AGE_SECONDS, type InventorySourceStatus } from "../inventory/availability.js";
 import { partnerProgramMutationAllowed, partnerTermsCurrent, type PartnerStatus } from "../partner/partner.js";
 import { insertWithPublicNumberRetry } from "./order-number.js";
+import { NativeInventoryService, allocateCost, type NativeStock } from "../inventory/native.js";
 import { createOrderCommissions } from "../finance/commissions.js";
 
 export class CheckoutError extends Error {
@@ -88,8 +89,8 @@ export class CheckoutService {
         await client.query("COMMIT");
         return { order: project(existing), created: false };
       }
-      // T47 cutover closes the old writer; the dropshipper Order flow belongs to T48.
-      if ((await client.query("SELECT 1 FROM inventory_authority")).rowCount) throw new CheckoutError("INVENTORY_UNKNOWN");
+      const native = (await client.query("SELECT 1 FROM inventory_authority")).rowCount !== 0;
+      const inventoryService = new NativeInventoryService(this.pool);
       // Use the serialization time after waiting for Buyer, rather than a stale BEGIN timestamp.
       const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
       const touch = (await client.query<{ id: string; partner_id: string }>(`
@@ -117,12 +118,20 @@ export class CheckoutService {
       await client.query("SELECT id FROM product_variants WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE", [ids]);
       const commercial = (await client.query<CommercialRow>(`SELECT v.*, p.status AS product_status, p.title, p.supplier_id
         FROM product_variants v JOIN products p ON p.id = v.product_id WHERE v.id = ANY($1::uuid[]) ORDER BY v.id`, [ids])).rows;
-      await client.query("SELECT variant_id FROM inventory_items WHERE variant_id = ANY($1::uuid[]) ORDER BY variant_id FOR UPDATE", [ids]);
+      const stocks = native ? await inventoryService.lockStock(client, ids) : new Map<string, NativeStock>();
+      if (!native) await client.query("SELECT variant_id FROM inventory_items WHERE variant_id = ANY($1::uuid[]) ORDER BY variant_id FOR UPDATE", [ids]);
       const unavailable = commercial.filter((row) => row.status !== "ACTIVE" || row.product_status !== "ACTIVE").map((row) => row.id);
       if (unavailable.length) throw new CheckoutError("CART_CHANGED", { reason: "ITEM_UNAVAILABLE", affectedVariantIds: unavailable });
       if (commercial.length !== lines.length || commercial.some((row) => !products.includes(row.product_id) || row.currency !== this.currency)
         || new Set(commercial.map((row) => row.supplier_id)).size !== 1) throw new CheckoutError("INTERNAL_INVARIANT_VIOLATION");
       for (const line of lines) {
+        if (native) {
+          const stock = stocks.get(line.variant_id)!;
+          if (!stock.native_initialization_id) throw new CheckoutError("INVENTORY_UNKNOWN", { affectedVariantIds: [line.variant_id] });
+          if (stock.native_on_hand - stock.native_reserved_quantity - stock.safety_buffer < line.quantity)
+            throw new CheckoutError("OUT_OF_STOCK", { affectedVariantIds: [line.variant_id] });
+          continue;
+        }
         const inventory = (await client.query<InventoryRow>("SELECT * FROM inventory_items WHERE variant_id = $1", [line.variant_id])).rows[0];
         // No Reservation locks after InventoryItem; re-read committed sums after the shared stock lock.
         const reserved = (await client.query<{ quantity: string }>("SELECT COALESCE(SUM(quantity), 0)::text AS quantity FROM inventory_reservations WHERE variant_id = $1 AND status = 'ACTIVE'", [line.variant_id])).rows[0]!.quantity;
@@ -164,8 +173,8 @@ export class CheckoutService {
           const row = (await client.query<StoredOrder>(`INSERT INTO orders
             (id, public_number, buyer_user_id, supplier_id, attribution_touch_id, partner_id_snapshot, commission_eligible_snapshot,
              currency, subtotal_minor, total_minor, sales_terms_document_id, privacy_document_id, sales_terms_accepted_at,
-             privacy_acknowledged_at, idempotency_key, request_fingerprint, created_at, updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,$12,$13,$14,$12,$12) RETURNING *`,
+             privacy_acknowledged_at, idempotency_key, request_fingerprint, created_at, updated_at${native ? ", inventory_mode" : ""})
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,$12,$13,$14,$12,$12${native ? ", 'native'" : ""}) RETURNING *`,
           [id, publicNumber, buyerId, commercial[0]!.supplier_id, touch?.id ?? null, touch?.partner_id ?? null, eligible,
             this.currency, checkedMoney(total), sales.id, privacy.id, now, key, fingerprint])).rows[0]!;
           await client.query("RELEASE SAVEPOINT order_number_insert");
@@ -176,10 +185,13 @@ export class CheckoutService {
         VALUES ($1,$2,$3,$4,$5,$6,$6)`, [id, request.recipientName, request.phone, request.address, request.comment, now]);
       for (const [index, row] of commercial.entries()) {
         await client.query(`INSERT INTO order_items (id, order_id, variant_id, sku_snapshot, title_snapshot, attributes_snapshot,
-          quantity, unit_price_minor, partner_commission_unit_snapshot_minor, supplier_settlement_unit_snapshot_minor, line_total_minor)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [randomUUID(), id, row.id, row.sku, row.title, JSON.stringify(row.attributes),
-          lines[index]!.quantity, row.price_minor, row.partner_commission_unit_minor, row.supplier_settlement_unit_minor, totals[index]]);
-        await client.query("INSERT INTO inventory_reservations (id, order_id, variant_id, quantity, created_at) VALUES ($1,$2,$3,$4,$5)",
+          quantity, unit_price_minor, partner_commission_unit_snapshot_minor, supplier_settlement_unit_snapshot_minor, line_total_minor${native ? ", allocated_procurement_cost_minor" : ""})
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11${native ? ",$12" : ""})`, [randomUUID(), id, row.id, row.sku, row.title, JSON.stringify(row.attributes),
+          lines[index]!.quantity, row.price_minor, row.partner_commission_unit_minor, row.supplier_settlement_unit_minor, totals[index], ...(native ? [allocateCost(stocks.get(row.id)!.native_free_value_minor,
+            stocks.get(row.id)!.native_on_hand - stocks.get(row.id)!.native_reserved_quantity, lines[index]!.quantity)] : [])]);
+        if (native) await inventoryService.reserve(client, { actorUserId: buyerId, operationKey: `order:${id}:reserve`,
+          reason: "Buyer checkout", occurredAt: now }, stocks.get(row.id)!, id, lines[index]!.quantity);
+        else await client.query("INSERT INTO inventory_reservations (id, order_id, variant_id, quantity, created_at) VALUES ($1,$2,$3,$4,$5)",
           [randomUUID(), id, row.id, lines[index]!.quantity, now]);
       }
       await createOrderCommissions(client,id,now);

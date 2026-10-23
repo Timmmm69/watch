@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 config({ path: fileURLToPath(new URL("../../../../.env", import.meta.url)), quiet: true });
 const runtime = loadApiRuntimeConfig();
+if (runtime.INVENTORY_PROVIDER !== "native") throw new Error("Referral commerce requires INVENTORY_PROVIDER=native and explicit inventory initialization");
 const pool = createDatabasePool(runtime.DATABASE_URL);
 try {
   await verifyInstalledRelease(pool, runtime);

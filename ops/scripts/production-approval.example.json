@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "operatingModel": {
     "inventoryProvider": "native",
-    "orderFlow": "DROPSHIPPER_MARKUP",
+    "orderFlow": "REFERRAL_BUYER_FIXED",
     "recipientTelegramRequired": false,
-    "ownerReceives": "R",
-    "remuneration": "R_MINUS_D",
+    "ownerReceives": "RETAIL",
+    "remuneration": "FIXED_SKU",
     "termsCoverRecipientData": false
   },
   "releaseSha": "replace-with-reviewed-40-character-release-sha",

@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # Фактические деньги, наценка и выплаты — T50
 
 Только ручной учёт BYN: все суммы — целые копейки. Банковских подключений и переводов в приложении нет. Отметка PAID означает подтверждение оператором уже выполненного внешнего перевода.

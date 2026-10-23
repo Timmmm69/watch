@@ -538,6 +538,7 @@ model Order {
   buyerUserId               String?          @map("buyer_user_id") @db.Uuid
   origin                    OrderOrigin      @default(LEGACY_BUYER)
   economicRegime            EconomicRegime   @default(LEGACY_FIXED) @map("economic_regime")
+  inventoryMode             String?          @map("inventory_mode")
   creatorUserId             String?          @map("creator_user_id") @db.Uuid
   partnerTermsDocumentId    String?          @map("partner_terms_document_id") @db.Uuid
   supplierId                String           @map("supplier_id") @db.Uuid

@@ -50,7 +50,7 @@ test.describe("Cart end-to-end with a real DB Session", () => {
     await expect(page.getByRole("button", { name: "Добавить в корзину" })).toBeDisabled();
     await page.getByLabel("Вариант товара").selectOption(variant);
     await page.getByRole("button", { name: "Добавить в корзину" }).click();
-    await expect(page.getByRole("status")).toHaveText("Товар добавлен в корзину.");
+    await expect(page.getByRole("status")).toHaveText("Добавлено в корзину.");
     await page.getByRole("link", { name: "Корзина (1)" }).click();
     await expect(page.getByRole("heading", { name: "Корзина", exact: true })).toBeVisible();
     await page.reload();
@@ -62,24 +62,24 @@ test.describe("Cart end-to-end with a real DB Session", () => {
     await pool.query("UPDATE product_variants SET price_minor=12345 WHERE id=$1", [variant]);
     await pool.query("UPDATE inventory_items SET last_successful_sync_at=now()-interval '11 minutes' WHERE variant_id=$1", [variant]);
     await page.getByRole("button", { name: "Обновить корзину" }).click();
-    await expect(page.getByText("Данные о наличии устарели. Обновите корзину.")).toBeVisible();
+    await expect(page.getByText("Не удалось подтвердить наличие. Обновите корзину позже.")).toBeVisible();
     await expect(page.getByText(/123,45.*за шт/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Оформить заказ" })).toBeDisabled();
     await pool.query("UPDATE products SET status='ARCHIVED' WHERE id=$1", [product]);
     await page.getByRole("button", { name: "Обновить корзину" }).click();
-    await expect(page.getByText("Товар больше недоступен.")).toBeVisible();
+    await expect(page.getByText("Этот товар больше нельзя заказать. Удалите его из корзины.")).toBeVisible();
     await page.getByRole("button", { name: "Удалить CART-AVAILABLE" }).click();
-    await expect(page.getByText("Корзина пуста", { exact: true })).toBeVisible();
+    await expect(page.getByText("В корзине пока нет товаров.", { exact: true })).toBeVisible();
     await pool.query("UPDATE products SET status='ACTIVE' WHERE id=$1", [product]);
     await pool.query("UPDATE inventory_items SET last_successful_sync_at=now() WHERE variant_id=$1", [variant]);
-    await page.getByRole("link", { name: "Перейти в каталог" }).click();
+    await page.getByRole("link", { name: "Выбрать товары" }).click();
     await page.getByRole("button", { name: /Тестовые часы/ }).click();
     await page.getByLabel("Вариант товара").selectOption(variant);
     await page.getByRole("button", { name: "Добавить в корзину" }).click();
-    await expect(page.getByRole("status")).toHaveText("Товар добавлен в корзину.");
+    await expect(page.getByRole("status")).toHaveText("Добавлено в корзину.");
     await page.getByRole("link", { name: "Корзина (1)" }).click();
     await page.getByRole("button", { name: "Очистить корзину" }).click();
-    await expect(page.getByText("Корзина пуста", { exact: true })).toBeVisible();
+    await expect(page.getByText("В корзине пока нет товаров.", { exact: true })).toBeVisible();
   });
 });
 
@@ -122,5 +122,5 @@ test("retained referral launch does not override in-app Cart navigation", async 
   await expect(page.getByRole("heading", { name: "Часы по ссылке" })).toBeVisible();
   await page.getByRole("link", { name: "Корзина (0)" }).click();
   await expect(page).toHaveURL(/\/cart$/);
-  await expect(page.getByText("Корзина пуста", { exact: true })).toBeVisible();
+  await expect(page.getByText("В корзине пока нет товаров.", { exact: true })).toBeVisible();
 });

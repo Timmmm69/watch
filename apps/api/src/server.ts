@@ -15,7 +15,6 @@ import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
 import { CartService } from "./cart/cart.js";
 import { CheckoutService } from "./orders/checkout.js";
-import { DropshipCheckoutService } from "./orders/dropship-checkout.js";
 import { AdminOrderService } from "./orders/admin.js";
 import { AdminReturnService } from "./returns/returns.js";
 import { OrderViewService } from "./orders/views.js";
@@ -29,12 +28,12 @@ import { verifyInstalledRelease } from "./operations/readiness.js";
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)), quiet: true });
 
 const runtimeConfig = loadApiRuntimeConfig();
+if (runtimeConfig.INVENTORY_PROVIDER !== "native") throw new Error("Referral commerce requires INVENTORY_PROVIDER=native and explicit inventory initialization");
 const pool = createDatabasePool(runtimeConfig.DATABASE_URL);
 const adminTelegramIds = new Set(runtimeConfig.ADMIN_TELEGRAM_IDS);
 const legalDocuments = new LegalDocuments(pool, currentLegalDocuments(runtimeConfig));
 const partnerService = new PartnerService(pool, legalDocuments);
-const nativeCommerce = runtimeConfig.INVENTORY_PROVIDER === "native";
-const catalogService = new CatalogService(pool, runtimeConfig.PLATFORM_CURRENCY, undefined, runtimeConfig.INVENTORY_MAX_AGE_SECONDS, undefined, nativeCommerce);
+const catalogService = new CatalogService(pool, runtimeConfig.PLATFORM_CURRENCY, undefined, runtimeConfig.INVENTORY_MAX_AGE_SECONDS, undefined, true);
 const inventoryService = new InventoryService(pool, undefined, runtimeConfig.INVENTORY_MAX_AGE_SECONDS);
 const inventoryOrchestrator = createConfiguredInventoryOrchestrator(pool, runtimeConfig);
 const storageFields = ["OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_REGION", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY"] as const;
@@ -50,7 +49,7 @@ const checkReadiness = async () => {
   await verifyInstalledRelease(pool, runtimeConfig);
 };
 const app = createApp({
-  nativeCommerce,
+  nativeCommerce: true, // Compatibility response flag: native inventory, independent of order economics.
   ...(runtimeConfig.API_TRUSTED_PROXY_IP ? { trustedProxyIp: runtimeConfig.API_TRUSTED_PROXY_IP } : {}),
   analytics: new AnalyticsService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.BUSINESS_TIMEZONE,
     runtimeConfig.INVENTORY_MAX_AGE_SECONDS, runtimeConfig.ORDER_OVERDUE_SECONDS),
@@ -69,14 +68,13 @@ const app = createApp({
   catalog: { service: catalogService },
   cart: new CartService(pool, runtimeConfig.PLATFORM_CURRENCY, runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   orders: new AdminOrderService(pool, runtimeConfig.ORDER_HOLD_DAYS, runtimeConfig.ORDER_OVERDUE_SECONDS,
-    runtimeConfig.INVENTORY_PROVIDER === "google_sheets" ? "MANUAL" : "NONE"),
+    "NONE"),
   returns: new AdminReturnService(pool),
   money: new OrderMoneyService(pool),
   orderViews: new OrderViewService(pool, runtimeConfig.SUPPORT_CONTACT),
   earnings: new PartnerEarningsService(pool),
   payouts: new PayoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig).PARTNER_TERMS!, runtimeConfig.MIN_PAYOUT_MINOR),
-  checkout: nativeCommerce ? new DropshipCheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig))
-    : new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig), runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
+  checkout: new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig), runtimeConfig.INVENTORY_MAX_AGE_SECONDS),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }

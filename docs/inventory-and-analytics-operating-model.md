@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # Часы: окончательная рабочая схема дропшиппинга
 
 Дата: 2026-10-14. Основание: ответы владельца и проверка существующих требований/кода. Текущие требования закреплены в FULL_BUILD_SPEC.md, amendment 30. Это проектирование и аудит, а не заявление о завершённой реализации.

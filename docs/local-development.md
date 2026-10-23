@@ -6,7 +6,8 @@ Requires Node.js 24, pnpm 11, and Docker with Compose.
 2. Run `pnpm install --frozen-lockfile`.
 3. Run `docker compose --env-file .env -f ops/docker/compose.yml up -d`.
 4. Run `pnpm db:migrate` and `pnpm db:generate`.
-5. Run `pnpm dev`. Web listens on `http://localhost:3000`; API listens on `http://127.0.0.1:3001`.
+5. Set `INVENTORY_PROVIDER=native` and explicitly preview/apply native opening inventory using [the native inventory procedure](native-inventory-t47.md). Never infer opening stock from a stale Sheets snapshot.
+6. Run `pnpm dev`. Web listens on `http://localhost:3000`; API listens on `http://127.0.0.1:3001`.
 
 `GET /health` checks API process liveness. `GET /ready` checks database connectivity and the foundation migration; it returns 503 until the database is available and migrated. Run `pnpm typecheck`, `pnpm test`, and `pnpm build` for foundation checks. Run `pnpm test:e2e` after installing Playwright Chromium (`pnpm --filter @watch/web exec playwright install chromium`).
 

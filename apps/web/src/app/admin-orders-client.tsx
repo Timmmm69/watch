@@ -12,7 +12,7 @@ const actions: Record<string, string> = { CONFIRMED: "Подтвердить з�
 const reservationLabels: Record<string, string> = { ACTIVE: "Активен", RELEASED: "Освобождён", CONSUMED: "Использован" };
 const sourceLabels: Record<string, string> = { OK: "В порядке", UNINITIALIZED: "Не загружен", MISSING: "Товар отсутствует в источнике", INVALID: "Некорректные данные" };
 type Order = { id: string; publicNumber: string; status: string; totalMinor: number; currency: string; overdue: boolean;
-  economicRegime?: string;
+  economicRegime?: string; nativeInventory?: boolean;
   partnerIdSnapshot: string | null; attributionTouchId: string | null; commissionEligibleSnapshot: boolean; allowedTransitions: string[];
   completionEligibleAt: string | null; timeline: { status: string; at: string }[];
   fulfillment?: { recipientName: string | null; phone: string | null; address: string | null; comment: string | null; redactedAt: string | null } | null;
@@ -199,7 +199,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
           <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Отмена сверки</button>
         </form>}</div>)}</section>
-      {order.economicRegime === "DROPSHIP_MARKUP" && <OrderFinance orderId={order.id} request={request} />}
+      {(order.nativeInventory || order.economicRegime === "DROPSHIP_MARKUP") && <OrderFinance orderId={order.id} request={request} />}
       <section><h2 className="font-semibold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
         {order.completionEligibleAt && <p>Завершение системой возможно после {date(order.completionEligibleAt)}.</p>}</section>
       <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-blue-600 px-4"

@@ -1,12 +1,12 @@
-# Full Build Specification v1.4 — Dropshipping amendment
+# Full Build Specification v1.5 — Referral commerce with native inventory
 
 **Project:** Telegram Partner Commerce Platform  
 **Status:** authoritative implementation specification  
-**Version:** 1.4-dropshipping
-**Date:** 2026-10-14 (owner-confirmed dropshipping process)
+**Version:** 1.5-referral-native
+**Date:** 2026-10-22 (referral commerce restoration)
 **Implementation status:** frozen for implementation. Application code proceeds only through an explicit vertical-slice task from Section 21; this document defines requirements but does not itself authorize an unscoped whole-project implementation.
 
-**Current business authority:** Section 30 supersedes conflicting earlier partner/referral, pricing, inventory-source, checkout, payment-observation and analytics requirements. The owner confirmed: sales only in this application; the dropshipper creates the customer's order and sets the customer price; the platform receives payment and pays the dropshipper the price difference. This is a requirements amendment, not certification of existing code. T46–T52 in `CODEX_TASKS.md` must align the implementation before a new release is called ready.
+**Current business authority:** Section 31 supersedes conflicting earlier decisions, including the sales/price/remuneration requirements of Section 30. The final model is **Referral-based commerce with fixed SKU commissions and native PostgreSQL inventory.** Authenticated buyers order independently at administrator-controlled retail prices; partners promote personal links and earn fixed SKU commissions. Section 30 remains historical context for existing DROPSHIP_MARKUP orders.
 
 **Source-of-truth status:** this document supersedes `FULL_BUILD_SPEC_v1.2.md`, `FULL_BUILD_SPEC_v1.1.md`, `FULL_BUILD_SPEC_v1.0.md` and the previous `PRODUCT.md`, `MVP.md`, `ARCHITECTURE.md`, `DATA_MODEL.md`, `BUSINESS_RULES.md`, `BACKLOG.md`, `DECISIONS.md` as active implementation sources. The only active implementation requirements are **this document** plus Project Instructions. Older files may remain only as historical artifacts; they must be excluded from Codex implementation context or visibly marked `HISTORICAL — DO NOT USE FOR IMPLEMENTATION` by the project/tooling layer. If a tool automatically injects those files as active requirements, S00 must not start until that context is corrected.
 
@@ -2230,7 +2230,9 @@ This replaces earlier provisional fulfilment/hold decisions and launch gates. Se
 - Analytics ↔ snapshots: transaction-derived metrics available; missing economics unavailable, never zero; new economics snapshot into new OrderItems only.
 Relative document links and changed-line whitespace checks pass. Release/operator checklists attest implementation and runtime configuration of resolved U03/U05; they do not reopen product decisions. Historical implementation notes are explicitly separated from current requirements. Application conformity, migrations, concurrency and live operations remain unverified by this documentation-only task and are queued in CODEX_TASKS.md.
 
-# 30. Owner-confirmed dropshipping amendment — 2026-10-14
+# 30. Historical dropshipping amendment — 2026-10-14
+
+> SUPERSEDED for new sales by Section 31 (2026-10-22). Retain existing snapshots and financial history; do not implement the R−D creation workflow for new orders. Native inventory, physical return acceptance and observed-money safeguards continue under Section 31.
 
 This section has precedence over conflicting earlier business requirements, including Sections 1/2/8/9/12/14/16/18/22 and U01. Unrelated authentication, authorization, idempotency, immutable history, monetary bounds, security, backup and operational requirements remain applicable. The detailed operating and measurement design is [inventory-and-analytics-operating-model.md](docs/inventory-and-analytics-operating-model.md); this section and Project Instructions control implementation.
 
@@ -2281,3 +2283,35 @@ Order-quality cohorts use created_at and their current outcomes, with unfinished
 ## 30.7 Implementation/release boundary
 
 Apply corrective T46–T52 in bounded order, reusing the existing catalog/media, Orders, PostgreSQL locks, ledger, payouts, UI and operations. Write no parallel commerce/financial engine. Preserve historical data and disable incompatible new-write paths before cutover. Existing production attestations and Google-outage smoke do not certify the native/dropshipping workflow; configuration, evidence and acceptance must be updated for it. Live inventory import, Telegram order flow, received-money/return/remuneration/payout scenarios and backup/restore remain required before production completion.
+
+
+# 31. Final business decision — 2026-10-22
+
+**Referral-based commerce with fixed SKU commissions and native PostgreSQL inventory.**
+
+This section has priority over all conflicting earlier sections and implementation queues, particularly Section 30 and T48's new markup checkout. It restores the existing referral/cart/buyer flow; it does not authorize an architectural rewrite.
+
+## 31.1 Actors, prices and attribution
+
+- Partners register free through Telegram, accept current partner terms and see the administrator's retail price, fixed per-SKU commission, photos and promotional materials. Personal shop/product links use signed Telegram startapp referral tokens. Partners never supply customer prices, commission amounts or attribution in checkout.
+- Buyers authenticate through Telegram, browse/search/filter/categories/product details, use a persistent cart, accept current sales terms/privacy and submit their own order. Buyer registration as a partner is unnecessary.
+- Server product_variants.price_minor is the single retail price regardless of partner/link. expectedUnitPriceMinor is a confirmation value only: stale price yields PRICE_CHANGED and requires explicit buyer confirmation. Snapshot retail price and fixed unit commission on OrderItem. Historical snapshots never track later catalog changes.
+- Attribution is server-only, last valid click for 30 calendar days; replayed signed launch cannot duplicate touches. Reject self-referral and ineligible/blocked/non-current-terms partners. Checkout rechecks eligibility. Organic orders are allowed without commissions. Later links, clicks or blocks never rewrite existing order attribution.
+
+## 31.2 Economics, stock and money
+
+- New order economics are LEGACY_FIXED with inventory_mode=native. Nullable inventory_mode on historical orders preserves their original semantics: historical DROPSHIP_MARKUP uses native stock; historical fixed orders retain external accounting. Never infer a new order's commission formula from inventory authority.
+- PostgreSQL inventory_authority and native quantity/value movements remain the sole live stock authority. API/worker startup requires INVENTORY_PROVIDER=native and explicit verified initialization. No automatic Sheets fallback or invented opening quantities/costs.
+- Cart changes reserve nothing. Checkout locks catalog and stock, verifies sellable quantity, snapshots allocated procurement cost and atomically creates native reserve movements, OrderItems, pending fixed commissions, ledger and outbox. Concurrent attempts cannot reserve the last unit twice. Idempotent retry returns the original order and creates no second reserve/commission.
+- Shipment consumes native reserves and physical quantity/value atomically. Cancellation before shipment restores the original allocation and reverses commissions. After shipment use Returns. Completing a return adjusts commission and customer refund liability; only separate physical inspection restores saleable received quantity/cost. Damaged stock is recorded as loss; unknown procurement cost remains unknown.
+- Commission is fixed per retained SKU unit, initially PENDING, then HOLD at delivery. The original hold is 14 calendar days. Availability requires delivery, elapsed hold, no unresolved affected-item return, and sufficient observed cash after refund obligations. Recheck these facts at payout allocation and PAID confirmation. Orders/statuses never fabricate payment.
+- Use existing immutable ledger, payout allocations, actual receipt/refund/correction facts and idempotency. Late returns append reversals/debt even after payout; never rewrite paid transfers. Organic sales create no partner liability. Operator confirms PAID only after actual transfer.
+- Owner contribution for native fixed orders is retained retail sales minus eligible fixed commissions minus original shipped procurement cost plus saleable recovered cost minus actual reviewed expenses. Organic sales have zero commission expense. Keep historical markup reporting based on its snapshots. Existing report wire fields R/D/markup remain compatible, with UI labels retail/net of commission/commission.
+
+## 31.3 Compatibility, operations and acceptance
+
+- Keep historical DROPSHIP_MARKUP orders readable and fulfillable, including original D/R, recipient access, returns, money coverage, commissions and payouts. Their creation service/contracts remain only as historical compatibility/test fixtures; public POST /api/v1/orders accepts buyer checkout exclusively.
+- Administrator manages retail price, fixed commission, catalog/media, native stock, orders, actual money, returns and payouts. No active arbitrary-price partner form or DropshipCheckoutScreen route.
+- Deploy migration 20261022000000_referral_native_inventory before the application. It adds order inventory mode and updates stock/allocation protections without changing existing commercial or financial rows. Database readiness requires it. Existing native stock initialization remains valid.
+- Native production approval schema v3 must attest REFERRAL_BUYER_FIXED, RETAIL and FIXED_SKU. Old v2 markup attestations do not certify this release. Preserve actual secrets and reviewed immutable legal documents; operators must verify their applicability to buyer sales and referral terms before live release.
+- Acceptance requires PostgreSQL coverage of referral creation/signed launch, uniform retail price, two partners/last click/expiry, organic/self/blocked cases, retry, last-unit competition, price confirmation, hold/cash/payout, cancellation/partial/full/physical returns and historical orders. Browser checks use real local API/PostgreSQL; emulated Telegram initData is test evidence, not a live-device production certification.

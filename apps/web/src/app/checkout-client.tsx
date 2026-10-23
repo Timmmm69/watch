@@ -13,15 +13,15 @@ const labels: Record<keyof Fields, string> = {
   recipientName: "Имя получателя", phone: "Телефон", address: "Адрес и детали доставки", comment: "Комментарий (необязательно)"
 };
 const messages: Record<string, string> = {
-  PRICE_CHANGED: "Цена изменилась. Проверьте новый итог и подтвердите его перед отправкой.",
-  CART_CHANGED: "Корзина изменилась. Проверьте товары перед отправкой.",
+  PRICE_CHANGED: "Цена изменилась. Проверьте сумму заказа и подтвердите новую цену.",
+  CART_CHANGED: "Состав корзины изменился. Проверьте товары перед оформлением.",
   CART_EMPTY: "Корзина пуста.", OUT_OF_STOCK: "Недостаточно товара в наличии. Измените корзину.",
-  INVENTORY_STALE: "Данные о наличии устарели. Оформление временно недоступно.",
-  INVENTORY_UNKNOWN: "Наличие пока неизвестно. Оформление временно недоступно.",
-  TERMS_VERSION_CHANGED: "Документы изменились. Прочитайте новую версию и отметьте соответствующее поле снова.",
+  INVENTORY_STALE: "Наличие товара не подтверждено. Попробуйте оформить заказ позже.",
+  INVENTORY_UNKNOWN: "Наличие товара не подтверждено. Попробуйте оформить заказ позже.",
+  TERMS_VERSION_CHANGED: "Условия обновились. Прочитайте новые версии документов и подтвердите ознакомление.",
   USER_BLOCKED: "Доступ заблокирован. Оформление заказа недоступно.",
   AUTH_REQUIRED: "Откройте приложение заново через Telegram.", SESSION_EXPIRED: "Откройте приложение заново через Telegram.",
-  VALIDATION_ERROR: "Проверьте введённые данные.", IDEMPOTENCY_CONFLICT: "Данные отправки изменились. Проверьте форму и повторите попытку.",
+  VALIDATION_ERROR: "Проверьте введённые данные.", IDEMPOTENCY_CONFLICT: "Данные заказа изменились. Проверьте форму перед повторной отправкой.",
   ORDER_TOTAL_LIMIT_EXCEEDED: "Сумма заказа превышает допустимый предел. Измените корзину.",
   CART_LINE_LIMIT_EXCEEDED: "В корзине может быть не больше 100 разных товаров."
 };
@@ -120,7 +120,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
       : name === "phone" ? !/^\+?[\d\s().-]+$/.test(value) || !/^\d{8,15}$/.test(value.replace(/\D/g, ""))
       : name === "address" ? value.length < 5 || value.length > 500 : value.length > 500;
     return invalid ? name === "phone" ? "Укажите телефон из 8–15 цифр." : name === "recipientName"
-      ? "Имя должно содержать 2–100 символов." : name === "address" ? "Укажите 5–500 символов." : "Не больше 500 символов." : "";
+      ? "Укажите имя от 2 до 100 символов." : name === "address" ? "Укажите адрес от 5 до 500 символов." : "Комментарий не должен превышать 500 символов." : "";
   };
   const submit = async () => {
     if (busy.current || !cart || !documents || !legalReady || readOnly) return;
@@ -163,13 +163,13 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
 
   return <main className="min-h-screen bg-slate-950 px-5 py-8 pb-12 text-slate-100"><div className="mx-auto max-w-2xl">
     <Link href="/cart" className="inline-flex min-h-11 items-center underline">← Корзина</Link>
-    <h1 className="my-5 text-2xl font-semibold">{order ? "Заказ оформлен" : "Оформление заказа"}</h1>
+    <h1 className="my-5 text-2xl font-semibold">{order ? "Заказ создан" : "Оформление заказа"}</h1>
     {order ? <section aria-live="polite"><p className="text-xl">Заказ {order.publicNumber}</p><p>Статус: {order.status}</p>
-      <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Оператор подтвердит заказ.</p>
+      <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Заказ создан. Ожидайте подтверждения оператора.</p>
       <Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="mr-4 inline-flex min-h-11 items-center underline">Посмотреть заказ</Link>
       <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link></section> : <>
       {error && <p role="alert" className="my-4 text-amber-300">{error}</p>}
-      <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить оформление</button>
+      <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить данные заказа</button>
       {!cart && <div aria-label="Загрузка заказа" className="my-5 h-36 animate-pulse rounded-xl bg-slate-900" />}
       {cart && <section aria-label="Состав заказа" className="my-5 rounded-xl bg-slate-900 p-4"><ul>{cart.items.map((item) => <li key={item.variantId} className="mb-3">
         <p>{item.title} · {item.sku} · {item.quantity} шт. × {money(item.priceMinor, cart.currency)}</p>
@@ -177,9 +177,9 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
         {item.issues.map((issue) => <p key={issue} className="text-amber-300">{issue === "ITEM_UNAVAILABLE" ? "Товар больше недоступен." : messages[issue]}</p>)}
         {lineErrors[item.variantId] && <p className="text-amber-300">{lineErrors[item.variantId]}</p>}
       </li>)}</ul><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
-        {!cart.canCheckout && <p className="text-amber-300">Устраните проблемы товаров в корзине перед оформлением.</p>}
+        {!cart.canCheckout && <p className="text-amber-300">Проверьте отмеченные товары в корзине.</p>}
         {priceConfirmation && <label className="mt-3 flex min-h-11 items-center gap-3"><input type="checkbox" checked={priceConfirmed}
-          onChange={(event) => setPriceConfirmed(event.target.checked)} />Подтверждаю новую цену и итог заказа</label>}
+          onChange={(event) => setPriceConfirmed(event.target.checked)} />Я проверил и принимаю новую сумму заказа</label>}
       </section>}
       <form ref={form} noValidate onSubmit={(event) => { event.preventDefault(); void submit(); }} className="space-y-5">
         {(Object.keys(labels) as (keyof Fields)[]).map((name) => <div key={name}>
@@ -204,8 +204,8 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
         </section>)}
         <div className="sticky bottom-0 border-t border-slate-700 bg-slate-950 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button type="submit" disabled={pending || readOnly || !cart?.canCheckout || !legalReady || !accepted.SALES_TERMS || !accepted.PRIVACY || (priceConfirmation && !priceConfirmed)}
-            className="min-h-11 w-full rounded-lg bg-blue-600 px-4 disabled:opacity-40">{pending ? "Отправка…" : "Подтвердить заказ"}</button>
-          {pending && <span role="status" className="animate-pulse">Создание заказа…</span>}
+            className="min-h-11 w-full rounded-lg bg-blue-600 px-4 disabled:opacity-40">{pending ? "Отправка…" : "Создать заказ"}</button>
+          {pending && <span role="status" className="animate-pulse">Создаём заказ…</span>}
         </div>
       </form>
     </>}

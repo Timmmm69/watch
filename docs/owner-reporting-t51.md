@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # Рабочий обзор и аналитика владельца — T51
 
 В native-режиме существующие `/admin` и `/admin/analytics` открывают отчёт владельца. Источники — PostgreSQL T46–T50: коммерческие снимки OrderItem, native-склад/приёмки, Returns, ручные деньги, расходы и их проверка, существующий Commission/Ledger/Payout. Google Таблица не участвует в текущих остатках или отчётах. Исторические экраны прежнего режима сохранены.

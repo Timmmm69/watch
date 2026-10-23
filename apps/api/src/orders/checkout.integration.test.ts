@@ -103,7 +103,7 @@ describe.skipIf(!pool)("T30 earnings and S12 financial data gate", () => {
     const earnings = new PartnerEarningsService(pool!);
     const result = await earnings.list(partner,{ page: 1,limit: 1 });
     expect(result).toMatchObject({ availableAmountMinor: -40,pendingAmountMinor: 0,total: 1,items: [{ state: "EARNED",netEarnedAmountMinor: 60 }] });
-    expect(JSON.stringify(result)).not.toMatch(/Buyer Name|375|Minsk|Private comment|buyer_user_id/);
+    expect(JSON.stringify(result)).not.toMatch(/Buyer Name|375291234567|Minsk|Private comment|buyer_user_id/);
     expect(await earnings.list(partner,{ page: 2,limit: 1 })).toMatchObject({ availableAmountMinor: -40,total: 1,items: [] });
     expect(await earnings.list(randomUUID(),{ page: 1,limit: 1 })).toMatchObject({ availableAmountMinor: 0,total: 0,items: [] });
     await verifyS12FinancialData(pool!);

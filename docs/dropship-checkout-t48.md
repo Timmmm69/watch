@@ -1,3 +1,5 @@
+> Current business authority: [FULL_BUILD_SPEC.md Section 31](../FULL_BUILD_SPEC.md#31-final-business-decision--2026-10-22), dated 2026-10-22. New sales use referral buyer checkout, fixed SKU commissions and native PostgreSQL inventory. Conflicting markup/Sheets workflow instructions below are historical; see [current operation](referral-native-commerce.md).
+
 # T48 — оформление заказа дропшиппером
 
 В native-режиме (`INVENTORY_PROVIDER=native`) необходимы применённые миграции T46/T47, сверенный native-остаток, опубликованная карточка с D/фото/описанием и действующие документы условий/обработки данных. T48 проверена только локально; production и отгрузка не сертифицированы.

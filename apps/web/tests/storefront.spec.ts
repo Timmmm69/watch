@@ -30,15 +30,15 @@ test("searches, filters, pages, and resets the buyer catalog", async ({ page }) 
   await page.getByRole("button", { name: "Часы" }).click();
   await expect.poll(() => queries.at(-1)?.get("category")).toBe("watches");
   await page.getByLabel("Поиск товаров").fill("No match");
-  await page.getByRole("button", { name: "Найти" }).click();
-  await expect(page.getByText("По вашему запросу товары не найдены.")).toBeVisible();
+  await page.getByRole("button", { name: "Найти товары" }).click();
+  await expect(page.getByText("По выбранным условиям ничего не найдено.")).toBeVisible();
   await page.getByRole("button", { name: "Сбросить фильтры" }).click();
   await expect(page.getByRole("button", { name: /Casio Classic/ })).toBeVisible();
   await page.getByRole("button", { name: "Фильтры" }).click();
   await page.getByLabel("Бренд").fill("Casio");
   await page.getByLabel("Цена от").fill("50");
   await page.getByLabel("Наличие").selectOption("UNKNOWN");
-  await page.getByRole("button", { name: "Показать" }).click();
+  await page.getByRole("button", { name: "Показать товары" }).click();
   await expect.poll(() => queries.at(-1)?.get("minPriceMinor")).toBe("5000");
   expect(queries.at(-1)?.get("brand")).toBe("Casio");
   expect(queries.at(-1)?.get("availability")).toBe("UNKNOWN");

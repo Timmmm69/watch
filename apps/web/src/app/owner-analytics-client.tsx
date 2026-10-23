@@ -89,23 +89,23 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
       </section>
       <section className="space-y-3" aria-label="Результаты когорты"><h2 className="text-xl">Заказы по дате создания · Europe/Minsk</h2>
         <p>Текущие исходы заказов выбранного периода. Незавершённые заказы, включая доставленные с hold, показаны отдельно. Поздние возвраты уточняют эту же когорту.</p>
-        {c.orders===0 && <p>В выбранном периоде нет новых заказов дропшипперов.</p>}
+        {c.orders===0 && <p>В выбранном периоде нет новых заказов.</p>}
         <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[
-          ["Создано заказов",c.orders], ["Стоимость созданных заказов по R (не выручка)",fmt(c.createdValueRMinor)],
+          ["Создано заказов",c.orders], ["Стоимость созданных заказов",fmt(c.createdValueRMinor)],
           ["Незавершённые заказы",c.unfinishedOrders], ["Удержанные завершённые заказы / единицы",`${c.retainedOrders} / ${c.retainedUnits}`],
-          ["Удержанные товары по R",fmt(c.retainedRMinor)], ["Удержанные товары по D",fmt(c.retainedDMinor)],
-          ["Наценка дропов удержанных продаж (R−D)",fmt(c.markupMinor)], ["Отмены / невыкупы",`${c.cancelledOrders} / ${c.failedOrders}`],
+          ["Розничная стоимость удержанных товаров",fmt(c.retainedRMinor)], ["Удержанные продажи за вычетом комиссии",fmt(c.retainedDMinor)],
+          ["Комиссии удержанных продаж",fmt(c.markupMinor)], ["Отмены / невыкупы",`${c.cancelledOrders} / ${c.failedOrders}`],
           ["Заказы с возвратами / единицы",`${c.returnedOrders} / ${c.returnedUnits}`], ["Доля отмен среди созданных",percent(c.cancellationRate)],
           ["Возвраты среди доставленных",percent(c.returnRate)]
         ].map(([label,value])=><div className="rounded border border-slate-700 p-4" key={label}><dt>{label}</dt><dd className="mt-2 text-xl">{value}</dd></div>)}</dl>
         <h3 className="text-lg">Вклад владельца по закрытым заказам</h3><p>{coverage(c.contribution)}</p>
-        <p>D удержанных товаров − закупка отправленных товаров + стоимость принятых пригодных возвратов − фактические прямые расходы.
+        <p>Продажи за вычетом комиссии − закупка отправленных товаров + стоимость принятых пригодных возвратов − фактические прямые расходы.
           Сюда входят потери и расходы отмен/невыкупов этой когорты. Потери не вычитаются повторно. Это вклад до налогов и постоянных расходов.</p>
         <p>Неизвестная закупка, непроверенные расходы, открытый возврат или незавершённая приёмка делают полный вклад недоступным. Проверенный нулевой расход учитывается как 0.</p>
         {report.legacyOrdersExcluded>0 && <p>Исторические заказы прежней модели в периоде: {report.legacyOrdersExcluded}. Исключены из новой экономики; доступны в списке заказов.</p>}
       </section>
-      <section aria-label="Обязательства дропшипперам" className="space-y-3"><h2 className="text-xl">Расчёты с дропшипперами · все даты</h2><p>{settlement(report.obligations)}</p>
-        <p>Текущие балансы существующего журнала, включая исторические начисления. Долг считается по каждому дропу и не скрывается доходами других. Выплачено — подтверждённые переводы за всё время; позднее сторно не переписывает их.</p>
+      <section aria-label="Обязательства партнёрам" className="space-y-3"><h2 className="text-xl">Расчёты с партнёрами · все даты</h2><p>{settlement(report.obligations)}</p>
+        <p>Текущие балансы существующего журнала, включая исторические начисления. Долг считается по каждому партнёру и не скрывается доходами других. Выплачено — подтверждённые переводы за всё время; позднее сторно не переписывает их.</p>
       </section>
       <section className="space-y-3" aria-label="Потоки за период"><h2 className="text-xl">Отдельные потоки за выбранный период</h2>
         <p>Фактические доставки по delivered_at: {report.deliveries.orders} заказов / {report.deliveries.units} единиц до последующих возвратов.</p>
@@ -113,21 +113,21 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
         <p>Эти потоки могут относиться к заказам других периодов; они не входят в формулу вклада выбранной когорты.</p>
       </section>
       <p>Таблицы можно прокручивать по горизонтали.</p>
-      <ReportTable label="Товары (SKU)" headers={["SKU / модель","Остаток / резерв / доступно сейчас","Удержанные единицы / D","Возвраты / отменённые единицы","Вклад владельца"]}>
+      <ReportTable label="Товары (SKU)" headers={["SKU / модель","Остаток / резерв / доступно сейчас","Удержанные единицы / продажи за вычетом комиссии","Возвраты / отменённые единицы","Вклад владельца"]}>
         {report.skus.map(s=><tr key={s.variantId}><th scope="row" className={cell}><Link className="underline" href={`/admin/products/${s.productId}`}>{s.sku}</Link><p>{s.title}</p></th>
           <td className={cell}>{s.onHand??"Нет данных"} / {s.reserved} / {s.sellable??"Нет данных"}</td><td className={cell}>{s.retainedUnits} / {fmt(s.retainedDMinor)}</td>
           <td className={cell}>{s.returnedUnits} / {s.cancelledUnits}</td><td className={cell}>{coverage(s.contribution)}</td></tr>)}
       </ReportTable>
       <p>Остаток — текущий, продажи — когорта периода. Таблица помогает пополнять продающиеся SKU и разбирать возвраты. Отсутствие продаж без истории доступности не доказывает залежалость.
         Общие расходы заказа распределены между SKU по исходным единицам с сохранением копеек; покрытие — по полностью известным заказам.</p>
-      <ReportTable label="Дропшипперы" headers={["Дроп","Создано / незавершено / доставлено","Удержанные заказы / единицы / D","Вклад владельца","Наценка удержанных продаж","Отмены / невыкупы / возвраты","Расчёты · все даты"]}>
+      <ReportTable label="Партнёры" headers={["Партнёр","Создано / незавершено / доставлено","Удержанные заказы / единицы / продажи за вычетом комиссии","Вклад владельца","Комиссии удержанных продаж","Отмены / невыкупы / возвраты","Расчёты · все даты"]}>
         {report.drops.map(d=><tr key={d.partnerId}><th scope="row" className={cell}><Link className="underline" href={`/admin/partners/${d.partnerId}`}>{d.name}</Link></th>
           <td className={cell}>{d.orders} / {d.unfinishedOrders} / {d.deliveredOrders}</td><td className={cell}>{d.retainedOrders} / {d.retainedUnits} / {fmt(d.retainedDMinor)}</td>
           <td className={cell}>{coverage(d.contribution)}</td><td className={cell}>{fmt(d.markupMinor)}</td><td className={cell}>{d.cancelledOrders} / {d.failedOrders} / {d.returnedOrders} ({d.returnedUnits} ед.)</td>
           <td className={cell}>{settlement(d.obligations)}</td></tr>)}
       </ReportTable>
-      <p>Сравнивайте удержанные результаты и вклад дропов; свежие незавершённые заказы требуют наблюдения. Причины отмен и возвратов доступны в рабочих очередях и карточках.</p>
-      <ReportTable label="Сверка с заказами когорты" headers={["Заказ / исход","Удержанные единицы / R / D","Вклад / качество данных"]}>
+      <p>Сравнивайте удержанные результаты и вклад партнёров; свежие незавершённые заказы требуют наблюдения. Причины отмен и возвратов доступны в рабочих очередях и карточках.</p>
+      <ReportTable label="Сверка с заказами когорты" headers={["Заказ / исход","Удержанные единицы / розница / за вычетом комиссии","Вклад / качество данных"]}>
         {report.orders.map(o=><tr key={o.id}><th scope="row" className={cell}><Link className="underline" href={`/admin/orders/${o.id}`}>{o.number}</Link><p>{o.status}</p></th>
           <td className={cell}>{o.retainedUnits} / {fmt(o.retainedRMinor)} / {fmt(o.retainedDMinor)}</td><td className={cell}>{fmt(o.contributionMinor)}<p>{o.limitations.join("; ")}</p></td></tr>)}
       </ReportTable>

@@ -94,7 +94,7 @@ export class CartService {
       const variant = (await client.query<{ status: string; currency: string }>("SELECT status, currency FROM product_variants WHERE id = $1 FOR SHARE", [variantId])).rows[0]!;
       if (variant.status !== "ACTIVE") throw new CartError("VARIANT_NOT_ACTIVE");
       if (variant.currency !== this.currency) throw new CartError("INTERNAL_INVARIANT_VIOLATION");
-      const row = (await client.query<LineRow>("SELECT * FROM inventory_items WHERE variant_id = $1 FOR SHARE", [variantId])).rows[0];
+      const row = (await client.query<LineRow>("SELECT *, EXISTS(SELECT 1 FROM inventory_authority) AS native_authority FROM inventory_items WHERE variant_id = $1 FOR SHARE", [variantId])).rows[0];
       if (!row) throw new CartError("INVENTORY_UNKNOWN");
       row.active_reservations = (await client.query<{ quantity: string }>(
         "SELECT COALESCE(SUM(quantity), 0)::text AS quantity FROM inventory_reservations WHERE variant_id = $1 AND status = 'ACTIVE'", [variantId])).rows[0]!.quantity;

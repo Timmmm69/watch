@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { lockOrderCommissions, releaseCommission } from "../finance/commissions.js";
+import { usesNativeInventory } from "../inventory/native.js";
 import { orderMoneyCoverage } from "../finance/coverage.js";
 
 /** Caller holds Partner → Order → OrderItems. Original hold is never restarted. */
@@ -28,8 +29,8 @@ export class OrderCompletionWorker {
         "SELECT partner_id_snapshot FROM orders WHERE id=$1", [id])).rows[0];
       if (owner?.partner_id_snapshot)
         await client.query("SELECT id FROM partners WHERE id=$1 FOR UPDATE", [owner.partner_id_snapshot]);
-      const order = (await client.query<{ public_number: string; status: string; economic_regime: string; completion_eligible_at: Date | null }>(
-        "SELECT public_number,status,economic_regime,completion_eligible_at FROM orders WHERE id=$1 FOR UPDATE", [id])).rows[0];
+      const order = (await client.query<{ public_number: string; status: string; economic_regime: string; inventory_mode?: string | null; completion_eligible_at: Date | null }>(
+        "SELECT *,to_jsonb(orders)->>'inventory_mode' AS inventory_mode FROM orders WHERE id=$1 FOR UPDATE", [id])).rows[0];
       // Separate reads after acquiring the lock see Returns committed while we waited.
       const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
       if (!order || order.status !== "DELIVERED" || !order.completion_eligible_at || order.completion_eligible_at > now) {
@@ -38,7 +39,7 @@ export class OrderCompletionWorker {
       }
       await client.query("SELECT id FROM order_items WHERE order_id=$1 ORDER BY id FOR UPDATE", [id]);
       await releaseUnaffectedCommissions(client, id, now);
-      if (order.economic_regime === "DROPSHIP_MARKUP" && !(await orderMoneyCoverage(client, id)).covered) {
+      if (usesNativeInventory(order) && !(await orderMoneyCoverage(client, id)).covered) {
         await client.query("COMMIT");
         return false;
       }
