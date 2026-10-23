@@ -6,8 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { OwnerReport, OwnerWork, OwnerQueue } from "../../../../packages/contracts/src/index";
 
 const inputClass = "min-h-11 rounded border border-slate-600 bg-slate-900 p-2";
-const queueLabels: Record<OwnerQueue,string> = { new:"Новые заказы",overdue:"Зависшие заказы",unpaid:"Недостающая оплата после доставки",
-  returns:"Возвраты: обработка, приёмка или возмещение",payouts:"Выплаты к обработке",inventory:"Существенные ошибки склада" };
+const queueLabels: Record<OwnerQueue,string> = { new:"Новые заказы",overdue:"Заказы с задержкой",unpaid:"Оплата не подтверждена после доставки",
+  returns:"Возвраты: обработка, приёмка или возмещение",payouts:"Выплаты к обработке",inventory:"Ошибки склада" };
 const minskDate = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone:"Europe/Minsk",year:"numeric",month:"2-digit",day:"2-digit" }).format(date);
 const shift = (date: string, days: number) => new Date(Date.parse(date)+days*86400000).toISOString().slice(0,10);
 // Date input represents Minsk midnight; the end is exclusive.
@@ -62,7 +62,7 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
     {v.payoutBlocked && <p className="text-amber-300">Текущие факты блокируют новую выплату. Проверьте оплату и возвраты.</p>}</>;
   return <main className="min-h-screen min-w-0 space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/orders">Заказы</Link>
-      <Link href="/admin/returns">Возвраты</Link><Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Инвентарь</Link>
+      <Link href="/admin/returns">Возвраты</Link><Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Склад</Link>
       <Link href="/admin/partners">Дропшипперы</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/shop">Магазин</Link></nav>
     <h1 className="text-2xl font-semibold">{queue ? "Рабочая очередь" : dashboard ? "Рабочий обзор владельца" : "Аналитика владельца"}</h1>
     {!blocked && !queue && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">
@@ -73,10 +73,10 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
         const to=shift(minskDate(new Date()),1), next={from:shift(to,-days),to};setDates(next);setQuery(params(next));}}>Последние {days} дней</button>)}
     </form>}
     {!blocked && <button className={inputClass} disabled={loading} onClick={()=>void load()}>Обновить</button>}
-    {error && <p role="alert">{error}</p>}{loading && <p role="status">Загрузка показателей…</p>}
+    {error && <p role="alert">{error}</p>}{loading && <p role="status">Загружаем показатели…</p>}
     {!blocked && work && <section className="space-y-4" aria-label="Список рабочей очереди"><h2 className="text-xl">{queueLabels[work.queue]} · {work.total}</h2>
-      <p>Текущая очередь по всем датам. Счётчики меняются при обработке.</p>
-      {work.total===0 && <p>Открытых задач нет.</p>}
+      <p>Показаны все текущие задачи независимо от даты создания.</p>
+      {work.total===0 && <p>Задач, требующих действия, сейчас нет.</p>}
       <ul className="space-y-3">{work.items.map(i=><li key={i.id} className="rounded border border-slate-700 p-4"><Link className="underline" href={i.href}>{i.label}</Link><p className="break-words">{i.detail}</p></li>)}</ul>
       <div className="flex flex-wrap gap-5">{work.page>1 && <Link href={`/admin/analytics?queue=${work.queue}&page=${work.page-1}`}>Назад</Link>}
         <span>Страница {work.page}</span>{work.page*work.limit<work.total && <Link href={`/admin/analytics?queue=${work.queue}&page=${work.page+1}`}>Далее</Link>}</div>
@@ -85,7 +85,7 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
       <section aria-label="Рабочие очереди" className="space-y-3"><h2 className="text-xl">Что требует действия сейчас</h2><p>Все даты; по состоянию на {new Date(report.asOf).toLocaleString("ru-BY",{timeZone:"Europe/Minsk"})} (Минск).</p>
         <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{(Object.keys(queueLabels) as OwnerQueue[]).map(key=><div className="rounded border border-slate-700 p-4" key={key}>
           <dt><Link className="underline" href={`/admin/analytics?queue=${key}`}>{queueLabels[key]}</Link></dt>
-          <dd className="mt-2 text-2xl">{key==='overdue' && !report.overdueConfigured ? "SLA не настроен" : report.queues[key]}</dd></div>)}</dl>
+          <dd className="mt-2 text-2xl">{key==='overdue' && !report.overdueConfigured ? "Срок обработки не настроен" : report.queues[key]}</dd></div>)}</dl>
       </section>
       <section className="space-y-3" aria-label="Результаты когорты"><h2 className="text-xl">Заказы по дате создания · Europe/Minsk</h2>
         <p>Текущие исходы заказов выбранного периода. Незавершённые заказы, включая доставленные с hold, показаны отдельно. Поздние возвраты уточняют эту же когорту.</p>
@@ -112,7 +112,7 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
         <p>Денежные операции по фактической дате: получено {fmt(report.cash.receiptsMinor)}, возвращено {fmt(report.cash.refundsMinor)}, корректировки {fmt(report.cash.correctionsMinor)}, нетто {fmt(report.cash.netMinor)}.</p>
         <p>Эти потоки могут относиться к заказам других периодов; они не входят в формулу вклада выбранной когорты.</p>
       </section>
-      <p>Таблицы можно прокручивать по горизонтали.</p>
+      <p>Проведите по таблице в сторону, чтобы увидеть остальные столбцы.</p>
       <ReportTable label="Товары (SKU)" headers={["SKU / модель","Остаток / резерв / доступно сейчас","Удержанные единицы / продажи за вычетом комиссии","Возвраты / отменённые единицы","Вклад владельца"]}>
         {report.skus.map(s=><tr key={s.variantId}><th scope="row" className={cell}><Link className="underline" href={`/admin/products/${s.productId}`}>{s.sku}</Link><p>{s.title}</p></th>
           <td className={cell}>{s.onHand??"Нет данных"} / {s.reserved} / {s.sellable??"Нет данных"}</td><td className={cell}>{s.retainedUnits} / {fmt(s.retainedDMinor)}</td>

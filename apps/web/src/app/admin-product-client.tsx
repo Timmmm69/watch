@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { MAX_IMAGE_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES } from "@watch/contracts";
-import { AdminCatalogLayout, Field, StatusOptions, buttonClass, inputClass, jsonObject, readCategories,
+import { AdminCatalogLayout, Field, StatusOptions, productStatusLabels, categoryStatusLabels, variantStatusLabels, buttonClass, inputClass, jsonObject, readCategories,
   useAdminCatalogApi, type Asset, type Category, type Product, type Variant } from "./admin-catalog-common";
 
 export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string; productId: string }) {
@@ -26,39 +26,39 @@ export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string
         title: String(form.get("title")), description: String(form.get("description")), brand: String(form.get("brand")) || null,
         specifications: jsonObject(form.get("specifications")), categoryIds: form.getAll("categoryIds").map(String), status
       }); await refresh(); api.setNotice("Товар сохранён.");
-    }, status !== product?.status ? `Изменить статус товара на ${status}? Сервер проверит условия публикации.` : undefined);
+    }, status !== product?.status ? `Изменить статус товара на ${productStatusLabels[status] ?? "Статус уточняется"}? Сервер проверит условия публикации.` : undefined);
   };
   return <AdminCatalogLayout title={product ? product.title : "Товар"} back="/admin/catalog">
     {api.error && <p role="alert" className="text-amber-300">{api.error}</p>}{api.notice && <p role="status">{api.notice}</p>}
     {api.denied ? <p>Редактирование недоступно.</p> : <>
       <button className={buttonClass} disabled={api.busy} onClick={() => setRetry(n => n + 1)}>Обновить</button>
-      {!product && !api.error && <p role="status">Загрузка товара…</p>}
+      {!product && !api.error && <p role="status">Загружаем товар…</p>}
       {product && <fieldset disabled={api.busy} className="space-y-5">
-        <p>ACTIVE требует активную категорию, активный корректный вариант и активное изображение витрины. Удаление последнего обязательного элемента проверяется сервером.</p>
+        <p>Для публикации нужны активная категория, доступный вариант товара и изображение. При сохранении система проверит требования.</p>
         <form key={product.updatedAt} aria-label="Редактирование товара" className="space-y-3 rounded bg-slate-900 p-4" onSubmit={saveCore}>
           <Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} defaultValue={product.title} /></Field>
-          <Field label="Slug товара"><input className={inputClass} readOnly value={product.slug} /></Field><p>Slug создаётся сервером и не изменяется существующим API.</p>
+          <Field label="Адрес товара (slug)"><input className={inputClass} readOnly value={product.slug} /></Field><p>Адрес товара создаётся автоматически и после создания не меняется.</p>
           <Field label="Описание"><textarea className={inputClass} name="description" defaultValue={product.description} /></Field>
           <Field label="Бренд"><input className={inputClass} name="brand" maxLength={120} defaultValue={product.brand ?? ""} /></Field>
-          <Field label="Характеристики (JSON)"><textarea className={inputClass} name="specifications" defaultValue={JSON.stringify(product.specifications, null, 2)} /></Field>
+          <Field label="Характеристики товара (JSON)"><textarea className={inputClass} name="specifications" defaultValue={JSON.stringify(product.specifications, null, 2)} /></Field>
           <fieldset className="space-y-2"><legend>Категории товара</legend>{categories.length === 0 && <p>Сначала создайте категорию в каталоге.</p>}
             {categories.map(category => <label key={category.id} className="block"><input type="checkbox" name="categoryIds" value={category.id}
-              defaultChecked={product.categories.some(c => c.id === category.id)} /> {category.name} · {category.status}</label>)}
+              defaultChecked={product.categories.some(c => c.id === category.id)} /> {category.name} · {categoryStatusLabels[category.status] ?? "Статус уточняется"}</label>)}
           </fieldset>
-          <Field label="Статус товара"><select className={inputClass} name="status" defaultValue={product.status}><StatusOptions current={product.status} /></select></Field>
+          <Field label="Статус товара"><select className={inputClass} name="status" defaultValue={product.status}><StatusOptions current={product.status} labels={productStatusLabels} /></select></Field>
           <button className={buttonClass}>Сохранить товар</button>
         </form>
         <section className="space-y-4" aria-label="Варианты"><h2 className="text-xl">Варианты</h2>
           <p>Денежные значения — целые числа в минимальных единицах валюты (100 = 1). SKU после создания не изменяется.</p>
-          {product.variants.length === 0 && <p>Вариантов нет</p>}
+          {product.variants.length === 0 && <p>Вариантов товара пока нет.</p>}
           {product.variants.map(variant => <VariantForm key={`${variant.id}:${variant.updatedAt}:${variant.inventory?.safetyBuffer}`} variant={variant} mutate={api.mutate}
             save={async payload => { await api.request(`/api/v1/admin/variants/${variant.id}`, "PATCH", payload); await refresh(); api.setNotice("Вариант сохранён."); }} />)}
           <VariantForm mutate={api.mutate} save={async payload => {
-            await api.request(`/api/v1/admin/products/${product.id}/variants`, "POST", payload); await refresh(); api.setNotice("Вариант DRAFT создан. Настройте статус и резерв.");
+            await api.request(`/api/v1/admin/products/${product.id}/variants`, "POST", payload); await refresh(); api.setNotice("Черновик варианта создан. Проверьте его настройки перед публикацией.");
           }} />
         </section>
         <section aria-label="Материалы" className="space-y-4"><h2 className="text-xl">Материалы</h2>
-          <p>IMAGE: JPEG/PNG/WebP до 10 MiB. VIDEO: MP4/WebM до 50 MiB. В native-режиме остатки ведутся журналом приложения.</p>
+          <p>Фото: JPEG, PNG или WebP до 10 МиБ. Видео: MP4 или WebM до 50 МиБ.</p>
           <AssetCreateForm variants={product.variants} mutate={api.mutate} save={async (type, form) => {
             if (type === "TEXT") {
               await api.request(`/api/v1/admin/products/${product.id}/assets/text`, "POST", {
@@ -69,7 +69,7 @@ export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string
               if (!(file instanceof File) || !file.size) throw new Error("Выберите файл.");
               const allowed = type === "IMAGE" ? ["image/jpeg", "image/png", "image/webp"] : ["video/mp4", "video/webm"];
               const limit = type === "IMAGE" ? MAX_IMAGE_UPLOAD_BYTES : MAX_VIDEO_UPLOAD_BYTES;
-              if (!allowed.includes(file.type) || file.size > limit) throw new Error(`Недопустимый формат или размер. ${type}: максимум ${limit / 1024 / 1024} MiB.`);
+              if (!allowed.includes(file.type) || file.size > limit) throw new Error(`Файл не подходит по типу или размеру. ${assetTypeLabels[type] ?? "Файл"}: максимум ${limit / 1024 / 1024} MiB.`);
               const upload = new FormData(); upload.set("purpose", String(form.get("purpose")));
               if (form.get("variantId")) upload.set("variantId", String(form.get("variantId")));
               upload.set("file", file);
@@ -99,29 +99,32 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     }, variant && (status !== variant.status || String(form.get("externalKey")) !== variant.inventoryExternalKey)
       ? "Изменить статус или внешний ключ варианта? Изменение ключа сбрасывает снимок остатков и проверяется сервером." : undefined);
   }}>
-    <h3>{variant ? `${variant.sku} · ${variant.status} · ${variant.currency}` : "Новый вариант DRAFT"}</h3>
+    <h3>{variant ? `${variant.sku} · ${variantStatusLabels[variant.status] ?? "Статус уточняется"} · ${variant.currency}` : "Новый вариант (черновик)"}</h3>
     <Field label="SKU"><input className={inputClass} name="sku" required maxLength={100} readOnly={!!variant} defaultValue={variant?.sku} /></Field>
-    <Field label="Атрибуты (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
+    <Field label="Свойства варианта (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
     <Field label="Розничная цена (minor)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
     <p>Единая цена для всех покупателей. Изменение цены требует подтверждения при оформлении; существующие заказы сохраняют свои снимки.</p>
-    <Field label="Комиссия (minor)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
-    <Field label="Расчёт с поставщиком (minor, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
-    <Field label="Внешний ключ остатков"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>
+    <Field label="Комиссия за единицу (в копейках)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
+    <Field label="Расчёт с поставщиком (в копейках, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
+    <Field label="Ключ товара во внешнем источнике"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>
     {variant && <><Field label="Страховой резерв"><input className={inputClass} name="safetyBuffer" type="number" required min={0} step={1} defaultValue={variant.inventory?.safetyBuffer ?? 0} /></Field>
       <Field label="Статус варианта"><select className={inputClass} name="status" defaultValue={variant.status}><StatusOptions current={variant.status} /></select></Field></>}
     <button className={buttonClass}>{variant ? "Сохранить вариант" : "Создать вариант"}</button>
   </form>;
 }
-function PurposeOptions() { return <><option>STOREFRONT</option><option>PARTNER_CONTENT</option></>; }
+const assetTypeLabels: Record<string, string> = { IMAGE: "Фото", VIDEO: "Видео", TEXT: "Текст" };
+const assetPurposeLabels: Record<string, string> = { STOREFRONT: "Для магазина", PARTNER_CONTENT: "Для партнёров" };
+
+function PurposeOptions() { return <><option value="STOREFRONT">{assetPurposeLabels.STOREFRONT}</option><option value="PARTNER_CONTENT">{assetPurposeLabels.PARTNER_CONTENT}</option></>; }
 function AssetCreateForm({ variants, mutate, save }: Omit<FormActions, "save"> & { variants: Variant[]; save: (type: string, form: FormData) => Promise<void> }) {
   const [type, setType] = useState("IMAGE");
   return <form aria-label="Новый материал" className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element);
     void mutate(async () => { await save(type, form); element.reset(); setType("IMAGE"); });
   }}>
-    <Field label="Тип материала"><select className={inputClass} value={type} onChange={event => setType(event.target.value)}><option>IMAGE</option><option>VIDEO</option><option>TEXT</option></select></Field>
+    <Field label="Тип материала"><select className={inputClass} value={type} onChange={event => setType(event.target.value)}><option value="IMAGE">Фото</option><option value="VIDEO">Видео</option><option value="TEXT">Текст</option></select></Field>
     <Field label="Назначение материала"><select className={inputClass} name="purpose"><PurposeOptions /></select></Field>
-    <Field label="Вариант материала"><select className={inputClass} name="variantId"><option value="">Весь товар</option>{variants.map(v => <option key={v.id} value={v.id}>{v.sku}</option>)}</select></Field>
+    <Field label="Вариант материала"><select className={inputClass} name="variantId"><option value="">Для всех вариантов</option>{variants.map(v => <option key={v.id} value={v.id}>{v.sku}</option>)}</select></Field>
     {type === "TEXT" ? <Field label="Текст материала"><textarea className={inputClass} name="text" required maxLength={10000} /></Field>
       : <Field label="Файл материала"><input key={type} className={inputClass} name="file" type="file" required accept={type === "IMAGE" ? "image/jpeg,image/png,image/webp" : "video/mp4,video/webm"} /></Field>}
     <button className={buttonClass}>Добавить материал</button>
@@ -133,7 +136,7 @@ function AssetForm({ asset, mutate, save }: FormActions & { asset: Asset }) {
     void mutate(async () => { await save({ purpose, status, sortOrder: Number(form.get("sortOrder")), ...(asset.type === "TEXT" ? { text: String(form.get("text")) } : {}) }); },
       purpose !== asset.purpose || status !== asset.status ? "Изменить назначение или статус материала? Сервер проверит условия публикации товара." : undefined);
   }}>
-    <h3>{asset.type} · {asset.purpose} · {asset.status}</h3><p>ID: {asset.id} · Вариант: {asset.variantId ?? "весь товар"} · Размер: {asset.sizeBytes ?? "—"}</p>
+    <h3>{assetTypeLabels[asset.type] ?? "Тип уточняется"} · {assetPurposeLabels[asset.purpose] ?? "Назначение уточняется"} · {variantStatusLabels[asset.status] ?? "Статус уточняется"}</h3><p>ID: {asset.id} · Вариант: {asset.variantId ?? "все варианты"} · Размер: {asset.sizeBytes ?? "—"}</p>
     {asset.mediaUrl && <a className="underline" href={asset.mediaUrl} target="_blank" rel="noreferrer">Открыть файл</a>}
     {asset.type === "TEXT" && <Field label="Текст материала"><textarea className={inputClass} name="text" required maxLength={10000} defaultValue={asset.text ?? ""} /></Field>}
     <Field label="Назначение материала"><select className={inputClass} name="purpose" defaultValue={asset.purpose}><PurposeOptions /></select></Field>

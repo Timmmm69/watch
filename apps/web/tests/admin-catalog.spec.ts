@@ -64,20 +64,20 @@ test("catalog happy path: category, DRAFT product, variant, storage image, publi
   await page.goto("/admin/catalog");
   await expect(page.getByRole("link", { name: "Часы T42", exact: true })).toBeVisible();
   const newCategory = page.getByRole("form", { name: "Новая категория", exact: true });
-  await newCategory.getByLabel("Название категории").fill("Часы"); await newCategory.getByLabel("Slug категории").fill("watches"); await newCategory.getByRole("button").click();
+  await newCategory.getByLabel("Название категории").fill("Часы"); await newCategory.getByLabel("Адрес категории (slug)").fill("watches"); await newCategory.getByRole("button").click();
   await expect(page.getByRole("form", { name: "Категория Часы", exact: true })).toBeVisible();
   const create = page.getByRole("form", { name: "Создать товар", exact: true });
-  await create.getByLabel("Название нового товара").fill("Новые часы"); await create.getByRole("button").click();
+  await create.getByLabel("Название товара").fill("Новые часы"); await create.getByRole("button").click();
   await expect(page).toHaveURL(new RegExp(`/admin/products/${id}$`));
   const core = page.getByRole("form", { name: "Редактирование товара" });
   await core.getByLabel("Бренд").fill("Casio"); await core.getByLabel("Описание", { exact: true }).fill("Описание часов");
-  await core.getByLabel("Характеристики (JSON)", { exact: true }).fill('{"case":"steel"}'); await core.getByLabel("Часы · ACTIVE", { exact: true }).check();
+  await core.getByLabel("Характеристики товара (JSON)", { exact: true }).fill('{"case":"steel"}'); await core.getByLabel("Часы · Активна", { exact: true }).check();
   await core.getByLabel("Статус товара").selectOption("ACTIVE"); await core.getByRole("button").click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("ACTIVE_STOREFRONT_IMAGE_REQUIRED"); expect(state.current().status).toBe("DRAFT");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз."); expect(state.current().status).toBe("DRAFT");
   const newVariant = page.getByRole("form", { name: "Новый вариант", exact: true });
   await newVariant.getByLabel("SKU", { exact: true }).fill("SKU-42"); await newVariant.getByLabel("Розничная цена (minor)", { exact: true }).fill("10000");
-  await newVariant.getByLabel("Комиссия (minor)", { exact: true }).fill("1000"); await newVariant.getByLabel("Расчёт с поставщиком", { exact: false }).fill("5000");
-  await newVariant.getByLabel("Внешний ключ остатков").fill("sheet-42"); await newVariant.getByRole("button").click();
+  await newVariant.getByLabel("Комиссия за единицу (в копейках)", { exact: true }).fill("1000"); await newVariant.getByLabel("Расчёт с поставщиком", { exact: false }).fill("5000");
+  await newVariant.getByLabel("Ключ товара во внешнем источнике").fill("sheet-42"); await newVariant.getByRole("button").click();
   const editVariant = page.getByRole("form", { name: "Вариант SKU-42", exact: true });
   await expect(editVariant).toBeVisible(); await editVariant.getByLabel("Статус варианта").selectOption("ACTIVE");
   await editVariant.getByLabel("Страховой резерв", { exact: true }).fill("2"); await editVariant.getByRole("button").click();
@@ -85,23 +85,23 @@ test("catalog happy path: category, DRAFT product, variant, storage image, publi
   const upload = page.getByRole("form", { name: "Новый материал", exact: true });
   await upload.getByLabel("Файл материала").setInputFiles({ name: "watch.png", mimeType: "image/png", buffer: Buffer.from([137,80,78,71]) });
   await upload.getByRole("button", { name: "Добавить материал", exact: true }).click(); await expect(page.getByRole("form", { name: `Материал ${assetId}`, exact: true })).toBeVisible();
-  await core.getByLabel("Часы · ACTIVE", { exact: true }).check(); await core.getByLabel("Статус товара").selectOption("ACTIVE"); await core.getByRole("button").click();
+  await core.getByLabel("Часы · Активна", { exact: true }).check(); await core.getByLabel("Статус товара").selectOption("ACTIVE"); await core.getByRole("button").click();
   await expect(core.getByLabel("Статус товара")).toHaveValue("ACTIVE");
   expect(state.current()).toMatchObject({ status: "ACTIVE", brand: "Casio", specifications: { case: "steel" }, description: "Описание часов" });
   await editVariant.getByLabel("Статус варианта").selectOption("ARCHIVED"); await editVariant.getByRole("button").click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("ACTIVE_VARIANT_REQUIRED"); expect(state.current().variants[0]?.status).toBe("ACTIVE");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз."); expect(state.current().variants[0]?.status).toBe("ACTIVE");
   const image = page.getByRole("form", { name: `Материал ${assetId}`, exact: true });
   await image.getByLabel("Статус материала").selectOption("ARCHIVED"); await image.getByRole("button").click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("ACTIVE_STOREFRONT_IMAGE_REQUIRED");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз.");
   expect(state.requests.find(r => r.path.endsWith("/assets/media"))?.body).toContain('name="purpose"');
-  await page.reload(); await expect(core.getByLabel("Slug товара")).toHaveValue("watch-t42");
+  await page.reload(); await expect(core.getByLabel("Адрес товара (slug)")).toHaveValue("watch-t42");
 });
 
 test("categories edit/archive/restore, product search, TEXT and VIDEO assets with purpose and order", async ({ page }) => {
   const state = await fixture(page); await page.goto("/admin/catalog");
   const form = page.getByRole("form", { name: "Категория Часы", exact: true });
-  await form.getByLabel("Название категории").fill("Наручные часы"); await form.getByLabel("Slug категории").fill("wristwatches");
-  await form.getByLabel("Порядок категории").fill("3"); await form.getByLabel("Статус категории").selectOption("ARCHIVED"); await form.getByRole("button").click();
+  await form.getByLabel("Название категории").fill("Наручные часы"); await form.getByLabel("Адрес категории (slug)").fill("wristwatches");
+  await form.getByLabel("Порядок в каталоге").fill("3"); await form.getByLabel("Статус категории").selectOption("ARCHIVED"); await form.getByRole("button").click();
   const renamed = page.getByRole("form", { name: "Категория Наручные часы", exact: true });
   await expect(renamed.getByLabel("Статус категории")).toHaveValue("ARCHIVED"); await renamed.getByLabel("Статус категории").selectOption("ACTIVE"); await renamed.getByRole("button").click();
   await expect(renamed.getByLabel("Статус категории")).toHaveValue("ACTIVE");
@@ -116,7 +116,7 @@ test("categories edit/archive/restore, product search, TEXT and VIDEO assets wit
   await text.getByLabel("Статус материала").selectOption("ARCHIVED"); await text.getByRole("button").click(); await expect(text.getByLabel("Статус материала")).toHaveValue("ARCHIVED");
   await upload.getByLabel("Тип материала").selectOption("VIDEO"); await upload.getByLabel("Назначение материала").selectOption("PARTNER_CONTENT");
   await upload.getByLabel("Файл материала").setInputFiles({ name: "watch.mp4", mimeType: "video/mp4", buffer: Buffer.from("video") }); await upload.getByRole("button", { name: "Добавить материал", exact: true }).click();
-  await expect(page.getByRole("form", { name: `Материал ${assetId.slice(0,-1)}6`, exact: true })).toContainText("VIDEO · PARTNER_CONTENT");
+  await expect(page.getByRole("form", { name: `Материал ${assetId.slice(0,-1)}6`, exact: true })).toContainText("Видео · Для партнёров");
 });
 
 test("recoverable storage failure and oversize file do not create phantom assets", async ({ page }) => {
@@ -126,7 +126,7 @@ test("recoverable storage failure and oversize file do not create phantom assets
   await upload.getByLabel("Файл материала").setInputFiles({ name: "large.png", mimeType: "image/png", buffer: Buffer.alloc(10_485_761) }); await upload.getByRole("button", { name: "Добавить материал", exact: true }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("максимум 10 MiB"); expect(state.current().assets).toHaveLength(0);
   await upload.getByLabel("Файл материала").setInputFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("image") }); await upload.getByRole("button", { name: "Добавить материал", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Файл не добавлен"); await expect(upload.getByRole("button", { name: "Добавить материал", exact: true })).toBeEnabled();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось загрузить файл: хранилище недоступно."); await expect(upload.getByRole("button", { name: "Добавить материал", exact: true })).toBeEnabled();
   await expect(page.getByText("Материалов нет", { exact: true })).toBeVisible();
 });
 
@@ -135,7 +135,7 @@ test("catalog empty/error/not-found and non-Admin flows", async ({ page }) => {
   await page.route("**/api/v1/admin/products?**", r => r.fulfill(fail ? { status: 503, json: {} } : { json: { items: [], total: 0, page: 1, limit: 20 } }));
   await page.route("**/api/v1/admin/categories?**", r => r.fulfill({ json: { items: [], total: 0, page: 1, limit: 20 } }));
   await page.goto("/admin/catalog"); await expect(page.getByRole("main").getByRole("alert")).toBeVisible(); fail = false;
-  await page.getByRole("button", { name: "Обновить", exact: true }).click(); await expect(page.getByText("Товаров нет", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Обновить", exact: true }).click(); await expect(page.getByText("Товаров пока нет.", { exact: true })).toBeVisible();
   await page.route(`**/api/v1/admin/products/${id}`, r => r.fulfill({ status: 404, json: {} })); await page.goto(`/admin/products/${id}`); await expect(page.getByRole("main").getByRole("alert")).toContainText("Запись не найдена");
   await auth(page, false); let calls = 0; await page.route("**/api/v1/admin/**", r => { calls++; return r.fulfill({ json: {} }); });
   for (const path of ["/admin/catalog", `/admin/products/${id}`, "/admin/inventory"]) {

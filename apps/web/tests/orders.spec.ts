@@ -86,7 +86,7 @@ test("notification Admin order identity is UUID and inventory route loads both p
   await page.route("**/api/v1/admin/inventory?*", (route) => route.fulfill({ json: { items: [{ variantId: "v", productTitle: "Часы", sku: "SKU-40", sourceStatus: "INVALID", availability: "UNKNOWN", sourceQuantity: null, sellable: 0, deficit: true, activeReservations: 1, reconciliationPending: 1, lastSuccessfulSyncAt: null }], total: 1, limit: 20 } }));
   await page.route("**/api/v1/admin/inventory/sync-runs?*", (route) => route.fulfill({ json: { items: [{ id: "run", status: "FAILED", startedAt: summary.createdAt, finishedAt: summary.createdAt, errorSummary: "Provider unavailable" }] } }));
   await page.goto("/admin/inventory");
-  await expect(page.getByRole("heading", { name: "Инвентарь", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Склад", exact: true })).toBeVisible();
   await expect(page.getByText("Provider unavailable")).toBeVisible();
   await expect(page.getByText("Дефицит", { exact: true })).toBeVisible();
 });

@@ -39,7 +39,7 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
     await page.getByRole("region",{name:"Партнёры",exact:true}).screenshot({path:"../../outputs/t51/drops-desktop.png"});
   });
   test("opens exact unpaid queue then existing Order/finance form; refreshed payment clears the queue",async({page})=>{
-    await page.goto("/admin"); await page.getByRole("link",{name:"Недостающая оплата после доставки",exact:true}).click();
+    await page.goto("/admin"); await page.getByRole("link",{name:"Оплата не подтверждена после доставки",exact:true}).click();
     await expect(page.getByRole("region",{name:"Список рабочей очереди"})).toContainText("· 1");
     const list=page.getByRole("region",{name:"Список рабочей очереди"});await list.getByRole("link").first().click();
     await expect(page.getByRole("region",{name:"Фактические деньги",exact:true})).toBeVisible();
@@ -47,7 +47,7 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
     await page.getByLabel("Основание записи").fill("TEST ONLY verified");await page.getByLabel("Подтверждаю, что проверил").check();
     await page.getByRole("button",{name:"Сохранить операцию"}).click();
     await expect(page.getByText("Денежное покрытие: достаточное",{exact:false})).toBeVisible();
-    await page.goto("/admin/analytics?queue=unpaid");await expect(page.getByText("Открытых задач нет.")).toBeVisible();
+    await page.goto("/admin/analytics?queue=unpaid");await expect(page.getByText("Задач, требующих действия, сейчас нет.")).toBeVisible();
   });
   test("uses Minsk midnight, preserves applied range on retry and distinguishes unknown expenses",async({page})=>{
     let fail=false;const urls:string[]=[];

@@ -29,10 +29,13 @@ export function jsonObject(value: FormDataEntryValue | null): Record<string, unk
     const result: unknown = JSON.parse(String(value || "{}"));
     if (result && typeof result === "object" && !Array.isArray(result)) return result as Record<string, unknown>;
   } catch { /* Show one actionable validation error below. */ }
-  throw new Error("Введите JSON-объект, например {\"цвет\":\"чёрный\"}.");
+  throw new Error("Укажите характеристики в формате JSON-объекта, например {\"цвет\":\"чёрный\"}.");
 }
-export function StatusOptions({ current }: { current: string }) {
-  return <>{[...new Set([current, "ACTIVE", "ARCHIVED"])].map(status => <option key={status}>{status}</option>)}</>;
+export const productStatusLabels: Record<string, string> = { DRAFT: "Черновик", ACTIVE: "Опубликован", ARCHIVED: "В архиве" };
+export const categoryStatusLabels: Record<string, string> = { ACTIVE: "Активна", ARCHIVED: "В архиве" };
+export const variantStatusLabels: Record<string, string> = { DRAFT: "Черновик", ACTIVE: "Активен", ARCHIVED: "В архиве" };
+export function StatusOptions({ current, labels = variantStatusLabels }: { current: string; labels?: Record<string, string> }) {
+  return <>{[...new Set([current, "ACTIVE", "ARCHIVED"])].map(status => <option key={status} value={status}>{labels[status] ?? "Статус уточняется"}</option>)}</>;
 }
 export function Pagination({ data, onPage }: { data: { page: number; limit: number; total: number }; onPage: (page: number) => void }) {
   return <nav className="my-4 flex items-center gap-4" aria-label="Страницы"><button className={buttonClass} disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>Назад</button>
@@ -47,8 +50,8 @@ export function AdminCatalogLayout({ title, back = "/admin", children }: { title
     return () => { button?.offClick(goBack); button?.hide(); };
   }, [router, back]);
   return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-5xl space-y-5">
-    <nav className="flex flex-wrap gap-5"><Link href="/admin">Панель администратора</Link><Link href="/admin/catalog">Каталог</Link>
-      <Link href="/admin/inventory">Инвентарь</Link><Link href="/admin/orders?reconciliationPending=true">Заказы на сверку</Link></nav>
+    <nav className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/catalog">Каталог</Link>
+      <Link href="/admin/inventory">Склад</Link><Link href="/admin/orders?reconciliationPending=true">Заказы на сверку</Link></nav>
     <h1 className="text-2xl font-semibold">{title}</h1>{children}
   </div></main>;
 }
@@ -75,14 +78,13 @@ export function useAdminCatalogApi(csrfToken: string) {
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) setDenied(true);
       const code = body.error?.code;
-      const message = code === "STORAGE_UNAVAILABLE" ? "Хранилище недоступно. Файл не добавлен. Повторите загрузку."
-        : code === "SYNC_ALREADY_RUNNING" ? "Синхронизация уже выполняется. Обновите историю запусков."
+      const message = code === "STORAGE_UNAVAILABLE" ? "Не удалось загрузить файл: хранилище недоступно. Попробуйте ещё раз."
+        : code === "SYNC_ALREADY_RUNNING" ? "Остатки уже обновляются. Проверьте историю обновлений."
         : response.status === 401 ? "Откройте приложение заново через Telegram."
-        : response.status === 403 ? "Доступ запрещён."
+        : response.status === 403 ? "У вас нет доступа к этому действию."
         : response.status === 404 ? "Запись не найдена."
-        : `${code ?? "Ошибка сервера"}: ${body.error?.message ?? "Не удалось выполнить запрос. Повторите попытку."}`;
-      const details = body.error?.details;
-      throw new Error(message + (details && Object.keys(details).length ? ` ${JSON.stringify(details)}` : ""));
+        : method === "GET" ? "Не удалось загрузить данные. Попробуйте ещё раз." : "Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз.";
+      throw new Error(message);
     }
     return body as T;
   }, []);

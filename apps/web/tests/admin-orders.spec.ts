@@ -34,7 +34,7 @@ test("list preserves filters through a failed read and retry, shows empty and pa
   await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
   await expect(page.getByLabel("Номер заказа")).toHaveValue(order.publicNumber);
   await page.getByRole("button", { name: "Обновить",exact: true }).click();
-  await expect(page.getByText("Заказов по выбранным фильтрам нет.", { exact: false })).toBeVisible();
+  await expect(page.getByText("По выбранным условиям заказов нет.", { exact: false })).toBeVisible();
 });
 test("one Session recovery followed by persistent denial clears detail and blocks actions", async ({ page }) => {
   let sessions = 0,reads = 0;
@@ -76,16 +76,16 @@ test("manual reconciliation requires explicit attestation and refreshes a change
   });
   await page.goto(`/admin/orders/${id}`);
   await page.getByRole("button", { name: "Подтвердить списание резерва" }).click();
-  await page.getByLabel("Причина сверки").fill("Отгрузка отражена в таблице");
+  await page.getByLabel("Причина корректировки").fill("Отгрузка отражена в таблице");
   await expect(page.getByRole("button", { name: "Сохранить сверку" })).toBeDisabled();
   await page.getByLabel("Подтверждаю, что показанный снимок").check();
   await page.getByRole("button", { name: "Сохранить сверку" }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Снимок остатков изменился");
-  await expect(page.getByText(`Снимок: ${nextSnapshot}`, { exact: true })).toBeVisible();
-  await expect(page.getByRole("form", { name: "Сверка резерва" })).toHaveCount(0);
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Данные об остатках изменились");
+  await expect(page.getByText(`Данные синхронизации: ${nextSnapshot}`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("form", { name: "Сверка складского резерва" })).toHaveCount(0);
   await page.getByRole("button", { name: "Подтвердить списание резерва" }).click();
   await expect(page.getByLabel("Подтверждаю, что показанный снимок")).not.toBeChecked();
-  await page.getByLabel("Причина сверки").fill("Проверен новый снимок");
+  await page.getByLabel("Причина корректировки").fill("Проверен новый снимок");
   await page.getByLabel("Подтверждаю, что показанный снимок").check();
   await page.getByRole("button", { name: "Сохранить сверку" }).click();
   await expect(page.getByRole("button", { name: "Подтвердить списание резерва" })).toHaveCount(0);
@@ -110,12 +110,12 @@ test("changed snapshot followed by failed refresh hides the stale decision until
   });
   await page.goto(`/admin/orders/${id}`);
   await page.getByRole("button", { name: "Подтвердить возврат резерва" }).click();
-  await page.getByLabel("Причина сверки").fill("Возврат отражён");
+  await page.getByLabel("Причина корректировки").fill("Возврат отражён");
   await page.getByLabel("Подтверждаю, что показанный снимок").check();
   await page.getByRole("button", { name: "Сохранить сверку" }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Снимок остатков изменился");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Данные об остатках изменились");
   await expect(page.getByRole("button", { name: "Подтвердить возврат резерва" })).toHaveCount(0);
-  await expect(page.getByRole("form", { name: "Сверка резерва" })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Сверка складского резерва" })).toHaveCount(0);
   failRead = false;
   await page.getByRole("button", { name: "Обновить",exact: true }).click();
   await expect(page.getByRole("button", { name: "Подтвердить возврат резерва" })).toBeVisible();
