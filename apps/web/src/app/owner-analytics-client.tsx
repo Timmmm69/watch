@@ -63,7 +63,7 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
   return <main className="min-h-screen min-w-0 space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/orders">Заказы</Link>
       <Link href="/admin/returns">Возвраты</Link><Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Склад</Link>
-      <Link href="/admin/partners">Дропшипперы</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/shop">Магазин</Link></nav>
+      <Link href="/admin/partners">Партнёры</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/shop">Магазин</Link></nav>
     <h1 className="text-2xl font-semibold">{queue ? "Рабочая очередь" : dashboard ? "Рабочий обзор владельца" : "Аналитика владельца"}</h1>
     {!blocked && !queue && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">
       <label className="grid gap-2">С даты (Минск)<input type="date" className={inputClass} required value={dates.from} onChange={e=>setDates({...dates,from:e.target.value})}/></label>
