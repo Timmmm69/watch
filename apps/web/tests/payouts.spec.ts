@@ -45,7 +45,7 @@ test("partner terms reacceptance leaves history readable but disables a new payo
   await page.route("**/api/v1/partner/earnings?**", (route) => route.fulfill({ json: earnings }));
   await page.route("**/api/v1/partner/payouts?**", (route) => route.fulfill({ json: { items: [payout], total: 1, page: 1, limit: 20 } }));
   await page.goto("/partner/payouts");
-  await expect(page.getByText("Требуется принять новые условия партнёрской программы.")).toBeVisible();
+  await expect(page.getByText("Примите обновлённые условия партнёрской программы.")).toBeVisible();
   await expect(page.getByRole("strong")).toContainText("70,00");
   await expect(page.getByRole("button", { name: "Запросить выплату" })).toHaveCount(0);
 });
@@ -86,12 +86,12 @@ test("admin confirms external transfer with a non-secret reference and shows all
     expect(route.request().postDataJSON()).toEqual({ target: "PAID", externalReference: "bank-transfer-42" }); updated = { ...payout, status: "PAID", processedAt: "2026-10-01T10:00:00.000Z", externalReference: "bank-transfer-42" }; return route.fulfill({ json: updated }); });
   await page.goto(`/admin/payouts/${payoutId}`);
   await expect(page.getByText(`Комиссия ${commissionId}`)).toBeVisible();
-  await page.getByRole("button", { name: "Отметить выплаченной" }).click();
+  await page.getByRole("button", { name: "Подтвердить выплату" }).click();
   await expect(page.getByRole("region", { name: "Подтверждение обработки выплаты" })).toContainText("после фактического завершения");
   await page.getByLabel("Внешний идентификатор перевода").fill("bank-transfer-42");
   await page.getByRole("button", { name: "Да, отметить выплаченной" }).click();
   await expect(page.getByText("Внешний идентификатор: bank-transfer-42")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Отметить выплаченной" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Подтвердить выплату" })).toHaveCount(0);
 });
 
 test("non-admin does not request payout data", async ({ page }) => {

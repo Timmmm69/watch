@@ -43,9 +43,9 @@ test.describe("T51 owner reports with real Session/API/PostgreSQL",()=>{
     await expect(page.getByRole("region",{name:"Список рабочей очереди"})).toContainText("· 1");
     const list=page.getByRole("region",{name:"Список рабочей очереди"});await list.getByRole("link").first().click();
     await expect(page.getByRole("region",{name:"Фактические деньги",exact:true})).toBeVisible();
-    await page.getByLabel("Сумма, копейки BYN").fill("29000"); await page.getByLabel("Безопасный reference").fill("TEST:t51-browser-payment");
-    await page.getByLabel("Основание записи").fill("TEST ONLY verified");await page.getByLabel("Подтверждаю проверку").check();
-    await page.getByRole("button",{name:"Записать фактическую операцию"}).click();
+    await page.getByLabel("Сумма в копейках BYN").fill("29000"); await page.getByLabel("Внутренний идентификатор операции").fill("TEST:t51-browser-payment");
+    await page.getByLabel("Основание записи").fill("TEST ONLY verified");await page.getByLabel("Подтверждаю, что проверил").check();
+    await page.getByRole("button",{name:"Сохранить операцию"}).click();
     await expect(page.getByText("Денежное покрытие: достаточное",{exact:false})).toBeVisible();
     await page.goto("/admin/analytics?queue=unpaid");await expect(page.getByText("Открытых задач нет.")).toBeVisible();
   });

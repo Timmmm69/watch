@@ -51,7 +51,7 @@ test("fresh Partner launch selects root, explicit Partner route remains authorit
   await page.goto("/");
   await expect(page).toHaveURL(/\/partner$/);
   await page.goto("/partner/earnings");
-  await expect(page.getByRole("heading", { name: "Партнёрские доходы" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Начисления" })).toBeVisible();
   expect(launches).toHaveLength(2);
 });
 
@@ -76,7 +76,7 @@ test("reaccept preserves Partner and enables generic link without duplicate fina
   });
   await page.goto("/partner");
   await expect(page.getByRole("button", { name: "Получить ссылку на магазин" })).toBeDisabled();
-  await expect(page.getByText("Продаж пока нет")).toBeVisible();
+  await expect(page.getByText("Начислений пока нет.")).toBeVisible();
   const initialFinanceReads = financeReads;
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Принять новые условия", exact: true }).click();
