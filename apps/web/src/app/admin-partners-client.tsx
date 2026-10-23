@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { AdminPartnerDetail, AdminPartnerList } from "../../../../packages/contracts/src/admin-partners";
 
+const partnerLabels: Record<string, string> = { ACTIVE: "Активен", BLOCKED: "Заблокирован" };
+const referralLinkLabels: Record<string, string> = { ACTIVE: "Активна", DISABLED: "Отключена" };
+const orderLabels: Record<string, string> = {
+  PLACED: "Создан", CONFIRMED: "Подтверждён", FULFILLING: "Собирается", SHIPPED: "Отправлен",
+  DELIVERED: "Доставлен", COMPLETED: "Завершён", CANCELLED: "Отменён", DELIVERY_FAILED: "Не доставлен"
+};
+const payoutLabels: Record<string, string> = { REQUESTED: "Ожидает обработки", PAID: "Выплачена", REJECTED: "Отклонена" };
+
 const control = "min-h-11 rounded border border-slate-600 bg-slate-900 px-3 py-2";
 const money = (n: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(n/100);
 const date = (s: string) => new Date(s).toLocaleString("ru-BY");
@@ -26,9 +34,9 @@ export function AdminPartnersScreen({ csrfToken, partnerId }: { csrfToken: strin
     }
     if (response.status === 401 || response.status === 403) {
       setDenied(true); setList(null); setDetail(null); setAction(null);
-      throw new Error("Доступ разрешён только администратору. Откройте приложение заново через Telegram.");
+      throw new Error("Этот раздел доступен только администратору. При ошибке входа откройте приложение через Telegram заново.");
     }
-    if (!response.ok) throw new Error(response.status === 404 ? "Партнёр или ссылка не найдены." : "Не удалось выполнить запрос. Обновите данные и повторите попытку.");
+    if (!response.ok) throw new Error(response.status === 404 ? "Не удалось найти партнёра или ссылку. Обновите страницу." : "Не удалось выполнить запрос. Обновите данные и повторите попытку.");
     return response.json();
   }, []);
   const refresh = useCallback(async () => {
@@ -68,39 +76,39 @@ export function AdminPartnersScreen({ csrfToken, partnerId }: { csrfToken: strin
     <h1 className="text-2xl font-semibold">{partnerId ? "Партнёр" : "Партнёры"}</h1>
     {error && <p role="alert">{error}</p>}
     {!denied && <button className={control} disabled={loading || pending || !!action} onClick={() => void refresh()}>Обновить</button>}
-    {loading && <p role="status">Загрузка партнёров…</p>}
+    {loading && <p role="status">Загружаем партнёров…</p>}
     {!partnerId && !denied && <form onSubmit={filter} className="flex flex-wrap gap-3">
-      <label>Статус<select aria-label="Статус" className={control} value={draft.status} onChange={e => setDraft({ ...draft,status: e.target.value })}><option value="">Все</option><option value="ACTIVE">ACTIVE</option><option value="BLOCKED">BLOCKED</option></select></label>
+      <label>Статус<select aria-label="Статус" className={control} value={draft.status} onChange={e => setDraft({ ...draft,status: e.target.value })}><option value="">Все</option><option value="ACTIVE">{partnerLabels.ACTIVE}</option><option value="BLOCKED">{partnerLabels.BLOCKED}</option></select></label>
       <label>Поиск<input className={control} maxLength={128} value={draft.search} onChange={e => setDraft({ ...draft,search: e.target.value })} /></label>
       <button className={control} disabled={loading}>Применить</button></form>}
-    {list && <><p>Найдено: {list.total}</p>{list.items.length === 0 && <p>Партнёры не найдены.</p>}<ul className="space-y-3">{list.items.map(p => <li key={p.id} className="space-y-2 rounded border border-slate-700 p-4">
+    {list && <><p>Найдено: {list.total}</p>{list.items.length === 0 && <p>По выбранным условиям партнёров нет.</p>}<ul className="space-y-3">{list.items.map(p => <li key={p.id} className="space-y-2 rounded border border-slate-700 p-4">
       <Link className="underline" href={`/admin/partners/${p.id}`}>{p.user.firstName} {p.user.lastName} {p.user.username && `@${p.user.username}`}</Link>
-      <p>{p.id} · {p.status} · {date(p.createdAt)}</p><p>Заказы: {p.attributedOrders} · Завершённые: {p.completedOrders} · Активные ссылки: {p.activeReferralLinks}</p>
+      <p>{p.id} · {partnerLabels[p.status] ?? "Статус уточняется"} · {date(p.createdAt)}</p><p>Заказы: {p.attributedOrders} · Завершённые: {p.completedOrders} · Активные ссылки: {p.activeReferralLinks}</p>
       <p>Ожидает: {money(p.pendingAmountMinor,p.currency)} · Доступно: {money(p.availableAmountMinor,p.currency)}</p></li>)}</ul>{pagination(list.page,list.limit,list.total)}</>}
     {detail && <>
       <section className="space-y-2 rounded border border-slate-700 p-4"><h2 className="text-xl">{detail.user.firstName} {detail.user.lastName}</h2>
-        <p>{detail.id} · {detail.status}</p><p>Telegram: {detail.user.telegramUserId} {detail.user.username && `@${detail.user.username}`}</p><p>Создан: {date(detail.createdAt)}</p>
-        {detail.user.isBlocked && <p>Пользователь глобально заблокирован.</p>}{detail.partnerTermsReacceptRequired && <p>Требуется повторное принятие условий. Разблокировка не отменяет это требование.</p>}
+        <p>{detail.id} · {partnerLabels[detail.status] ?? "Статус уточняется"}</p><p>Telegram: {detail.user.telegramUserId} {detail.user.username && `@${detail.user.username}`}</p><p>Создан: {date(detail.createdAt)}</p>
+        {detail.user.isBlocked && <p>Пользователь заблокирован во всей системе.</p>}{detail.partnerTermsReacceptRequired && <p>Партнёру нужно принять обновлённые условия. Разблокировка не заменяет согласие.</p>}
         {detail.blockReason && <p>Причина блокировки: {detail.blockReason}</p>}{detail.blockedAt && <p>Заблокирован: {date(detail.blockedAt)}</p>}
         <p>Ожидает: {money(detail.pendingAmountMinor,detail.currency)} · Доступно: {money(detail.availableAmountMinor,detail.currency)}</p>
         <p>Заказы: {detail.attributedOrders} · Завершённые: {detail.completedOrders}</p>
         <button className={control} disabled={pending || !!action} onClick={() => confirm(`/api/v1/admin/partners/${detail.id}/${detail.status === "ACTIVE" ? "block" : "unblock"}`,detail.status === "ACTIVE" ? "Заблокировать партнёра" : "Разблокировать партнёра")}>{detail.status === "ACTIVE" ? "Заблокировать" : "Разблокировать"}</button>
       </section>
       <section className="space-y-3"><h2 className="text-xl">Реферальные ссылки</h2><p>Активные: {detail.activeReferralLinks} · Всего: {detail.referralLinks.total}</p>
-        {!detail.referralLinks.items.length && <p>Ссылок нет.</p>}<ul className="space-y-3">{detail.referralLinks.items.map(l => <li key={l.id} className="rounded border border-slate-700 p-3">
-          <p>{l.id} · {l.status} · {l.productId ? `Товар: ${l.productId}` : "Общая ссылка"}</p><p>Создана: {date(l.createdAt)}</p>
+        {!detail.referralLinks.items.length && <p>Реферальных ссылок пока нет.</p>}<ul className="space-y-3">{detail.referralLinks.items.map(l => <li key={l.id} className="rounded border border-slate-700 p-3">
+          <p>{l.id} · {referralLinkLabels[l.status] ?? "Статус уточняется"} · {l.productId ? `Товар: ${l.productId}` : "Ссылка на магазин"}</p><p>Создана: {date(l.createdAt)}</p>
           {l.disabledAt && <p>Отключена: {date(l.disabledAt)} · {l.disableReason}</p>}
-          {l.status === "ACTIVE" && <button className={control} disabled={pending || !!action} onClick={() => confirm(`/api/v1/admin/referral-links/${l.id}/disable`,"Отключить реферальную ссылку")}>Отключить</button>}</li>)}</ul>
+          {l.status === "ACTIVE" && <button className={control} disabled={pending || !!action} onClick={() => confirm(`/api/v1/admin/referral-links/${l.id}/disable`,"Отключить реферальную ссылку")}>Отключить ссылку</button>}</li>)}</ul>
         {pagination(detail.referralLinks.page,detail.referralLinks.limit,detail.referralLinks.total)}</section>
-      <section className="space-y-3"><h2 className="text-xl">Последние заказы</h2>{!detail.recentOrders.length && <p>Заказов нет.</p>}<ul>{detail.recentOrders.map(o => <li key={o.id}><Link className="underline" href={`/admin/orders/${o.id}`}>{o.publicNumber}</Link> · {o.status} · {money(o.totalMinor,detail.currency)} · Комиссия: {o.commissionEligible ? "да" : "нет"} · {date(o.createdAt)}</li>)}</ul></section>
+      <section className="space-y-3"><h2 className="text-xl">Последние заказы</h2>{!detail.recentOrders.length && <p>Связанных заказов пока нет.</p>}<ul>{detail.recentOrders.map(o => <li key={o.id}><Link className="underline" href={`/admin/orders/${o.id}`}>{o.publicNumber}</Link> · {orderLabels[o.status] ?? "Статус уточняется"} · {money(o.totalMinor,detail.currency)} · Комиссия: {o.commissionEligible ? "да" : "нет"} · {date(o.createdAt)}</li>)}</ul></section>
       <section className="space-y-3"><h2 className="text-xl">Выплаты</h2><p>Ожидают: {detail.payouts.requested} · Выплачены: {detail.payouts.paid} · Отклонены: {detail.payouts.rejected}</p>
         <Link className="block underline" href={`/admin/payouts?partnerId=${detail.id}`}>История выплат партнёра</Link>
         {detail.payoutConfigurationResolved && detail.availableAmountMinor>0 && detail.availableAmountMinor>=detail.minimumPayoutMinor && detail.payouts.requested===0 && <Link className="block underline" href={`/admin/payouts?partnerId=${detail.id}`}>Создать расчётную выплату</Link>}
-        {!detail.payoutConfigurationResolved && <p>Параметры выплат не настроены.</p>}<ul>{detail.payouts.recent.map(p => <li key={p.id}><Link className="underline" href={`/admin/payouts/${p.id}`}>{p.status} · {money(p.amountMinor,detail.currency)} · {date(p.requestedAt)}</Link></li>)}</ul></section>
+        {!detail.payoutConfigurationResolved && <p>Запросы выплат не настроены.</p>}<ul>{detail.payouts.recent.map(p => <li key={p.id}><Link className="underline" href={`/admin/payouts/${p.id}`}>{payoutLabels[p.status] ?? "Статус уточняется"} · {money(p.amountMinor,detail.currency)} · {date(p.requestedAt)}</Link></li>)}</ul></section>
     </>}
     {action && !denied && <form onSubmit={mutate} aria-label="Подтверждение действия" className="space-y-3 rounded border border-amber-500 p-4">
       <h2 className="text-xl">{action.title}</h2><p>Подтвердите действие. Начисленные средства и история сохраняются.</p>
-      <label className="block">Причина<textarea className={`${control} block w-full`} required maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></label>
-      <button className={control} disabled={pending || !reason.trim()}>Подтвердить</button><button type="button" className={control} disabled={pending} onClick={() => setAction(null)}>Отмена</button></form>}
+      <label className="block">Причина действия<textarea className={`${control} block w-full`} required maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></label>
+      <button className={control} disabled={pending || !reason.trim()}>Подтвердить действие</button><button type="button" className={control} disabled={pending} onClick={() => setAction(null)}>Отмена</button></form>}
   </main>;
 }
