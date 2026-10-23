@@ -60,7 +60,7 @@ export async function processTelegramUpdate(pool: Pool, payload: unknown, config
     : [[button("Стать партнёром", "/partner/onboarding")], [button("Каталог товаров", "/shop")]];
   let text = "Делитесь товарами и получайте комиссию за завершённые заказы. Примите условия в приложении, чтобы стать партнёром.";
   let keyboard = menu;
-  if (partner) text = "Откройте партнёрский кабинет, каталог, историю заказов или доходы.";
+  if (partner) text = "Выберите раздел: каталог, заказы или комиссии.";
   if (command === "/help") text = `Здесь можно открыть каталог, заказы и кабинет партнёра. Поддержка: ${config.supportContact}`;
   if (command === "/catalog") {
     text = partner ? "Каталог товаров доступен в приложении." : "Откройте каталог товаров в приложении.";
