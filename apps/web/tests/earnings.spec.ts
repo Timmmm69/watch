@@ -16,13 +16,13 @@ test("earnings renders exact debt, states and reversals on a mobile viewport", a
   await auth(page,"BLOCKED");
   await page.route("**/api/v1/partner/earnings?*", (route) => route.fulfill({ contentType: "application/json",body: JSON.stringify(result) }));
   await page.goto("/partner/earnings");
-  await expect(page.getByRole("heading",{ name: "Партнёрские доходы" })).toBeVisible();
-  await expect(page.getByText(/Партнёр заблокирован/)).toBeVisible();
+  await expect(page.getByRole("heading",{ name: "Начисления" })).toBeVisible();
+  await expect(page.getByText(/Партнёрский аккаунт заблокирован/)).toBeVisible();
   await expect(page.locator("dd").nth(1)).toContainText(/-25/);
   await expect(page.getByText("Заказ W-EARN")).toBeVisible();
   await expect(page.getByText("Начислена",{ exact: true })).toBeVisible();
-  await expect(page.getByText(/^Отменено:/)).toContainText("25");
-  await expect(page.getByText(/^Начислено:/)).toContainText("75");
+  await expect(page.getByText(/^Уменьшено:/)).toContainText("25");
+  await expect(page.getByText(/^После корректировок:/)).toContainText("75");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -36,13 +36,13 @@ test("shows loading, retry and empty state without fabricated zero balances", as
     else await route.fulfill({ contentType: "application/json",body: JSON.stringify({ ...result,pendingAmountMinor: 0,availableAmountMinor: 0,items: [],total: 0 }) });
   });
   await page.goto("/partner/earnings");
-  await expect(page.getByRole("status")).toHaveText("Загрузка доходов…");
+  await expect(page.getByRole("status")).toHaveText("Загружаем начисления…");
   await expect(page.locator("dd")).toHaveCount(0);
   fail();
-  await expect(page.locator("main").getByRole("alert")).toContainText("Не удалось загрузить доходы");
+  await expect(page.locator("main").getByRole("alert")).toContainText("Не удалось загрузить начисления");
   shouldFail = false;
   await page.getByRole("button",{ name: "Повторить" }).click();
-  await expect(page.getByText("Продаж пока нет")).toBeVisible();
+  await expect(page.getByText("Начислений пока нет.")).toBeVisible();
 });
 
 test("paginates history while keeping full ledger balances", async ({ page }) => {
@@ -53,7 +53,7 @@ test("paginates history while keeping full ledger balances", async ({ page }) =>
       items: [{ ...commission,orderPublicNumber: currentPage === 1 ? "W-FIRST" : "W-LAST",state: currentPage === 1 ? "HOLD" : "VOID" }] }) });
   });
   await page.goto("/partner/earnings");
-  await expect(page.getByText("Период удержания",{ exact: true })).toBeVisible();
+  await expect(page.getByText("На проверке",{ exact: true })).toBeVisible();
   await page.getByRole("button",{ name: "Далее" }).click();
   await expect(page.getByText("Заказ W-LAST")).toBeVisible();
   await expect(page.getByText("Аннулирована",{ exact: true })).toBeVisible();
@@ -79,8 +79,8 @@ test("dashboard shows ledger balances and recent commission changes", async ({ p
   await page.route("**/api/v1/cart", (route) => route.fulfill({ contentType: "application/json",body: '{"items":[],"subtotalMinor":0,"currency":"BYN"}' }));
   await page.route("**/api/v1/partner/earnings?*", (route) => route.fulfill({ contentType: "application/json",body: JSON.stringify({ ...result,limit: 3 }) }));
   await page.goto("/shop");
-  await expect(page.getByText("Последние изменения комиссий")).toBeVisible();
+  await expect(page.getByText("Последние изменения начислений")).toBeVisible();
   await expect(page.getByText("Заказ W-EARN")).toBeVisible();
-  await page.getByRole("link",{ name: "Все начисления" }).click();
+  await page.getByRole("link",{ name: "История начислений" }).click();
   await expect(page).toHaveURL(/\/partner\/earnings$/);
 });

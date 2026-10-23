@@ -24,7 +24,7 @@ test("Admin Partners filters, paginates and opens detail", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Alice @alice" })).toBeVisible();
   await page.getByLabel("Статус", { exact: true }).selectOption("BLOCKED"); await page.getByLabel("Поиск").fill("alice");
   await page.getByRole("button", { name: "Применить" }).click();
-  await expect(page.getByText(`${id} · BLOCKED`, { exact: false })).toBeVisible();
+  await expect(page.getByText(`${id} · Заблокирован`, { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Далее",exact: true }).click();
   await expect(page.getByText("Страница 2")).toBeVisible();
   expect(queries.at(-1)?.get("status")).toBe("BLOCKED"); expect(queries.at(-1)?.get("search")).toBe("alice");
@@ -43,14 +43,14 @@ test("block/unblock require confirmation, reason and CSRF; unblock preserves ter
   });
   await page.goto(`/admin/partners/${id}`);
   await page.getByRole("button", { name: "Заблокировать",exact: true }).click();
-  await expect(page.getByRole("button", { name: "Подтвердить" })).toBeDisabled(); expect(calls).toBe(0);
+  await expect(page.getByRole("button", { name: "Подтвердить действие" })).toBeDisabled(); expect(calls).toBe(0);
   await page.getByRole("button", { name: "Отмена",exact: true }).click(); expect(calls).toBe(0);
   for (const label of ["Заблокировать","Разблокировать"]) {
-    await page.getByRole("button", { name: label,exact: true }).click(); await page.getByLabel("Причина", { exact: true }).fill("review");
-    await page.getByRole("button", { name: "Подтвердить",exact: true }).click();
+    await page.getByRole("button", { name: label,exact: true }).click(); await page.getByLabel("Причина действия", { exact: true }).fill("review");
+    await page.getByRole("button", { name: "Подтвердить действие",exact: true }).click();
     await expect(page.getByRole("form", { name: "Подтверждение действия" })).toHaveCount(0);
   }
-  expect(calls).toBe(2); await expect(page.getByText("Разблокировка не отменяет", { exact: false })).toBeVisible();
+  expect(calls).toBe(2); await expect(page.getByText("Разблокировка не заменяет", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Заблокировать",exact: true })).toBeVisible();
 });
 test("disables referral with reason through existing API and retains disabled history", async ({ page }) => {
@@ -62,10 +62,10 @@ test("disables referral with reason through existing API and retains disabled hi
     return r.fulfill({ json: { id: linkId,status: "DISABLED" } });
   });
   await page.goto(`/admin/partners/${id}`);
-  await page.getByRole("button", { name: "Отключить",exact: true }).click();
-  await page.getByLabel("Причина", { exact: true }).fill("compromised"); await page.getByRole("button", { name: "Подтвердить",exact: true }).click();
+  await page.getByRole("button", { name: "Отключить ссылку",exact: true }).click();
+  await page.getByLabel("Причина действия", { exact: true }).fill("compromised"); await page.getByRole("button", { name: "Подтвердить действие",exact: true }).click();
   await expect(page.getByText("compromised", { exact: false })).toBeVisible(); expect(calls).toBe(1);
-  await expect(page.getByRole("button", { name: "Отключить",exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Отключить ссылку",exact: true })).toHaveCount(0);
 });
 test("BLOCKED Partner settlement CTA opens existing payout flow with Partner identity", async ({ page }) => {
   await auth(page);
@@ -98,8 +98,8 @@ test("empty, missing and transient failures render recoverable states", async ({
   await page.route("**/api/v1/admin/partners?**",r => r.fulfill(fail ? { status: 503,json: {} } : { json: { total: 0,items: [],page: 1,limit: 20 } }));
   await page.route(`**/api/v1/admin/partners/${id}?**`,r => r.fulfill({ status: 404,json: {} }));
   await page.goto("/admin/partners"); await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
-  fail=false; await page.getByRole("button", { name: "Обновить" }).click(); await expect(page.getByText("Партнёры не найдены.")).toBeVisible();
-  await page.goto(`/admin/partners/${id}`); await expect(page.getByRole("main").getByRole("alert")).toContainText("не найдены");
+  fail=false; await page.getByRole("button", { name: "Обновить" }).click(); await expect(page.getByText("По выбранным условиям партнёров нет.")).toBeVisible();
+  await page.goto(`/admin/partners/${id}`); await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось найти");
   await expect(page.getByRole("button", { name: "Заблокировать",exact: true })).toHaveCount(0);
 });
 test("revoked Admin access clears sensitive data and action controls", async ({ page }) => {
