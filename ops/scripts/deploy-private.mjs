@@ -14,8 +14,9 @@ export async function verifyPrivateInputs(config, run = compose) {
     }
   }
   const runtime = JSON.parse(await run(["run", "--rm", "--no-deps", "api", "node", "apps/api/dist/operations/cli.js", "config"]));
-  if (runtime.status !== "ok" || runtime.privateAccess !== true || !runtime.allowedTelegramIds?.length
-    || runtime.productionApprovalSha256) throw new Error("Private runtime must enforce a nonempty Telegram allowlist");
+  if (runtime.status !== "ok" || runtime.privateAccess !== true
+    || (runtime.publicShop !== true && !runtime.allowedTelegramIds?.length)
+    || runtime.productionApprovalSha256) throw new Error("Runtime requires an explicit public shop or a nonempty Telegram allowlist");
 }
 
 export async function deployPrivate(mode, run = compose, smoke = productionSmoke, services = criticalServices, stage = deploy) {

@@ -1,5 +1,6 @@
 # Owner-operated friends-only profile. HTTPS, production cookies, roles and CSRF
-# remain enabled. The API enforces the Telegram allowlist on login and sessions.
+# remain enabled. WATCH_PUBLIC_SHOP=1 explicitly opens Telegram login to buyers;
+# otherwise the API enforces the Telegram allowlist on login and sessions.
 x-private: &private
   environment:
     WATCH_PRIVATE_ACCESS: "1"

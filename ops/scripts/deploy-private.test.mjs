@@ -12,6 +12,7 @@ test("private preflight requires the explicit overlay and a nonempty runtime all
   process.env.WATCH_CLOSED_ACCEPTANCE = "1";
   try {
     await verifyPrivateInputs(config(), async () => JSON.stringify(runtime));
+    await verifyPrivateInputs(config(), async () => JSON.stringify({ ...runtime, publicShop: true, allowedTelegramIds: undefined }));
     for (const changed of [
       { ...runtime, privateAccess: false }, { ...runtime, allowedTelegramIds: [] },
       { ...runtime, productionApprovalSha256: "a".repeat(64) },

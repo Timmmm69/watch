@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { hashSessionToken, readSessionCookie, serializeSessionCookie, SessionStore } from "./session.js";
 import type { TelegramIdentity } from "./telegram.js";
+import { telegramAccessAllowlist } from "@watch/config";
 
 const identity: TelegramIdentity = {
   telegramUserId: "42", firstName: "Ada", lastName: null, username: null,
@@ -33,6 +34,16 @@ function fakePool(existing?: typeof existingSession) {
 }
 
 describe("Session store", () => {
+  it("admits a public shop buyer outside the private list without granting admin rights", async () => {
+    const { pool, query } = fakePool();
+    const access = { WATCH_PRIVATE_ACCESS: "1" as const, WATCH_PUBLIC_SHOP: "1" as const,
+      ADMIN_TELEGRAM_IDS: ["99"], PRIVATE_TELEGRAM_IDS: [] };
+    const issued = await new SessionStore(pool, new Set(access.ADMIN_TELEGRAM_IDS), telegramAccessAllowlist(access))
+      .upsertUserAndIssueSession(identity);
+    expect(issued.user.telegramUserId).toBe("42");
+    expect(issued.user.isAdmin).toBe(false);
+    expect(query.mock.calls.find(([sql]) => sql.includes("INSERT INTO users"))?.[1]?.at(-1)).toBe(false);
+  });
   it("rejects a private outsider before acquiring a DB client or writing a User", async () => {
     const { pool, query } = fakePool();
     await expect(new SessionStore(pool, new Set(), new Set(["99"]))

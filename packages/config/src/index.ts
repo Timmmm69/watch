@@ -59,6 +59,8 @@ export const apiRuntimeConfigSchema = z.object({
   WATCH_PRODUCTION_APPROVAL_FILE: z.string().optional(),
   // Explicit owner-operated friends-only deployment; never a commercial approval.
   WATCH_PRIVATE_ACCESS: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
+  // Owner opt-in: every verified Telegram identity may enter the shop; roles stay separate.
+  WATCH_PUBLIC_SHOP: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
   PRIVATE_TELEGRAM_IDS: z.string().transform(parseAdminIds).optional(),
   // Explicit private prepare/stage or bootstrap/import CLI policy; never authorizes traffic.
   WATCH_CLOSED_ACCEPTANCE: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
@@ -160,6 +162,12 @@ export const apiRuntimeConfigSchema = z.object({
 });
 
 export type ApiRuntimeConfig = z.infer<typeof apiRuntimeConfigSchema> & { productionApproval?: ProductionApproval; productionApprovalSha256?: string };
+
+export function telegramAccessAllowlist(runtime: Pick<ApiRuntimeConfig,
+  "WATCH_PRIVATE_ACCESS" | "WATCH_PUBLIC_SHOP" | "ADMIN_TELEGRAM_IDS" | "PRIVATE_TELEGRAM_IDS">): Set<string> | undefined {
+  return runtime.WATCH_PRIVATE_ACCESS === "1" && runtime.WATCH_PUBLIC_SHOP !== "1"
+    ? new Set([...runtime.ADMIN_TELEGRAM_IDS, ...(runtime.PRIVATE_TELEGRAM_IDS ?? [])]) : undefined;
+}
 
 export type LegalDocumentType = "PARTNER_TERMS" | "SALES_TERMS" | "PRIVACY";
 
