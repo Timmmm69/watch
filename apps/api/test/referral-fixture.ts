@@ -15,7 +15,7 @@ export function telegramLaunch(url: string, telegramId = 3) {
 
 /** Full native migrations/initialization and real services; no stock/financial mocks. */
 export async function referralFixture(quantity = 10, migrationThrough?: string) {
-  const f = await dropshipFixture(quantity, `${quantity * 80}.00`, true, migrationThrough);
+  const f = await dropshipFixture(quantity, `${quantity * 80}.00`, true, migrationThrough, true);
   await f.pool.query("UPDATE product_variants SET price_minor=15000,partner_commission_unit_minor=2000");
   const service = new CheckoutService(f.pool, "BYN", f.docs);
   const referral = new ReferralService(f.pool, new LegalDocuments(f.pool, f.docs), "test_bot");

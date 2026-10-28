@@ -20,6 +20,7 @@ import { AdminOrderService } from "../src/orders/admin.js";
 import { AdminReturnService } from "../src/returns/returns.js";
 import { OrderMoneyService } from "../src/finance/money.js";
 import { PayoutService } from "../src/finance/payouts.js";
+import { PartnerEarningsService } from "../src/finance/earnings.js";
 import { AnalyticsService } from "../src/analytics/analytics.js";
 
 export function disposableUrl() {
@@ -32,7 +33,7 @@ export function disposableUrl() {
   return url;
 }
 
-export async function dropshipFixture(quantity = 10, cost = "800.02", adminAccess = false, migrationThrough = "99999999999999") {
+export async function dropshipFixture(quantity = 10, cost = "800.02", adminAccess = false, migrationThrough = "99999999999999", historicalBuyerFlow = false) {
   const url = disposableUrl();
   if (!url) throw new Error("WATCH_T48_DATABASE_URL is required");
   const schema = `t48_${randomUUID().replaceAll("-", "")}`;
@@ -80,16 +81,17 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   const slug = (await pool.query<{ slug: string }>("SELECT slug FROM products")).rows[0]!.slug;
   const service = new DropshipCheckoutService(pool, "BYN", docs);
   const legal = new LegalDocuments(pool, docs);
-  const catalog = new CatalogService(pool, "BYN", undefined, undefined, undefined, true);
+  const catalog = new CatalogService(pool, "BYN", undefined, undefined, undefined, true, !historicalBuyerFlow);
   const views = new OrderViewService(pool, "@test_support");
   const adminIds = adminAccess ? new Set(["3"]) : new Set<string>();
   const orders = new AdminOrderService(pool), returns = new AdminReturnService(pool);
-  const app = createApp({ nativeCommerce: true, logger: false, checkReadiness: async () => undefined,
+  const app = createApp({ nativeCommerce: !historicalBuyerFlow, supportContact: "@test_support", logger: false, checkReadiness: async () => undefined,
+    earnings: new PartnerEarningsService(pool),
     auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl: "http://127.0.0.1:3000", adminIds: () => adminIds,
       botToken: "123456:TEST_ONLY_referral" },
     ...(adminAccess ? { orders, returns, money: new OrderMoneyService(pool), payouts: new PayoutService(pool, "BYN", docs.PARTNER_TERMS, 1),
       analytics: new AnalyticsService(pool, "BYN", "Europe/Minsk", 600, 86400) } : {}),
-    checkout: new CheckoutService(pool, "BYN", docs), legal, partner: new PartnerService(pool, legal), orderViews: views,
+    checkout: historicalBuyerFlow ? new CheckoutService(pool, "BYN", docs) : new DropshipCheckoutService(pool, "BYN", docs), legal, partner: new PartnerService(pool, legal), orderViews: views,
     catalog: { service: catalog }, assets: { service: new AssetService(pool, storage) },
     cart: new CartService(pool, "BYN"), referral: new ReferralService(pool, legal, "test_bot") });
   const request = (r = 14500, q = 1) => ({ items: [{ variantId: variant.id, quantity: q, expectedDropshipPriceMinor: 10000, customerUnitPriceMinor: r }],

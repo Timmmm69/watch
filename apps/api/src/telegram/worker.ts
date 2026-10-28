@@ -71,7 +71,8 @@ async function runInboxLoop(): Promise<void> {
       await processTelegramUpdate(pool, update.payload, {
         token: runtime.TELEGRAM_BOT_TOKEN,
         appBaseUrl: runtime.APP_BASE_URL,
-        supportContact: runtime.SUPPORT_CONTACT
+        supportContact: runtime.SUPPORT_CONTACT,
+        nativeCommerce: true
       });
       await inbox.complete(update);
     } catch (error) {

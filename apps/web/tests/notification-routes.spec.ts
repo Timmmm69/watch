@@ -11,6 +11,7 @@ const contracts: Record<string, { partner: boolean; admin: boolean; api: string 
   [`/partner/orders/${generated.publicNumber}`]: { partner: true, admin: false, api: `/api/v1/partner/orders/${generated.publicNumber}` },
   [`/admin/orders/${generated.orderId}`]: { partner: false, admin: true, api: `/api/v1/admin/orders/${generated.orderId}` },
   "/partner/payouts": { partner: true, admin: false, api: "/api/v1/partner/payouts" },
+  "/partner/earnings": { partner: true, admin: false, api: "/api/v1/partner/earnings" },
   "/admin/payouts": { partner: false, admin: true, api: "/api/v1/admin/payouts" },
   "/admin/inventory": { partner: false, admin: true, api: "/api/v1/admin/inventory" },
   "/partner": { partner: true, admin: false, api: "/api/v1/partner/orders" }

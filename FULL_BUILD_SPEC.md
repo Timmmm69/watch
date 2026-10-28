@@ -1,12 +1,12 @@
-# Full Build Specification v1.5 — Referral commerce with native inventory
+# Full Build Specification v1.6 — Customer and partner journeys
 
 **Project:** Telegram Partner Commerce Platform  
 **Status:** authoritative implementation specification  
-**Version:** 1.5-referral-native
-**Date:** 2026-10-22 (referral commerce restoration)
+**Version:** 1.6-customer-partner-ux
+**Date:** 2026-10-28 (owner-approved customer and partner journey)
 **Implementation status:** frozen for implementation. Application code proceeds only through an explicit vertical-slice task from Section 21; this document defines requirements but does not itself authorize an unscoped whole-project implementation.
 
-**Current business authority:** Section 31 supersedes conflicting earlier decisions, including the sales/price/remuneration requirements of Section 30. The final model is **Referral-based commerce with fixed SKU commissions and native PostgreSQL inventory.** Authenticated buyers order independently at administrator-controlled retail prices; partners promote personal links and earn fixed SKU commissions. Section 30 remains historical context for existing DROPSHIP_MARKUP orders.
+**Current business authority:** Section 32 records the owner-approved 2026-10-28 journey and supersedes conflicting new-sale decisions in Section 31. New native orders are created by partners for recipients using Section 30 prices and remuneration. Buyers browse and agree purchases with the shop/seller. Historical orders, fixed commissions, native inventory safeguards and applied migrations remain intact.
 
 **Source-of-truth status:** this document supersedes `FULL_BUILD_SPEC_v1.2.md`, `FULL_BUILD_SPEC_v1.1.md`, `FULL_BUILD_SPEC_v1.0.md` and the previous `PRODUCT.md`, `MVP.md`, `ARCHITECTURE.md`, `DATA_MODEL.md`, `BUSINESS_RULES.md`, `BACKLOG.md`, `DECISIONS.md` as active implementation sources. The only active implementation requirements are **this document** plus Project Instructions. Older files may remain only as historical artifacts; they must be excluded from Codex implementation context or visibly marked `HISTORICAL — DO NOT USE FOR IMPLEMENTATION` by the project/tooling layer. If a tool automatically injects those files as active requirements, S00 must not start until that context is corrected.
 
@@ -2315,3 +2315,16 @@ This section has priority over all conflicting earlier sections and implementati
 - Deploy migration 20261022000000_referral_native_inventory before the application. It adds order inventory mode and updates stock/allocation protections without changing existing commercial or financial rows. Database readiness requires it. Existing native stock initialization remains valid.
 - Native production approval schema v3 must attest REFERRAL_BUYER_FIXED, RETAIL and FIXED_SKU. Old v2 markup attestations do not certify this release. Preserve actual secrets and reviewed immutable legal documents; operators must verify their applicability to buyer sales and referral terms before live release.
 - Acceptance requires PostgreSQL coverage of referral creation/signed launch, uniform retail price, two partners/last click/expiry, organic/self/blocked cases, retry, last-unit competition, price confirmation, hold/cash/payout, cancellation/partial/full/physical returns and historical orders. Browser checks use real local API/PostgreSQL; emulated Telegram initData is test evidence, not a live-device production certification.
+
+# 32. Owner-approved customer and partner UX — 2026-10-28
+
+The explicit implementation instruction approves the Section 30 partner-created-order journey for new native sales. This supersedes conflicting new-sale instructions in Section 31; it does not authorize rewriting historical financial or inventory facts.
+
+- One bot: buyers open the watch catalog as a Mini App and contact the configured shop from the selected model. Native buyer self-checkout and a new referral system are outside this journey. Catalog price is distinct from the price agreed for a partner order.
+- Partner onboarding requires verified Telegram identity and explicit acceptance of the current terms. The server creates ACTIVE partners automatically; choosing a role is not consent and repeated acceptance never unblocks an existing partner.
+- Partners enter customer price and recipient details. The existing DROPSHIP_MARKUP service snapshots the partner price, customer price and remuneration under Section 30. Delivery is separate. Changed prices require explicit confirmation; retries preserve request identity.
+- Preserve all migrations, including 20261022000000_referral_native_inventory, fixed-commission snapshots, stock/cost allocations, observed money, returns, immutable ledger and payouts. Historical fixed/native and markup paths retain compatibility coverage. No new financial engine or destructive schema rollback.
+- UI and notifications distinguish expected, accrued, payout-locked, paid and actually available money. Eligibility needs the existing delivery/hold/payment/return gates; a recorded date does not guarantee payment.
+- Git publication does not authorize deployment, production migrations, live bot configuration, actual transfers or acceptance of legal documents on anyone’s behalf. Operational approvals and legal artifacts need separate verification before deploying the changed order-entry flow.
+
+Implementation and verification details: [customer-partner-ux.md](docs/customer-partner-ux.md).

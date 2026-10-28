@@ -93,6 +93,7 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     void mutate(async () => {
       await save({ ...(variant ? { status, safetyBuffer: Number(form.get("safetyBuffer")) } : { sku: String(form.get("sku")) }),
         attributes: jsonObject(form.get("attributes")), priceMinor: Number(form.get("priceMinor")),
+        ...(form.get("dropshipPriceMinor") === "" ? {} : { dropshipPriceMinor: Number(form.get("dropshipPriceMinor")) }),
         partnerCommissionUnitMinor: Number(form.get("commission")), supplierSettlementUnitMinor: form.get("settlement") === "" ? null : Number(form.get("settlement")),
         inventoryExternalKey: String(form.get("externalKey")) });
       if (!variant) element.reset();
@@ -103,7 +104,9 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     <Field label="SKU"><input className={inputClass} name="sku" required maxLength={100} readOnly={!!variant} defaultValue={variant?.sku} /></Field>
     <Field label="Свойства варианта (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
     <Field label="Розничная цена (minor)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
-    <p>Единая цена для всех покупателей. Изменение цены требует подтверждения при оформлении; существующие заказы сохраняют свои снимки.</p>
+    <p>Цена публичного каталога. Итоговую цену заказа партнёр указывает при оформлении для своего покупателя.</p>
+    <Field label="Цена магазина для партнёра (в копейках)"><input className={inputClass} name="dropshipPriceMinor" type="number" required={variant?.dropshipPriceMinor != null} min={0} max={2000000000} step={1} defaultValue={variant?.dropshipPriceMinor ?? ""} /></Field>
+    <p>Изменение цены партнёра требует подтверждения нового расчёта. Цены уже созданных заказов сохраняются.</p>
     <Field label="Комиссия за единицу (в копейках)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
     <Field label="Расчёт с поставщиком (в копейках, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
     <Field label="Ключ товара во внешнем источнике"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>

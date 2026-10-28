@@ -29,6 +29,8 @@ import { cartItemRequestSchema, cartResponseSchema } from "@watch/contracts";
 import { CartError, type CartService } from "./cart/cart.js";
 import { checkoutRequestSchema, checkoutResponseSchema } from "@watch/contracts";
 import { CheckoutError, type CheckoutService } from "./orders/checkout.js";
+import type { DropshipCheckoutService } from "./orders/dropship-checkout.js";
+import { dropshipCheckoutRequestSchema, dropshipCheckoutResponseSchema } from "@watch/contracts";
 import { adminOrderListQuerySchema, adminOrderTransitionSchema, reservationReconcileSchema } from "@watch/contracts";
 import { adminReturnCreateRequestSchema, adminReturnListQuerySchema, adminReturnCompleteRequestSchema, adminReturnInspectionSchema } from "@watch/contracts";
 import { buyerOrderListQuerySchema, buyerOrderListItemSchema, buyerOrderDetailSchema, partnerOrderListQuerySchema, partnerOrderListItemSchema, partnerOrderDetailSchema } from "@watch/contracts";
@@ -75,6 +77,7 @@ export interface AppDependencies {
   checkReadiness: () => Promise<void>;
   logger?: boolean;
   nativeCommerce?: boolean;
+  supportContact?: string;
   trustedProxyIp?: string;
   auth?: {
     store: SessionStore;
@@ -93,7 +96,7 @@ export interface AppDependencies {
   inventory?: { service: InventoryApi; orchestrator?: Pick<InventorySyncOrchestrator, "run"> };
   assets?: { service: AssetService };
   cart?: Pick<CartService, "read" | "put" | "remove" | "clear">;
-  checkout?: Pick<CheckoutService, "checkout">;
+  checkout?: Pick<CheckoutService | DropshipCheckoutService, "checkout">;
   orders?: Pick<AdminOrderService, "list" | "detail" | "transition" | "reconcileReservation">;
   returns?: Pick<AdminReturnService, "list" | "detail" | "create" | "cancel" | "complete"> & Partial<Pick<AdminReturnService, "reject" | "inspect">>;
   orderViews?: Pick<OrderViewService, "listBuyerOrders" | "getBuyerOrder" | "listPartnerOrders" | "getPartnerOrder">;
@@ -103,7 +106,7 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, nativeCommerce = false, trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners, money }: AppDependencies) {
+export function createApp({ checkReadiness, logger = true, nativeCommerce = false, supportContact = "", trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners, money }: AppDependencies) {
   const app = Fastify({
     logger: logger ? { redact: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "req.headers['x-telegram-bot-api-secret-token']", "res.headers['set-cookie']"] } : false,
     trustProxy: trustedProxyIp ? [trustedProxyIp] : false,
@@ -194,7 +197,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
       try {
         const identity = verifyTelegramInitData((body as { initData: string }).initData, auth.botToken!);
         const current = await auth.store.upsertUserAndIssueSession(identity, readSessionCookie(request.headers.cookie),
-          referral ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
+          referral && !nativeCommerce ? (client, user) => referral.processLaunch(client, user, identity) : undefined);
         reply.header("Set-Cookie", serializeSessionCookie(current.token, current.session.expiresAt,
           new URL(auth.appBaseUrl).protocol === "https:"));
         const state = await partnerState(current.user.id);
@@ -204,6 +207,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
             username: current.user.username, languageCode: current.user.languageCode },
           partner: state.partner, isAdmin: isAdmin(current, auth.adminIds()),
           nativeCommerce,
+          supportContact,
           partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
           csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id),
           launchTarget: current.launchTarget?.includes("?product=") ? current.launchTarget : state.partner ? "/partner" : "/shop"
@@ -234,6 +238,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
         },
         partner: state.partner,
         nativeCommerce,
+        supportContact,
         isAdmin: isAdmin(current, auth.adminIds()),
         partnerTermsReacceptRequired: state.partnerTermsReacceptRequired,
         csrfToken: deriveCsrfToken(auth.csrfSecret, current.session.id)
@@ -400,6 +405,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
 
     if (referral) {
       app.post("/api/v1/partner/referral-links", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
+        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         const body = request.body;
         if (!body || typeof body !== "object" || Array.isArray(body) ||
             !Object.hasOwn(body, "productId") || Object.keys(body).some((key) => key !== "productId") ||
@@ -489,14 +495,14 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
     }
     if (checkout) app.post("/api/v1/orders", { preHandler: [requireSession, requireCsrf] }, async (request, reply) => {
       reply.header("Cache-Control", "no-store");
-      const parsed = checkoutRequestSchema.safeParse(request.body);
+      const parsed = (nativeCommerce ? dropshipCheckoutRequestSchema : checkoutRequestSchema).safeParse(request.body);
       const key = request.headers["idempotency-key"];
       if (!parsed.success || typeof key !== "string" || key.length < 1 || key.length > 100 || !key.trim()) {
         return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid checkout request", details: {}, requestId: request.id } });
       }
       try {
         const result = await checkout.checkout(request.auth!.user.id, key, parsed.data);
-        return reply.code(result.created ? 201 : 200).send(checkoutResponseSchema.parse(result.order));
+        return reply.code(result.created ? 201 : 200).send((nativeCommerce ? dropshipCheckoutResponseSchema : checkoutResponseSchema).parse(result.order));
       } catch (error) {
         if (!(error instanceof CheckoutError)) throw error;
         const status = error.code === "VALIDATION_ERROR" ? 400 : ["USER_BLOCKED", "PARTNER_REQUIRED", "PARTNER_BLOCKED", "TERMS_REACCEPT_REQUIRED"].includes(error.code) ? 403
@@ -618,6 +624,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
     if (cart) {
       const respond = async (request: FastifyRequest, reply: FastifyReply, action: () => ReturnType<CartService["read"]>) => {
         reply.header("Cache-Control", "no-store");
+        if (nativeCommerce) return reply.code(409).send({ error: { code: "LEGACY_FLOW_DISABLED", message: "Use dropshipper checkout", details: {}, requestId: request.id } });
         try { return cartResponseSchema.parse(await action()); }
         catch (error) {
           if (!(error instanceof CartError)) throw error;

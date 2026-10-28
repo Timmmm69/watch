@@ -13,21 +13,22 @@ type Payout = { id: string; partnerId: string; amountMinor: number; currency: st
 type PayoutPage = { items: Payout[]; total: number; page: number; limit: number };
 type Earnings = { currency: string; availableAmountMinor: number; minimumPayoutMinor?: number; payoutConfigurationResolved?: boolean;
   debtAmountMinor?: number; reversalAmountMinor?: number; payoutBlocked?: boolean };
-const labels: Record<PayoutStatus, string> = { REQUESTED: "Ожидает обработки", PAID: "Выплачена", REJECTED: "Отклонена" };
+const labels: Record<PayoutStatus, string> = { REQUESTED: "Ожидает выплаты", PAID: "Выплачена", REJECTED: "Отклонена" };
 const money = (amount: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(amount / 100);
 const date = (value: string) => new Date(value).toLocaleString("ru-BY");
 const newKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 
 function errorText(code?: string) {
+  if (code === "AUTH_REQUIRED" || code === "SESSION_EXPIRED") return "Срок входа истёк. Откройте приложение заново через Telegram.";
   if (code === "PAYOUT_FACTS_CHANGED") return "Изменились оплата или возвраты. Выплата заблокирована; проверьте деньги, долг и распределения. При необходимости отклоните заявку и создайте новую на актуальную сумму.";
   if (code === "IDEMPOTENCY_CONFLICT") return "Идентификатор операции или перевода уже использован. Проверьте историю.";
-  return code === "PARTNER_BLOCKED" ? "Партнёрский аккаунт заблокирован. Запросить выплату самостоятельно нельзя."
-    : code === "TERMS_REACCEPT_REQUIRED" ? "Примите обновлённые условия партнёрской программы."
-      : code === "PAYOUT_CONFIGURATION_MISSING" ? "Запрос выплат пока не настроен."
-        : code === "PAYOUT_NOT_AVAILABLE" ? "Пока нет средств, доступных к выплате."
-          : code === "PAYOUT_BELOW_MINIMUM" ? "Доступная сумма меньше установленного минимума."
-            : code === "PAYOUT_ALREADY_PENDING" ? "У вас уже есть заявка на выплату. Дождитесь её обработки."
-              : code === "PAYOUT_ALREADY_FINALIZED" ? "Эта заявка уже обработана. Обновите список выплат."
+  return code === "PARTNER_BLOCKED" ? "Партнёр заблокирован: самостоятельная заявка недоступна."
+    : code === "TERMS_REACCEPT_REQUIRED" ? "Требуется принять новые условия партнёрской программы."
+      : code === "PAYOUT_CONFIGURATION_MISSING" ? "Выплата сейчас не настроена."
+        : code === "PAYOUT_NOT_AVAILABLE" ? "Пока нет суммы для выплаты. Проверьте состояние заработка по заказам."
+          : code === "PAYOUT_BELOW_MINIMUM" ? "Доступная сумма меньше минимальной выплаты."
+            : code === "PAYOUT_ALREADY_PENDING" ? "Уже есть активная заявка на выплату."
+              : code === "PAYOUT_ALREADY_FINALIZED" ? "Заявка уже обработана. Обновите данные."
                 : "Не удалось выполнить действие. Повторите попытку.";
 }
 
@@ -38,11 +39,14 @@ export function PartnerPayoutsScreen({ csrfToken, blocked, termsReacceptRequired
   const [result, setResult] = useState<PayoutPage | null>(null);
   const [page, setPage] = useState(1), [loading, setLoading] = useState(true), [financeReady, setFinanceReady] = useState(false), [hasActive, setHasActive] = useState(false), [error, setError] = useState("");
   const [pending, setPending] = useState(false), [confirm, setConfirm] = useState(false), [retry, setRetry] = useState(0);
+  const [accessBlocked, setAccessBlocked] = useState(false);
+  const [activeRequest, setActiveRequest] = useState<Payout | null>(null);
   const request = useCallback(async (url: string, init?: RequestInit) => {
     const send = () => fetch(url, { credentials: "same-origin", cache: "no-store", ...init,
       headers: { ...(init?.headers ?? {}), ...(init?.method === "POST" ? { "x-csrf-token": token.current } : {}) } });
     let response = await send();
-    if (response.status === 401) { const recovery = await fetch("/api/v1/auth/session", { credentials: "same-origin", cache: "no-store" });
+    const csrfInvalid = response.status === 403 && (await response.clone().json().catch(() => ({}))).error?.code === "CSRF_INVALID";
+    if (response.status === 401 || csrfInvalid) { const recovery = await fetch("/api/v1/auth/session", { credentials: "same-origin", cache: "no-store" });
       if (recovery.ok) { token.current = (await recovery.json() as { csrfToken: string }).csrfToken; response = await send(); } }
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(errorText(body.error?.code)), { code: body.error?.code, status: response.status });
@@ -52,39 +56,43 @@ export function PartnerPayoutsScreen({ csrfToken, blocked, termsReacceptRequired
     const current = ++sequence.current; setLoading(true); setFinanceReady(false);
     try {
       const [balance, payouts, active] = await Promise.all([request("/api/v1/partner/earnings?page=1&limit=1"), request(`/api/v1/partner/payouts?page=${page}&limit=20`), request("/api/v1/partner/payouts?status=REQUESTED&page=1&limit=1")]);
-      if (current !== sequence.current) return; setEarnings(balance as Earnings); setResult(payouts as PayoutPage); setHasActive((active as PayoutPage).total > 0); setFinanceReady(true); setError("");
+      if (current !== sequence.current) return; setEarnings(balance as Earnings); setResult(payouts as PayoutPage); setHasActive((active as PayoutPage).total > 0); setActiveRequest((active as PayoutPage).items[0] ?? null); setFinanceReady(true); setError("");
     } catch (cause) { if (current === sequence.current) setError((cause as Error).message); }
     finally { if (current === sequence.current) setLoading(false); }
   }, [page, request]);
   useEffect(() => { void refresh(); return () => { ++sequence.current; }; }, [refresh, retry]);
   useEffect(() => { const back = () => { if (window.history.length > 1) router.back(); else router.replace("/shop"); };
     const button = window.Telegram?.WebApp?.BackButton; button?.show(); button?.onClick(back); return () => { button?.offClick(back); button?.hide(); }; }, [router]);
-  const minimum = earnings?.minimumPayoutMinor ?? 5000;
-  const configured = earnings?.payoutConfigurationResolved === true;
-  const disabledReason = !financeReady ? (error ? "Не удалось проверить условия выплаты. Обновите данные." : "Проверяем доступную сумму…") : blocked ? "Партнёр заблокирован." : termsReacceptRequired ? "Примите обновлённые условия партнёрской программы." : !configured ? "Запрос выплат пока не настроен." : hasActive ? "Есть активная заявка на выплату."
-    : !earnings ? "Проверяем доступную сумму…" : earnings.payoutBlocked ? "Выплата заблокирована: проверьте оплату и открытые возвраты заказов." : earnings.availableAmountMinor <= 0 ? "Пока нет суммы, которую можно запросить к выплате." : earnings.availableAmountMinor < minimum ? `Минимальная выплата — ${money(minimum, earnings.currency)}.` : null;
+  const minimum = earnings?.minimumPayoutMinor;
+  const configured = earnings?.payoutConfigurationResolved === true && minimum != null;
+  const disabledReason = !financeReady ? (error ? "Не удалось проверить условия выплаты. Обновите данные." : "Проверяем условия выплаты…") : blocked || accessBlocked ? "Новые заявки недоступны: доступ ограничен. Обратитесь в поддержку." : termsReacceptRequired ? "Требуется принять новые условия партнёрской программы." : !configured ? "Выплата сейчас не настроена." : hasActive ? `Заявка${activeRequest ? ` на ${money(activeRequest.amountMinor, activeRequest.currency)}` : ""} принята и ожидает обработки. Новую можно отправить после обработки текущей.`
+    : !earnings ? "Проверяем условия выплаты…" : earnings.payoutBlocked ? "Выплата заблокирована: проверьте оплату и открытые возвраты заказов." : earnings.availableAmountMinor <= 0 ? "Пока нет суммы для выплаты. Проверьте состояние заработка по заказам." : minimum != null && earnings.availableAmountMinor < minimum ? `Минимальная выплата — ${money(minimum, earnings.currency)}.` : null;
   const submit = async () => {
     if (disabledReason || pending) return; setPending(true); setError("");
     key.current ??= newKey();
     try { await request("/api/v1/partner/payouts", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": key.current }, body: "{}" });
       key.current = null; setConfirm(false); await refresh();
-    } catch (cause) { setError((cause as Error).message); setConfirm(false); if ((cause as { code?: string }).code === "TERMS_REACCEPT_REQUIRED") router.push(partnerReacceptUrl()); }
+    } catch (cause) { setError((cause as Error).message); setConfirm(false); const code = (cause as { code?: string }).code;
+      if (code === "TERMS_REACCEPT_REQUIRED") router.push(partnerReacceptUrl());
+      if (code === "PARTNER_BLOCKED" || code === "USER_BLOCKED") setAccessBlocked(true);
+    }
     finally { setPending(false); }
   };
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-3xl space-y-5">
-    <Link className="inline-flex min-h-11 items-center underline" href="/partner">К кабинету партнёра</Link><h1 className="text-2xl font-semibold">Выплаты</h1>
+  return <main className="app-shell min-h-dvh bg-canvas text-ink"><div className="mx-auto max-w-3xl space-y-5">
+    <Link className="inline-flex min-h-11 items-center underline" href="/partner">← Партнёрский кабинет</Link><h1>Выплаты</h1>
     {termsReacceptRequired && <Link className="inline-flex min-h-11 items-center underline" href="/partner/onboarding?returnTo=%2Fpartner%2Fpayouts">Принять новые условия</Link>}
-    {error && <p role="alert" className="text-rose-300">{error}</p>}<button className="min-h-11 underline" disabled={pending} onClick={() => setRetry((n) => n + 1)}>Обновить</button>
-    {loading ? <div aria-label="Загрузка выплат" className="h-36 animate-pulse rounded-xl bg-slate-900" /> : earnings && <section className="rounded-xl bg-slate-900 p-4">
-      <p>Долг по корректировкам: {money(earnings.debtAmountMinor ?? Math.max(0,-earnings.availableAmountMinor), earnings.currency)}. Уменьшение начислений: {money(earnings.reversalAmountMinor ?? 0, earnings.currency)}.</p>
-      <h2 className="text-lg font-semibold">Доступно для выплаты</h2><p className="mt-2 text-2xl">{money(earnings.payoutBlocked ? 0 : Math.max(0,earnings.availableAmountMinor), earnings.currency)}</p>
-      <p className="mt-2 text-slate-300">Минимум для выплаты: {money(minimum, earnings.currency)}. Запросить можно только всю доступную сумму.</p>
-      {disabledReason ? <p className="mt-3 text-amber-300">{disabledReason}</p> : <button className="mt-4 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-50" disabled={pending} onClick={() => setConfirm(true)}>Запросить выплату</button>}
-      <p className="mt-3 text-sm text-slate-400">Перевод выполняется оператором вне приложения. Платёжные реквизиты здесь не собираются.</p>
+    {error && <p role="alert" className="text-danger">{error}</p>}<button className="min-h-11 underline" disabled={pending} onClick={() => setRetry((n) => n + 1)}>Обновить</button>
+    {loading ? <div aria-label="Загрузка выплат" className="h-36 animate-pulse rounded-xl bg-surface" /> : earnings && <section className="app-panel">
+      {(earnings.debtAmountMinor ?? 0) > 0 && <p className="text-warning">Долг после корректировок: {money(earnings.debtAmountMinor!, earnings.currency)}.</p>}
+      {(earnings.reversalAmountMinor ?? 0) > 0 && <p>Корректировки вознаграждений: {money(earnings.reversalAmountMinor!, earnings.currency)}.</p>}
+      <h2 className="text-lg font-bold">Доступно для выплаты</h2><p className="mt-2 text-2xl">{money(earnings.payoutBlocked ? 0 : Math.max(0,earnings.availableAmountMinor), earnings.currency)}</p>
+      <p className="mt-2 text-ink-secondary">Минимальная сумма: {minimum == null ? "не настроена" : money(minimum, earnings.currency)}. Заявка будет создана на весь доступный баланс.</p>
+      {disabledReason ? <p className="mt-3 text-warning">{disabledReason}</p> : <button className="app-button app-button-primary mt-4 min-h-11 px-4 disabled:opacity-50" disabled={pending} onClick={() => setConfirm(true)}>Запросить выплату</button>}
+      <p className="mt-3 text-sm text-muted">Выплату переводит сотрудник магазина вне приложения. Платёжные реквизиты здесь не собираются.</p>
     </section>}
-    {confirm && <section role="region" aria-label="Подтверждение заявки на выплату" className="rounded-xl border border-amber-500 bg-slate-900 p-4"><h2 className="font-semibold">Запросить выплату?</h2>
-      <p className="mt-2">К выплате будет запрошена вся доступная сумма: {earnings && money(earnings.availableAmountMinor, earnings.currency)}.</p><button className="mt-3 min-h-11 rounded bg-blue-600 px-4" disabled={pending} onClick={() => void submit()}>Да, запросить выплату</button><button className="ml-3 min-h-11 px-4 underline" disabled={pending} onClick={() => setConfirm(false)}>Вернуться</button></section>}
-    <section><h2 className="text-lg font-semibold">История заявок</h2>{result && !result.items.length ? <p className="mt-3 text-slate-400">Вы ещё не запрашивали выплаты.</p> : <ul className="mt-3 space-y-3">{result?.items.map((item) => <li key={item.id} className="rounded-xl bg-slate-900 p-4"><div className="flex flex-wrap justify-between gap-2"><strong>{money(item.amountMinor, item.currency)}</strong><span>{labels[item.status]}</span></div><p className="mt-2 text-sm text-slate-400">Запрошена: {date(item.requestedAt)}</p><p className="mt-2">Распределения: {item.allocations.length}</p></li>)}</ul>}
+    {confirm && <section role="region" aria-label="Подтверждение заявки на выплату" className="app-panel border-warning"><h2 className="font-bold">Подтвердить заявку?</h2>
+      <p className="mt-2">Будет запрошена выплата всего доступного баланса: {earnings && money(earnings.availableAmountMinor, earnings.currency)}.</p><button className="app-button app-button-primary mt-3 min-h-11 px-4" disabled={pending} onClick={() => void submit()}>Да, запросить выплату</button><button className="ml-3 min-h-11 px-4 underline" disabled={pending} onClick={() => setConfirm(false)}>Вернуться</button></section>}
+    <section><h2 className="text-lg font-bold">История заявок</h2>{result && !result.items.length ? <p className="mt-3 text-muted">Заявок на выплату пока нет.</p> : <ul className="mt-3 space-y-3">{result?.items.map((item) => <li key={item.id} className="app-panel"><div className="flex flex-wrap justify-between gap-2"><strong>{money(item.amountMinor, item.currency)}</strong><span>{labels[item.status]}</span></div><p className="mt-2 text-sm text-muted">Запрошена: {date(item.requestedAt)}</p><details><summary className="min-h-11 cursor-pointer">Из каких начислений состоит выплата</summary><p>Начислений: {item.allocations.length}</p></details></li>)}</ul>}
       {result && result.total > result.limit && <nav aria-label="Страницы выплат" className="mt-4 flex gap-4"><button className="min-h-11" disabled={page === 1} onClick={() => setPage((n) => n - 1)}>Назад</button><span>Страница {result.page}</span><button className="min-h-11" disabled={page * result.limit >= result.total} onClick={() => setPage((n) => n + 1)}>Далее</button></nav>}</section>
   </div></main>;
 }
