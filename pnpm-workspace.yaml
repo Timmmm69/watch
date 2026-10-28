@@ -3,6 +3,9 @@ packages:
   - packages/*
 # Security fixes in Prisma's transitive CLI/config dependencies; keep Prisma 7.
 overrides:
+  # Keep fast-uri on patched releases within each existing major.
+  'fast-uri@3': 3.1.9
+  'fast-uri@4': 4.2.3
   # GHSA-68fv-2mgg-jv7q: patched source-map parser for PostCSS/Tailwind.
   source-map-js: 1.2.2
   '@prisma/config@7.10.0>deepmerge-ts': 8.0.0
