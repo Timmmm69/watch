@@ -14,6 +14,18 @@ async function auth(page: Page, isAdmin = false, status: "ACTIVE" | "BLOCKED" | 
 
 test.beforeEach(async ({ page }) => { await page.route("https://telegram.org/js/telegram-web-app.js", (route) => route.fulfill({ contentType: "application/javascript", body: "" })); });
 
+test("a block during payout submission removes new request actions", async ({ page }) => {
+  await auth(page);
+  await page.route("**/api/v1/partner/earnings?**", route => route.fulfill({ json: earnings }));
+  await page.route("**/api/v1/partner/payouts?**", route => route.fulfill({ json: { items: [], total: 0, page: 1, limit: 20 } }));
+  await page.route("**/api/v1/partner/payouts", route => route.fulfill({ status: 403, json: { error: { code: "PARTNER_BLOCKED" } } }));
+  await page.goto("/partner/payouts");
+  await page.getByRole("button", { name: "Запросить выплату", exact: true }).click();
+  await page.getByRole("button", { name: "Да, запросить выплату", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Партнёр заблокирован");
+  await expect(page.getByRole("button", { name: "Запросить выплату", exact: true })).toHaveCount(0);
+});
+
 test("partner requests the whole eligible balance and retries with the same idempotency key", async ({ page }) => {
   await auth(page); let requests = 0; const keys: string[] = [];
   await page.route("**/api/v1/partner/earnings?**", (route) => route.fulfill({ json: earnings }));
@@ -45,7 +57,7 @@ test("partner terms reacceptance leaves history readable but disables a new payo
   await page.route("**/api/v1/partner/earnings?**", (route) => route.fulfill({ json: earnings }));
   await page.route("**/api/v1/partner/payouts?**", (route) => route.fulfill({ json: { items: [payout], total: 1, page: 1, limit: 20 } }));
   await page.goto("/partner/payouts");
-  await expect(page.getByText("Примите обновлённые условия партнёрской программы.")).toBeVisible();
+  await expect(page.getByText("Требуется принять новые условия партнёрской программы.")).toBeVisible();
   await expect(page.getByRole("strong")).toContainText("70,00");
   await expect(page.getByRole("button", { name: "Запросить выплату" })).toHaveCount(0);
 });
@@ -59,7 +71,7 @@ test("partner keeps the CTA disabled for an active payout outside the visible hi
     return route.fulfill({ json: { items: [], total: 21, page: 2, limit: 20 } });
   });
   await page.goto("/partner/payouts");
-  await expect(page.getByText("Есть активная заявка на выплату.")).toBeVisible();
+  await expect(page.getByText(/Заявка на 70,00.*принята и ожидает обработки/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Запросить выплату" })).toHaveCount(0);
 });
 

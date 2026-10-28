@@ -37,7 +37,7 @@ function event(type: string, payload: Record<string, unknown>): OutboxEvent {
 describe("dispatchEvent", () => {
   it.each(["ORDER_CREATED", "INVENTORY_SYNC_FAILED", "PAYOUT_REQUESTED"])("binds runtime Admin IDs for %s", async (type) => {
     const pool = new MockPool();
-    pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-T43", total_minor: 100, currency: "BYN" }]);
+    pool.setBySql("SELECT public_number, total_minor, currency, economic_regime FROM orders WHERE id = $1", [{ public_number: "W-T43", total_minor: 100, currency: "BYN" }]);
     pool.setBySql("SELECT currency FROM payouts WHERE id=$1", [{ currency: "BYN" }]);
     pool.setBySql(`SELECT title_snapshot, quantity, partner_commission_unit_snapshot_minor FROM order_items
      WHERE order_id = $1 ORDER BY id`, [{ title_snapshot: "Watch", quantity: 1, partner_commission_unit_snapshot_minor: 10 }]);
@@ -64,6 +64,7 @@ describe("dispatchEvent", () => {
       "/orders/W-T40": ["orders/[publicNumber]/page.tsx", 'screen="orders" publicNumber={publicNumber}'],
       "/partner/orders/W-T40": ["partner/orders/[publicNumber]/page.tsx", 'screen="partnerOrders" publicNumber={publicNumber}'],
       [`/admin/orders/${orderId}`]: ["admin/orders/[id]/page.tsx", 'orderId={id}'],
+      "/partner/earnings": ["partner/earnings/page.tsx", 'screen="earnings"'],
       "/partner": ["partner/page.tsx", 'screen="partner"'],
       "/partner/payouts": ["partner/payouts/page.tsx", 'screen="payouts"'],
       "/admin/payouts": ["admin/payouts/page.tsx", 'screen="adminPayouts"'],
@@ -106,7 +107,7 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1",telegram_user_id: "111" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool,event(`PAYOUT_${status}`,{ v: 1,payoutId: "payout",partnerId: "partner",amountMinor: 5000,status }),config,send);
-    expect(send).toHaveBeenCalledExactlyOnceWith("111",expect.stringContaining(`50.00 BYN: ${label}`));
+    expect(send).toHaveBeenCalledExactlyOnceWith("111",expect.stringContaining(`50.00 BYN ${label}`));
     expect(send).toHaveBeenCalledWith("111",expect.stringContaining("/partner/payouts"));
     expect(pool.queries.some((query) => query.sql.includes("is_admin = true"))).toBe(false);
   });
@@ -126,21 +127,21 @@ describe("dispatchEvent", () => {
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("PARTNER_ACTIVATED", { partnerId: "p1" }), config, send);
-    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Партнёрский аккаунт создан."));
+    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Вы подключены как партнёр"));
   });
 
   it("notifies partner and admin on ORDER_CREATED", async () => {
     const pool = new MockPool();
-    pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
+    pool.setBySql("SELECT public_number, total_minor, currency, economic_regime FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
     pool.setBySql(`SELECT title_snapshot, quantity, partner_commission_unit_snapshot_minor FROM order_items\n     WHERE order_id = $1 ORDER BY id`, [{ title_snapshot: "Watch", quantity: 1, partner_commission_unit_snapshot_minor: 100 }]);
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
     pool.setBySql("SELECT id, telegram_user_id::text AS telegram_user_id FROM users WHERE telegram_user_id = ANY($1::bigint[]) AND is_admin = true AND is_blocked = false AND bot_can_message = true", [{ id: "u2", telegram_user_id: "222" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("ORDER_CREATED", { orderId: "o1", publicNumber: "W-ABC", partnerIdSnapshot: "p1", commissionEligibleSnapshot: true }), config, send);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Новый заказ № W-ABC"));
+    expect(send).toHaveBeenCalledWith("111", expect.stringContaining("Новый заказ W-ABC"));
     expect(send).toHaveBeenCalledWith("111", expect.not.stringContaining("по вашей ссылке"));
-    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Новый заказ № W-ABC"));
+    expect(send).toHaveBeenCalledWith("222", expect.stringContaining("Новый заказ W-ABC"));
   });
 
   it.each(["CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "DELIVERY_FAILED"])("notifies buyer on ORDER_STATUS_CHANGED to %s", async (toStatus) => {
@@ -156,7 +157,7 @@ describe("dispatchEvent", () => {
      WHERE o.id = $1 AND o.buyer_user_id IS NULL AND o.origin = 'DROPSHIPPER'
        AND o.economic_regime = 'DROPSHIP_MARKUP' AND u.bot_can_message = true
      LIMIT 1`, [{ user_id: "u1", telegram_user_id: "111", role: "buyer" }]);
-    pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
+    pool.setBySql("SELECT public_number, total_minor, currency, economic_regime FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
     const send = vi.fn().mockResolvedValue(undefined);
     await dispatchEvent(pool as unknown as Pool, event("ORDER_STATUS_CHANGED", { orderId: "o1", publicNumber: "W-ABC", fromStatus: "PLACED", toStatus }), config, send);
     expect(send).toHaveBeenCalledWith("111", expect.stringContaining(toStatus === "CONFIRMED" ? "подтверждён" : toStatus === "SHIPPED" ? "отправлен" : toStatus === "DELIVERED" ? "доставлен" : toStatus === "CANCELLED" ? "отменён" : "не доставлен"));
@@ -194,7 +195,7 @@ describe("dispatchEvent", () => {
 
   it("notifies partner on ORDER_CANCELLED with commission impact", async () => {
     const pool = new MockPool();
-    pool.setBySql("SELECT public_number, total_minor, currency FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
+    pool.setBySql("SELECT public_number, total_minor, currency, economic_regime FROM orders WHERE id = $1", [{ public_number: "W-ABC", total_minor: 1000, currency: "BYN" }]);
     pool.setBySql(`SELECT title_snapshot, quantity, partner_commission_unit_snapshot_minor FROM order_items\n     WHERE order_id = $1 ORDER BY id`, [{ title_snapshot: "Watch", quantity: 2, partner_commission_unit_snapshot_minor: 100 }]);
     pool.setBySql("SELECT u.id AS user_id, u.telegram_user_id::text AS telegram_user_id\n     FROM partners p JOIN users u ON u.id = p.user_id\n     WHERE p.id = $1 AND u.bot_can_message = true", [{ user_id: "u1", telegram_user_id: "111" }]);
     const send = vi.fn().mockResolvedValue(undefined);

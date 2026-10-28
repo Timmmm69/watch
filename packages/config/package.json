@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
-  "dependencies": { "zod": "4.6.5" },
+  "dependencies": { "zod": "4.6.6" },
   "devDependencies": {
     "@types/node": "24.19.0",
     "typescript": "6.0.3",

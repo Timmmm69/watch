@@ -1,1 +1,228 @@
 @import "tailwindcss";
+
+/* Notion-inspired product tokens. See docs/DESIGN_SYSTEM.md. */
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --watch-canvas: #f6f5f4;
+  --watch-surface: #ffffff;
+  --watch-surface-muted: #efeeec;
+  --watch-surface-hover: #e9e7e4;
+  --watch-ink: #20201e;
+  --watch-ink-secondary: #31302e;
+  --watch-muted: #615d59;
+  --watch-hairline: #e6e6e6;
+  --watch-control: #918b84;
+  --watch-primary: #0075de;
+  --watch-primary-active: #005bab;
+  --watch-on-primary: #ffffff;
+  --watch-link: #005bab;
+  --watch-focus: #0075de;
+  --watch-success: #217347;
+  --watch-warning: #855400;
+  --watch-danger: #b4233d;
+  --watch-warning-soft: #fff4df;
+  --watch-danger-soft: #fff0f1;
+  --watch-scrim: rgb(32 32 30 / 40%);
+  --watch-shadow: 0 1px 2px rgb(32 32 30 / 3%), 0 4px 12px rgb(32 32 30 / 3%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --watch-canvas: #191918;
+    --watch-surface: #232322;
+    --watch-surface-muted: #2c2c2a;
+    --watch-surface-hover: #363633;
+    --watch-ink: #f5f4f1;
+    --watch-ink-secondary: #e1dfdb;
+    --watch-muted: #b5b0a9;
+    --watch-hairline: #393936;
+    --watch-control: #77736d;
+    --watch-link: #8cc6ff;
+    --watch-focus: #8cc6ff;
+    --watch-success: #88d4a6;
+    --watch-warning: #f1c176;
+    --watch-danger: #ffa3b1;
+    --watch-warning-soft: #352b1c;
+    --watch-danger-soft: #392126;
+    --watch-scrim: rgb(0 0 0 / 65%);
+    --watch-shadow: 0 2px 12px rgb(0 0 0 / 12%);
+  }
+}
+
+@theme inline {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-canvas: var(--watch-canvas);
+  --color-surface: var(--watch-surface);
+  --color-surface-muted: var(--watch-surface-muted);
+  --color-surface-hover: var(--watch-surface-hover);
+  --color-ink: var(--watch-ink);
+  --color-ink-secondary: var(--watch-ink-secondary);
+  --color-muted: var(--watch-muted);
+  --color-hairline: var(--watch-hairline);
+  --color-control: var(--watch-control);
+  --color-primary: var(--watch-primary);
+  --color-primary-active: var(--watch-primary-active);
+  --color-on-primary: var(--watch-on-primary);
+  --color-link: var(--watch-link);
+  --color-success: var(--watch-success);
+  --color-warning: var(--watch-warning);
+  --color-danger: var(--watch-danger);
+  --color-warning-soft: var(--watch-warning-soft);
+  --color-danger-soft: var(--watch-danger-soft);
+  --color-scrim: var(--watch-scrim);
+  --radius-sm: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+}
+
+@layer base {
+  * { border-color: var(--watch-hairline); }
+  html { background: var(--watch-canvas); }
+  body {
+    margin: 0;
+    background: var(--watch-canvas);
+    color: var(--watch-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    font-feature-settings: "calt", "locl", "lnum";
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--watch-primary-active); color: #ffffff; }
+  h1, h2, h3 { text-wrap: balance; font-weight: 700; }
+  h1 { line-height: 1.15; letter-spacing: -0.035em; }
+  h2 { line-height: 1.3; letter-spacing: -0.025em; }
+  h3 { line-height: 1.4; letter-spacing: -0.015em; }
+  a { color: var(--watch-link); text-underline-offset: 4px; }
+  a:hover { text-decoration: underline; }
+  button, summary, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  button, summary { touch-action: manipulation; }
+  button {
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 140ms ease, border-color 140ms ease;
+  }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--watch-focus); outline-offset: 3px; }
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea) {
+    min-height: 44px;
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid var(--watch-control);
+    border-radius: 4px;
+    background: var(--watch-surface);
+    color: var(--watch-ink);
+    padding: 10px 12px;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+  input::placeholder, textarea::placeholder { color: var(--watch-muted); opacity: 1; }
+  input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--watch-primary); }
+  input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--watch-danger); }
+  label { color: var(--watch-ink-secondary); }
+  th { color: var(--watch-muted); font-size: 12px; font-weight: 600; text-align: start; }
+  th, td { padding: 12px 16px; vertical-align: top; }
+  thead { background: var(--watch-surface-muted); }
+  tbody tr + tr { border-top: 1px solid var(--watch-hairline); }
+  td, dd { font-variant-numeric: tabular-nums; }
+  dt { color: var(--watch-muted); }
+  dd { margin-top: 4px; font-weight: 600; letter-spacing: -0.025em; }
+  summary { cursor: pointer; padding-block: 12px; }
+  pre { overflow-x: auto; }
+}
+
+@layer components {
+  .app-shell {
+    min-height: 100dvh;
+    padding: 40px max(20px, calc((100% - 1200px) / 2)) calc(40px + env(safe-area-inset-bottom));
+  }
+  .app-shell h1 { font-size: clamp(28px, 3.2vw, 40px); font-weight: 700; }
+  .app-shell :where(nav:not([aria-label^="Страниц"]):not([aria-label="Категории"])) {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    padding-block: 8px 16px;
+    border-bottom: 1px solid var(--watch-hairline);
+  }
+  .app-shell nav a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; font-size: 14px; }
+  .app-shell nav a:hover { text-decoration: underline; }
+  .app-panel {
+    border: 1px solid var(--watch-hairline);
+    border-radius: 12px;
+    background: var(--watch-surface);
+    padding: 24px;
+  }
+  .app-button {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid var(--watch-control);
+    border-radius: 8px;
+    background: var(--watch-surface);
+    padding: 8px 16px;
+    color: var(--watch-ink);
+    line-height: 1.4;
+    font-weight: 500;
+  }
+  .app-button:hover:enabled { background: var(--watch-surface-muted); }
+  .app-button-primary { border-color: transparent; background: var(--watch-primary); color: var(--watch-on-primary); }
+  .app-button-primary:hover:enabled, .bg-primary:hover:enabled { background: var(--watch-primary-active); }
+  .app-button:disabled { opacity: 0.45; }
+  .app-button:active:enabled { transform: translateY(1px); }
+  .app-input {
+    min-height: 44px;
+    border: 1px solid var(--watch-control);
+    border-radius: 4px;
+    background: var(--watch-surface);
+    color: var(--watch-ink);
+    padding: 10px 12px;
+  }
+  .app-input:disabled { background: var(--watch-surface-muted); color: var(--watch-muted); }
+  .app-table-wrap { overflow-x: auto; border: 1px solid var(--watch-hairline); border-radius: 12px; background: var(--watch-surface); }
+  .shop-header { padding-bottom: 24px; border-bottom: 1px solid var(--watch-hairline); }
+  .shop-header h1, .app-auth h1 { font-size: 28px; }
+  .shop-product {
+    border: 1px solid var(--watch-hairline);
+    border-radius: 12px;
+    background: var(--watch-surface);
+    box-shadow: var(--watch-shadow);
+    font-weight: 400;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .shop-product:hover { border-color: var(--watch-control); }
+  .shop-product-media { background: var(--watch-surface-muted); }
+  .shop-product-price { color: var(--watch-ink); font-size: 20px; font-weight: 600; letter-spacing: -0.025em; }
+  .shop-category { border: 1px solid var(--watch-hairline); background: var(--watch-surface); color: var(--watch-ink-secondary); }
+  .shop-category:hover { background: var(--watch-surface-muted); }
+  .shop-category[aria-pressed="true"] { border-color: var(--watch-primary); background: var(--watch-primary); color: var(--watch-on-primary); }
+  .shop-modal { box-shadow: 0 20px 80px rgb(0 0 0 / 15%); }
+  .earnings-balances { border-block: 1px solid var(--watch-hairline); padding-block: 20px; }
+  .earnings-balances dd { font-size: clamp(24px, 3vw, 32px); line-height: 1.2; }
+  .app-auth { width: 100%; max-width: 400px; border: 1px solid var(--watch-hairline); border-radius: 12px; background: var(--watch-surface); padding: 40px 24px; box-shadow: var(--watch-shadow); }
+}
+
+@media (max-width: 639px) {
+  .app-shell { padding-top: 24px; padding-inline: 16px; }
+  .app-panel { padding: 20px; }
+  .shop-header { flex-wrap: wrap; padding-bottom: 16px; }
+  .shop-search { flex-wrap: wrap; }
+  .shop-search input { flex-basis: 100%; }
+  .shop-search button { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .app-button:active:enabled { transform: none; }
+}

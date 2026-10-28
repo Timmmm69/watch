@@ -5,6 +5,7 @@ interface BotConfig {
   token: string;
   appBaseUrl: string;
   supportContact: string;
+  nativeCommerce?: boolean;
 }
 
 interface TelegramMessage {
@@ -49,35 +50,73 @@ export async function processTelegramUpdate(pool: Pool, payload: unknown, config
     WHERE u.telegram_user_id = $1
   `, [String(from.id)])).rows[0];
   const partner = !!user?.partner_status;
+  const native = config.nativeCommerce ?? false;
   const blocked = user?.partner_status === "BLOCKED";
   const button = (text: string, path: string) => ({ text, web_app: { url: new URL(path, config.appBaseUrl).toString() } });
-  const history = [button("История заказов", partner ? "/partner/orders" : "/orders")];
+  const contact = config.supportContact.trim();
+  let supportUrl: string | undefined;
+  if (/^@[a-zA-Z0-9_]+$/.test(contact)) supportUrl = `https://t.me/${contact.slice(1)}`;
+  else {
+    try {
+      const url = new URL(contact);
+      if (url.protocol === "https:" || url.protocol === "http:") supportUrl = url.href;
+    } catch { /* Non-link contacts remain available in the message text. */ }
+  }
+  const supportMenu = native && supportUrl
+    ? [[{ text: partner ? "Поддержка партнёров" : "Связаться с магазином", url: supportUrl }]] : [];
+  const history = [button("Заказы", partner ? "/partner/orders" : "/orders")];
   const menu = user?.is_blocked ? [] : partner
     ? blocked
-      ? [[button("Кабинет партнёра", "/partner")], history, [button("Доходы", "/partner/earnings")]]
-      : [[button("Кабинет партнёра", "/partner")], [button("Каталог товаров", "/shop")], history,
-        [button("Доходы", "/partner/earnings")], [button("Каталог товаров", "/shop")]]
-    : [[button("Стать партнёром", "/partner/onboarding")], [button("Каталог товаров", "/shop")]];
-  let text = "Делитесь товарами и получайте комиссию за завершённые заказы. Примите условия в приложении, чтобы стать партнёром.";
+      ? [[button("Партнёрский кабинет", "/partner")], history, [button("Доходы", "/partner/earnings")], ...supportMenu]
+      : [[button("Партнёрский кабинет", "/partner")], [button(native ? "Часы для продажи" : "Партнёрский каталог", "/shop")], history,
+        [button(native ? "Заработок" : "Доходы", "/partner/earnings"), button("Выплаты", "/partner/payouts")], ...supportMenu]
+    : [[button(native ? "Выбрать часы" : "Открыть магазин", "/shop")], ...(!native ? [[button("Корзина", "/cart"), ...history]] : []),
+      ...supportMenu, [button(native ? "Продавать с нами" : "Стать партнёром", "/partner/onboarding")]];
+  let text = native
+    ? "Здравствуйте! Выберите часы в каталоге: там модели, цены и наличие. По вопросам покупки и доставки напишите в поддержку магазина."
+    : "Выберите товар в магазине, добавьте его в корзину и оформите заказ. Свои заказы можно посмотреть здесь же.";
   let keyboard = menu;
-  if (partner) text = "Выберите раздел: каталог, заказы или комиссии.";
-  if (command === "/help") text = `Здесь можно открыть каталог, заказы и кабинет партнёра. Поддержка: ${config.supportContact}`;
+  if (partner) text = native
+    ? "Оформляйте заказы для своих покупателей: выберите часы, укажите цену продажи и данные получателя. Ваш заработок — разница между ценой продажи и вашей ценой. Заказы, начисления и выплаты доступны в партнёрском кабинете."
+    : "Делитесь ссылками на товары и получайте комиссию за завершённые заказы. Заказы, доходы и выплаты доступны в кабинете.";
+  if (command === "/help") text = native
+    ? partner
+      ? "Чтобы оформить заказ для покупателя, выберите часы, укажите цену продажи и данные получателя. Статусы заказов, заработок и заявки на выплату смотрите в партнёрском кабинете. По вопросам работы напишите в поддержку партнёров."
+      : "Откройте каталог, чтобы выбрать часы. Уточнить покупку, оплату и доставку можно в поддержке магазина. Если заказ оформил ваш продавец, узнать его статус или обсудить отмену и возврат можно у него."
+    : "Бот помогает открыть магазин, заказы и партнёрский кабинет.";
   if (command === "/catalog") {
-    text = partner ? "Каталог товаров доступен в приложении." : "Откройте каталог товаров в приложении.";
-    keyboard = [[button(partner ? "Просмотреть каталог" : "Каталог товаров", "/shop")]];
+    text = native
+      ? partner ? "Выберите часы для покупателя. В каталоге указана ваша цена; цену продажи вы укажете при оформлении заказа."
+        : "Посмотрите часы, цены и наличие в каталоге. По вопросам покупки и доставки напишите в поддержку магазина."
+      : partner ? "Партнёрский каталог в приложении." : "Каталог магазина в приложении.";
+    keyboard = [[button(partner ? "Просмотреть каталог" : native ? "Выбрать часы" : "Открыть магазин", "/shop")], ...supportMenu];
   }
-  if (command === "/orders") { text = "Посмотреть историю заказов можно в приложении."; keyboard = [history]; }
+  if (command === "/orders") {
+    text = native
+      ? partner ? "Здесь заказы, которые вы оформили для своих покупателей. Откройте заказ, чтобы проверить статус, сумму и данные доставки."
+        : "Здесь можно посмотреть заказы, которые вы ранее оформляли в этом аккаунте. Если заказ оформил ваш продавец, уточните статус у него."
+      : "История заказов в приложении.";
+    keyboard = [history, ...supportMenu];
+  }
   if (command === "/balance" && partner) {
-    text = "Ожидаемые и доступные начисления, а также их история находятся в приложении.";
-    keyboard = [[button("Доходы", "/partner/earnings")]];
+    text = native ? "Здесь ваш ожидаемый заработок и суммы, доступные к выплате. Откройте начисления, чтобы проверить состояние заработка по заказам."
+      : "Доходы и история начислений в приложении.";
+    keyboard = [[button(native ? "Заработок" : "Доходы", "/partner/earnings")], ...supportMenu];
   }
-  if (command === "/balance" && !partner) keyboard = [[button("Стать партнёром", "/partner/onboarding")]];
-  if (blocked) text = `Партнёрский аккаунт заблокирован. Можно просматривать историю, но нельзя создавать ссылки или запрашивать выплаты. ${text}`;
+  if (command === "/balance" && !partner) {
+    text = native ? "Этот раздел для партнёров, которые продают часы своим покупателям. Если вы выбираете часы для себя, откройте каталог. Условия сотрудничества доступны по кнопке «Продавать с нами»."
+      : "Доходы и выплаты доступны партнёрам. Прочитайте условия программы, чтобы начать работу.";
+    keyboard = [[button(native ? "Продавать с нами" : "Стать партнёром", "/partner/onboarding")],
+      [button(native ? "Выбрать часы" : "Открыть магазин", "/shop")], ...supportMenu];
+  }
+  if (blocked) text = native
+    ? "Партнёрский аккаунт заблокирован. Доступен только просмотр каталога, заказов и начислений. Новые заказы и заявки на выплату недоступны. Чтобы уточнить причину ограничения, напишите в поддержку партнёров."
+    : "Партнёрский аккаунт заблокирован. Доступен только просмотр истории и каталога. Новые ссылки и заявки на выплату недоступны. Чтобы уточнить причину ограничения, напишите в поддержку.";
   if (user?.is_blocked) {
-    text = "Ваш аккаунт заблокирован. По вопросам доступа обратитесь в поддержку.";
+    text = "Доступ к приложению ограничен. Обратитесь в поддержку.";
     keyboard = [];
   }
-  if (command !== "/help" || user?.is_blocked) text += ` Поддержка: ${config.supportContact}`;
+  text += `\n\nПоддержка: ${config.supportContact}`;
   try {
     await send("sendMessage", { chat_id: chat.id, text,
       ...(keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}) });

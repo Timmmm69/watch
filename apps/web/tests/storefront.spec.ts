@@ -26,7 +26,7 @@ test("searches, filters, pages, and resets the buyer catalog", async ({ page }) 
   });
   await page.goto("/shop");
   await expect(page.getByRole("button", { name: /Casio Classic/ })).toBeVisible();
-  await expect(page.getByText("Наличие уточняется")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Casio Classic/ }).getByText("Наличие уточняется")).toBeVisible();
   await page.getByRole("button", { name: "Часы" }).click();
   await expect.poll(() => queries.at(-1)?.get("category")).toBe("watches");
   await page.getByLabel("Поиск товаров").fill("No match");

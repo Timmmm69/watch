@@ -107,21 +107,30 @@ describe.skipIf(!disposableUrl())("T48 dropshipper checkout on disposable Postgr
     expect((await pool.query("SELECT allocated_procurement_cost_minor FROM order_items")).rows.every((row)=>row.allocated_procurement_cost_minor===null)).toBe(true);
   });
 
-  it("rejects new markup checkout through API and restores retail catalog, cart and referral routes", async () => {
-    fixture=await dropshipFixture(); const {app,owners,request,variant,slug,pool}=fixture;
-    await pool.query("UPDATE product_variants SET price_minor=15000,partner_commission_unit_minor=2000");
+  it("uses the existing authenticated CSRF endpoint exclusively and exposes D/stock/materials without C", async () => {
+    fixture=await dropshipFixture(); const {app,owners,request,variant,slug}=fixture;
     const post=(payload:unknown,headers=owners[0]!.headers)=>app.inject({method:"POST",url:"/api/v1/orders",headers:{...headers,"idempotency-key":"route"},payload});
     expect((await post(request(),{} as never)).statusCode).toBe(401);
     expect((await post(request(),{cookie:owners[0]!.headers.cookie} as never)).statusCode).toBe(403);
-    expect((await post(request())).statusCode).toBe(400);
+    expect((await post(request(),owners[2]!.headers)).statusCode).toBe(403);
+    expect((await post({...request(),recipientName:"",phone:"x",address:""})).statusCode).toBe(400);
+    expect((await post(request())).statusCode).toBe(201); expect((await post(request())).statusCode).toBe(200);
     const product=await app.inject({url:`/api/v1/catalog/products/${slug}`,headers:owners[0]!.headers});
-    expect(product.json().variants[0]).toMatchObject({id:variant,sellable:10,priceMinor:15000});
-    expect(product.json().partnerView.variants[0].commissionUnitMinor).toBe(2000);
+    expect(product.json().variants[0]).toMatchObject({id:variant,dropshipPriceMinor:10000,sellable:9,priceMinor:10000});
     expect(product.json().partnerView.assets[0].text).toContain("sales material");
-    expect(JSON.stringify(product.json())).not.toMatch(/procurement|settlement|80002|dropshipPriceMinor/);
-    expect((await app.inject({url:"/api/v1/catalog/products",headers:owners[2]!.headers})).statusCode).toBe(200);
+    expect(JSON.stringify(product.json())).not.toMatch(/procurement|settlement|80002|commissionUnitMinor/);
+    const cards=await app.inject({url:"/api/v1/catalog/products?minPriceMinor=10000&maxPriceMinor=10000",headers:owners[0]!.headers});
+    expect(cards.json().items[0].priceFromMinor).toBe(10000);
+    const buyerCards = await app.inject({url:"/api/v1/catalog/products",headers:owners[2]!.headers});
+    expect(buyerCards.statusCode).toBe(200);
+    const buyerProduct = await app.inject({url:`/api/v1/catalog/products/${slug}`,headers:owners[2]!.headers});
+    expect(buyerProduct.statusCode).toBe(200);
+    expect(buyerProduct.json().variants[0]).not.toHaveProperty("dropshipPriceMinor");
+    expect(buyerProduct.json()).not.toHaveProperty("partnerView");
     for (const [method,url,payload] of [["PUT",`/api/v1/cart/items/${variant}`,{quantity:1}],["POST","/api/v1/partner/referral-links",{productId:null}]] as const)
-      expect((await app.inject({method,url,headers:owners[0]!.headers,payload})).statusCode).toBe(200);
+      expect((await app.inject({method,url,headers:owners[0]!.headers,payload})).json().error.code).toBe("LEGACY_FLOW_DISABLED");
+    const old={...request(),salesTermsAccepted:true,salesTermsDocumentId:fixture.docs.PARTNER_TERMS.id};
+    expect((await post(old)).statusCode).toBe(400);
   });
 
   it("rolls back every effect if a later line is unavailable and respects safety buffer/unpublished SKU", async () => {
