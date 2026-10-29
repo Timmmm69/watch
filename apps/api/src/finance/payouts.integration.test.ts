@@ -45,7 +45,9 @@ async function balances() {
     WHERE partner_id=$1 GROUP BY bucket ORDER BY bucket::text`, [partner])).rows;
 }
 async function finalize(id: string, status: "PAID" | "REJECTED") {
-  await service.transition(admin,id,{ target: status,...(status === "PAID" ? { externalReference: `transfer-${id}` } : {}) });
+  // A random UUID can contain 12 consecutive digits, which the PII guard rejects.
+  const reference = `transfer-${id.replace(/[0-9a-f]{4}/g, "$&-")}`;
+  await service.transition(admin,id,{ target: status,...(status === "PAID" ? { externalReference: reference } : {}) });
 }
 async function counts() {
   return (await pool!.query(`SELECT (SELECT count(*)::int FROM payouts) AS payouts,
