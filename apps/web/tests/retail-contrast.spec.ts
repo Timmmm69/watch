@@ -32,6 +32,8 @@ for (const colorScheme of ["light", "dark"] as const) test(`retail feedback cont
   const cart = { id: "cart", currency: "BYN", items: [item], totalMinor: 1000, canCheckout: true };
   await page.route("**/api/v1/cart", route => route.fulfill({ json: cart }));
   await page.route("**/api/v1/legal/*/current", route => route.fulfill({ json: { id: "test", version: "v1", contentMarkdown: "Синтетический документ" } }));
+  let submissions = 0;
+  await page.route("**/api/v1/checkout", route => { submissions++; return route.fulfill({ status: 500, json: {} }); });
   await page.goto("/checkout");
   await page.getByLabel("Имя получателя", { exact: true }).fill("Тест");
   await page.getByLabel("Телефон", { exact: true }).fill("123");
@@ -40,6 +42,10 @@ for (const colorScheme of ["light", "dark"] as const) test(`retail feedback cont
   await page.getByLabel("Ознакомлен(а) с текущей политикой конфиденциальности").check();
   await page.getByRole("button", { name: "Создать заказ", exact: true }).click();
   await expect(page.getByLabel("Телефон", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Телефон", { exact: true })).toHaveValue("123");
+  await expect(page.getByLabel("Имя получателя", { exact: true })).toHaveValue("Тест");
+  await expect(page.getByLabel("Адрес и детали доставки", { exact: true })).toHaveValue("Минск");
+  expect(submissions).toBe(0);
   await readable(page.locator("#phone-error"));
   cart.canCheckout = false; item.issues = ["OUT_OF_STOCK"];
   await page.goto("/cart");
