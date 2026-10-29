@@ -162,7 +162,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         <input className="block min-h-11 w-full bg-slate-900" type="datetime-local" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
       <label><input type="checkbox" checked={draft.overdue} onChange={(e) => setDraft({ ...draft, overdue: e.target.checked })} /> Просроченные</label>
       <label><input type="checkbox" checked={draft.reconciliationPending} onChange={(e) => setDraft({ ...draft, reconciliationPending: e.target.checked })} /> Требуют сверки остатков</label>
-      <button className="min-h-11 rounded bg-blue-600 px-4">Применить фильтры</button></form>}
+      <button className="min-h-11 rounded bg-primary text-on-primary px-4">Применить фильтры</button></form>}
     {loading && <div aria-label="Загрузка заказов" className="h-24 animate-pulse rounded bg-slate-900" />}
     {!orderId && result && !blocked && <>
       {!result.items.length && <p>По выбранным условиям заказов нет. Измените фильтры.</p>}
@@ -190,7 +190,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
         {r.lastSuccessfulSyncAt && <p>Обновлён: {date(r.lastSuccessfulSyncAt)}</p>}
         {r.reconciledAt && <p>Сверен: {date(r.reconciledAt)} · администратор {r.reconciledByAdminUserId}
           · снимок {r.reconciliationInventorySyncRunId} · версия {r.reconciliationSourceVersion ?? "Нет"}</p>}
-        {r.allowedManualTargets?.map((target) => <button key={target} className="min-h-11 rounded bg-blue-600 px-4"
+        {r.allowedManualTargets?.map((target) => <button key={target} className="min-h-11 rounded bg-primary text-on-primary px-4"
           disabled={!!pending || loading || r.sourceStatus !== "OK" || !r.lastSuccessfulSyncRunId}
           onClick={() => { setReconcile({ id: r.id, target, snapshot: r.lastSuccessfulSyncRunId! }); setReason(""); setEvidence(""); setAttested(false); setConfirm(""); }}>
           {target === "CONSUMED" ? "Подтвердить списание резерва" : "Подтвердить возврат резерва"}</button>)}
@@ -199,13 +199,13 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
           <label className="block">Причина корректировки<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
           <label className="block">Ссылка на подтверждение (необязательно)<input className="block min-h-11 w-full bg-slate-800" maxLength={500} value={evidence} onChange={(e) => setEvidence(e.target.value)} /></label>
           <label className="block"><input type="checkbox" checked={attested} onChange={(e) => setAttested(e.target.checked)} /> Подтверждаю, что показанный снимок остатков уже отражает физический результат.</label>
-          <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
+          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Закрыть форму сверки</button>
         </form>}</div>)}</section>
       {(order.nativeInventory || order.economicRegime === "DROPSHIP_MARKUP") && <OrderFinance orderId={order.id} request={request} />}
       <section><h2 className="font-semibold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
         {order.completionEligibleAt && <p>Автоматическое завершение возможно не раньше {date(order.completionEligibleAt)}.</p>}</section>
-      <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-blue-600 px-4"
+      <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-primary text-on-primary px-4"
         disabled={!!pending || loading} onClick={() => { setConfirm(target); setReconcile(null); setAttested(false); }}>{pending === target ? "Сохранение…" : actions[target]}</button>)}</section>
       {confirm && <section aria-label="Подтверждение действия" className="rounded border border-slate-600 p-4">
         <p>{actions[confirm]}?</p>{confirm === "DELIVERED" && <p>Подтвердите, что покупатель получил заказ.</p>}

@@ -173,7 +173,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
       <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Заказ создан. Ожидайте подтверждения оператора.</p>
       <Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="mr-4 inline-flex min-h-11 items-center underline">Посмотреть заказ</Link>
       <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link></section> : <>
-      {error && <p role="alert" className="my-4 text-amber-300">{error}</p>}
+      {error && <p role="alert" className="my-4 text-danger">{error}</p>}
       <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить данные заказа</button>
       {!cart && <div aria-label="Загрузка заказа" className="my-5 h-36 animate-pulse rounded-xl bg-surface" />}
       {cart?.purchaseContext?.channel === "REFERRAL" && <p className="app-panel my-4">{cart.purchaseContext.available === false ? <>Ссылка партнёра больше недоступна. Вернитесь в корзину и выберите обычную покупку.</> : <>Покупка по ссылке партнёра{cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Розничная цена для вас не меняется.</>}</p>}
@@ -181,10 +181,10 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
       {cart && <section aria-label="Состав заказа" className="app-panel my-5"><ul>{cart.items.map((item) => <li key={item.variantId} className="mb-3">
         <p>{item.title} · {item.sku} · {item.quantity} шт. × {money(item.priceMinor, cart.currency)}</p>
         <p>{money(item.lineTotalMinor, cart.currency)}</p>
-        {item.issues.map((issue) => <p key={issue} className="text-amber-300">{issue === "ITEM_UNAVAILABLE" ? "Товар больше недоступен." : messages[issue]}</p>)}
-        {lineErrors[item.variantId] && <p className="text-amber-300">{lineErrors[item.variantId]}</p>}
+        {item.issues.map((issue) => <p key={issue} className="text-warning">{issue === "ITEM_UNAVAILABLE" ? "Товар больше недоступен." : messages[issue]}</p>)}
+        {lineErrors[item.variantId] && <p className="text-danger">{lineErrors[item.variantId]}</p>}
       </li>)}</ul><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
-        {!cart.canCheckout && <p className="text-amber-300">Проверьте отмеченные товары в корзине.</p>}
+        {!cart.canCheckout && <p className="text-warning">Проверьте отмеченные товары в корзине.</p>}
         {priceConfirmation && <label className="mt-3 flex min-h-11 items-center gap-3"><input type="checkbox" checked={priceConfirmed}
           onChange={(event) => setPriceConfirmed(event.target.checked)} />Я проверил и принимаю новую сумму заказа</label>}
       </section>}
@@ -199,7 +199,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
               value={fields[name]} disabled={pending || readOnly} aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`}
               className="app-input min-h-11 w-full p-3" onChange={(event) => setFields({ ...fields, [name]: event.target.value })}
               onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />}
-          {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="mt-1 text-amber-300">{fieldErrors[name]}</p>}
+          {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="mt-1 text-danger">{fieldErrors[name]}</p>}
         </div>)}
         {!documents && <div aria-label="Загрузка документов" className="h-24 animate-pulse rounded-lg bg-slate-900" />}
         {documents && (["SALES_TERMS", "PRIVACY"] as const).map((type) => <section key={type}>
