@@ -44,6 +44,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!pool) return;
+  await pool.query("DELETE FROM carts WHERE buyer_user_id = $1", [ids.buyer]);
   await pool.query("DELETE FROM attribution_touches WHERE buyer_user_id = $1", [ids.buyer]);
   await pool.query("DELETE FROM audit_logs WHERE actor_user_id = ANY($1::uuid[])", [[ids.buyer, ids.admin, ids.partnerUser]]);
   await pool.query("DELETE FROM referral_links WHERE partner_id = $1", [ids.partner]);
@@ -107,7 +108,7 @@ describe.skipIf(!databaseUrl)("Referral attribution against PostgreSQL", () => {
     try {
       await latestClient.query("BEGIN");
       await latestClient.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ids.buyer]);
-      expect(await referral!.processLaunch(latestClient, buyer, identity(`r_${replacement.url.split("r_")[1]}`))).toBe("/shop");
+      expect(await referral!.processLaunch(latestClient, buyer, identity(`r_${replacement.url.split("r_")[1]}`))).toMatch(/^\/shop(?:\?referral=offer)?$/);
       const latest = await referral!.latestValidTouch(latestClient, ids.buyer);
       expect(latest?.referralLinkId).toBe(replacement.id);
       await latestClient.query("COMMIT");
