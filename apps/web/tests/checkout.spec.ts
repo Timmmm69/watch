@@ -59,7 +59,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       auth: { store: new SessionStore(pool, new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))])), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000", adminIds: () => new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]) },
       orders: new AdminOrderService(pool),
       orderViews: new OrderViewService(pool, "@support"),
-      cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
+      cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), buyerCheckout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
     await app.listen({ host: "127.0.0.1", port: 3001 });
     await new CartService(pool, currency).put(buyer, variant, 1);
     await telegram(page);

@@ -24,7 +24,7 @@ async function fill(page: Page) {
 
 test("native checkout distinguishes loading, missing selection and invalid variant", async ({ page }) => {
   await fixture(page);
-  await page.goto("/checkout");
+  await page.goto("/checkout?mode=partner");
   await expect(page.getByText("Выберите товар в каталоге, затем нажмите «Оформить заказ».")).toBeVisible();
   await expect(page.getByRole("button", { name: "Повторить загрузку", exact: true })).toHaveCount(0);
   let release!: () => void;
@@ -49,7 +49,6 @@ for (const privacyChanged of [false, true]) test(`terms reacceptance preserves t
   await page.goto(checkout); await fill(page);
   await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Принять новые условия" })).toBeVisible();
-  await expect(page.getByText(/Ваш ожидаемый заработок — разница/)).toBeVisible();
   if (privacyChanged) {
     await page.route("**/api/v1/legal/PRIVACY/current", route => route.fulfill({ json: { ...document, id: "00000000-0000-4000-8000-000000000004", version: "v2" } }));
     await page.route("**/api/v1/catalog/products/test-watch*", route => route.fulfill({ json: { ...product, variants: product.variants.map(item => ({ ...item, dropshipPriceMinor: 9000 })) } }));

@@ -195,9 +195,10 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         <p>Показана цена магазина. Оформите заказ самостоятельно или задайте вопрос магазину.</p>
         {detail.variants.map((variant) => <section key={variant.id} className="app-panel space-y-3">
           <h3 className="font-bold">{variant.sku} · {price(variant.priceMinor, detail.currency)}</h3><p>{labels[variant.availability]}</p>
-          {variant.availability === "IN_STOCK" && <ProductCartActions key={`${detail.id}-${variant.id}`} variants={[variant]} currency={detail.currency} csrfToken={csrfToken} />}
           <ShopContact contact={supportContact} label="Задать вопрос магазину" draft={`Здравствуйте! Хочу уточнить покупку часов «${detail.title}», вариант ${variant.sku}. Цена каталога: ${price(variant.priceMinor, detail.currency)}. Подскажите условия доставки.`} />
         </section>)}
+        {detail.variants.length > 0 && <ProductCartActions variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />}
+        {detail.variants.length === 0 && <CartIndicator csrfToken={csrfToken} />}
       </section> : <section className="mt-5 space-y-3" aria-label="Выбор варианта часов">{detail.variants.map((variant) => <div key={variant.id} className="app-panel">
         <p>{variant.sku} · Розничная цена: {price(variant.priceMinor, detail.currency)}</p>
         <p>Цена магазина для вас: {price(variant.dropshipPriceMinor ?? null, detail.currency)} · Доступно: {variant.sellable ?? 0}</p>
