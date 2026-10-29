@@ -92,25 +92,64 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
   const { cart, error, errors, pending, readOnly, refresh, mutate } = useCart(csrfToken);
   const router = useRouter();
   const [contextError, setContextError] = useState("");
+  const [contextPending, setContextPending] = useState(false);
+  const [contextRetry, setContextRetry] = useState<"DIRECT" | "REFERRAL" | null>(null);
+  const contextBusy = useRef(false);
   useEffect(() => {
     const back = () => { if (window.history.length > 1) router.back(); else router.replace("/shop"); };
     const button = window.Telegram?.WebApp?.BackButton;
     button?.show(); button?.onClick(back);
     return () => { button?.offClick(back); button?.hide(); };
   }, [router]);
-  const selectContext = async (channel: "DIRECT" | "REFERRAL", confirmReplace = false) => {
+  const selectContext = async (channel: "DIRECT" | "REFERRAL") => {
+    if (contextBusy.current || readOnly || pending.size > 0) return;
+    contextBusy.current = true;
+    setContextPending(true);
     setContextError("");
+    setContextRetry(null);
     const body = channel === "REFERRAL" && cart?.pendingReferral
-      ? { channel, touchId: cart.pendingReferral.touchId, confirmReplace } : { channel, confirmReplace };
-    const response = await fetch("/api/v1/cart/context", { method: "POST", credentials: "same-origin", cache: "no-store",
-      headers: { "content-type": "application/json", "x-csrf-token": csrfToken }, body: JSON.stringify(body) });
-    if (response.status === 409 && !confirmReplace) {
-      const accepted = window.confirm("Смена источника покупки очистит текущую корзину. Продолжить?");
-      if (accepted) await selectContext(channel, true);
-      return;
+      ? { channel, touchId: cart.pendingReferral.touchId } : { channel };
+    const send = (confirmReplace: boolean) => fetch("/api/v1/cart/context", { method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken }, body: JSON.stringify({ ...body, confirmReplace }) });
+    const errorCode = async (response: Response): Promise<string | undefined> => {
+      const result = await response.json().catch(() => null);
+      return result?.error?.code;
+    };
+    const retryMessage = "Не удалось выбрать источник покупки. Возможен временный сбой связи. Повторите попытку.";
+    try {
+      let response = await send(false);
+      let code = response.ok ? undefined : await errorCode(response);
+      if (response.status === 409 && code === "CONTEXT_CONFIRMATION_REQUIRED") {
+        if (!window.confirm("Смена источника покупки очистит текущую корзину. Продолжить?")) return;
+        response = await send(true);
+        code = response.ok ? undefined : await errorCode(response);
+      }
+      if (!response.ok) {
+        if (response.status >= 500) {
+          setContextError(retryMessage);
+          setContextRetry(channel);
+        } else if (response.status === 401 || code === "AUTH_REQUIRED" || code === "SESSION_EXPIRED") {
+          setContextError("Сессия истекла. Откройте приложение заново через Telegram.");
+        } else if (code === "CSRF_INVALID") {
+          setContextError("Не удалось подтвердить безопасность запроса. Откройте приложение заново через Telegram.");
+        } else if (code === "REFERRAL_UNAVAILABLE") {
+          setContextError("Этот источник покупки больше недоступен. Выберите обычную покупку.");
+        } else if (code === "USER_BLOCKED") {
+          setContextError(messages.USER_BLOCKED!);
+        } else {
+          setContextError("Не удалось выбрать источник покупки. Обновите корзину и повторите попытку.");
+          setContextRetry(channel);
+        }
+        return;
+      }
+      await refresh();
+    } catch {
+      setContextError(retryMessage);
+      setContextRetry(channel);
+    } finally {
+      contextBusy.current = false;
+      setContextPending(false);
     }
-    if (!response.ok) { setContextError("Этот источник покупки больше недоступен. Выберите обычную покупку."); return; }
-    await refresh();
   };
   return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-36 text-ink"><div className="mx-auto max-w-4xl">
     <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link>
@@ -118,14 +157,17 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
     {error && <p role="alert" className="mb-4 text-rose-300">{error}</p>}
     {cart?.purchaseContext?.channel === "REFERRAL" && <section className="app-panel mb-4" aria-label="Покупка по ссылке партнёра">
       <p>{cart.purchaseContext.available === false ? "Ссылка партнёра больше недоступна. Этот заказ нельзя оформить по ней." : `Вы покупаете по ссылке партнёра${cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Цена для вас не меняется.`}</p>
-      <button className="mt-2 min-h-11 underline" onClick={() => void selectContext("DIRECT")}>Покупать без ссылки партнёра</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="mt-2 min-h-11 underline disabled:opacity-40" onClick={() => void selectContext("DIRECT")}>Покупать без ссылки партнёра</button>
     </section>}
     {cart?.pendingReferral && <section className="app-panel mb-4" aria-label="Выбор источника покупки">
       <p>Вы открыли ссылку партнёра{cart.pendingReferral.partnerDisplayName ? ` ${cart.pendingReferral.partnerDisplayName}` : ""}. Выберите, к какой покупке отнести этот заказ.</p>
-      <button className="mt-2 min-h-11 rounded-lg bg-blue-600 px-4" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
-      <button className="ml-3 min-h-11 underline" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="mt-2 min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-40" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="ml-3 min-h-11 underline disabled:opacity-40" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button>
     </section>}
     {contextError && <p role="alert" className="mb-4 text-danger">{contextError}</p>}
+    {contextPending && <p role="status" className="mb-4">Выбираем источник покупки…</p>}
+    {contextRetry && <button disabled={contextPending || readOnly || pending.size > 0} className="mb-4 min-h-11 underline disabled:opacity-40"
+      onClick={() => void selectContext(contextRetry)}>Повторить выбор источника</button>}
     <button type="button" className="mb-4 min-h-11 underline" onClick={() => void refresh()}>Обновить корзину</button>
     {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-32 animate-pulse rounded-xl bg-surface" />)}</div>}
     {cart?.items.length === 0 && <section className="py-10"><p className="text-xl">В корзине пока нет товаров.</p>
@@ -154,7 +196,7 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
       <section className="fixed inset-x-0 bottom-0 border-t border-hairline bg-canvas px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-4xl"><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
           {!cart.canCheckout && <p className="text-sm text-amber-300">Проверьте отмеченные товары перед оформлением заказа.</p>}
-          <button type="button" disabled={readOnly || !cart.canCheckout || pending.size > 0 || (cart.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
+          <button type="button" disabled={contextPending || readOnly || !cart.canCheckout || pending.size > 0 || (cart.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
             onClick={() => router.push("/checkout")} className="app-button app-button-primary mt-2 min-h-11 w-full disabled:opacity-40">Оформить заказ</button>
         </div>
       </section>
