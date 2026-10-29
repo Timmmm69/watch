@@ -68,20 +68,38 @@ test("retail view keeps D and C private; explicit partner workspace receives and
   await page.goto("/shop");
   await expect(page.getByRole("button", { name: /Часы/ })).toBeVisible();
   expect(catalogViews).toContain(null);
+  await page.evaluate(() => { (window as Window & { navigationMarker?: boolean }).navigationMarker = true; });
+  await page.getByRole("link", { name: "Рабочий режим продавца", exact: true }).click();
+  await expect(page).toHaveURL(/mode=partner/);
+  await expect(page.getByText(/Комиссия:/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Корзина", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "Покупать для себя", exact: true }).click();
+  await expect(page).toHaveURL(/\/shop$/);
+  await expect(page.getByRole("button", { name: /Часы/ })).toBeVisible();
+  await expect(page.getByText(/Комиссия:/)).toHaveCount(0);
   await page.getByRole("button", { name: /Часы/ }).click();
   await expect(page.getByText("Показана цена магазина. Оформите заказ самостоятельно или задайте вопрос магазину.")).toBeVisible();
   await expect(page.getByText(/Цена магазина для вас|Комиссия за самостоятельную покупку/)).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "../../channels-visual-qa/three-channel-retail-mobile.png", fullPage: true });
 
-  await page.goto("/shop?mode=partner");
-  await expect(page.getByRole("button", { name: /Часы/ })).toBeVisible();
-  expect(catalogViews).toContain("partner");
-  await page.getByRole("button", { name: /Часы/ }).click();
+  await page.getByRole("link", { name: "Рабочий режим продавца", exact: true }).click();
+  await expect(page).toHaveURL(/mode=partner/);
   await expect(page.getByText("Цена магазина для вас:")).toBeVisible();
   await expect(page.getByText("Комиссия за самостоятельную покупку по вашей ссылке:")).toBeVisible();
   await expect(page.getByRole("link", { name: "Оформить заказ клиенту", exact: true })).toHaveAttribute("href", /mode=partner/);
   await page.screenshot({ path: "../../channels-visual-qa/three-channel-partner-mobile.png", fullPage: true });
+  await page.getByRole("link", { name: "Покупать для себя", exact: true }).click();
+  await expect(page).toHaveURL(/\/shop$/);
+  await expect(page.getByText("Показана цена магазина. Оформите заказ самостоятельно или задайте вопрос магазину.")).toBeVisible();
+  await expect(page.getByText(/Цена магазина для вас|Комиссия за самостоятельную покупку/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Оформить заказ клиенту", exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { navigationMarker?: boolean }).navigationMarker)).toBe(true);
+  await page.goto("/shop?mode=partner&product=watch");
+  await expect(page.getByText("Цена магазина для вас:")).toBeVisible();
+  await page.getByRole("button", { name: "← Все товары", exact: true }).click();
+  await expect(page).toHaveURL(/\/shop\?mode=partner$/);
+  await expect(page.getByText(/Комиссия:/)).toBeVisible();
 });
 
 test("expired referral context blocks checkout until buyer selects direct purchase", async ({ page }) => {

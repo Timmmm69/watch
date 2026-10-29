@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CartIndicator, ProductCartActions } from "./cart-client";
 import { ShopContact } from "./shop-contact";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { partnerReacceptUrl } from "./partner-client";
 
 type Availability = "IN_STOCK" | "OUT_OF_STOCK" | "STALE" | "UNKNOWN";
@@ -33,9 +33,16 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   nativeCommerce?: boolean; supportContact?: string;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const partnerMode = Boolean(partner && searchParams.get("mode") === "partner");
+  const productSlug = searchParams.get("product");
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(productSlug);
+  const [detailMode, setDetailMode] = useState(partnerMode);
+  const [catalogMode, setCatalogMode] = useState(partnerMode);
   const [items, setItems] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detailResult, setDetail] = useState<Detail | null>(null);
+  const detail = detailMode === partnerMode ? detailResult : null;
   const [draft, setDraft] = useState<Filters>(empty);
   const [filters, setFilters] = useState<Filters>(empty);
   const [drawer, setDrawer] = useState(false);
@@ -49,12 +56,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   const [link, setLink] = useState("");
   const [linkError, setLinkError] = useState("");
   const [linkLoading, setLinkLoading] = useState(false);
-  const [partnerMode, setPartnerMode] = useState(false);
   const limit = 20;
-
-  useEffect(() => {
-    setPartnerMode(Boolean(partner && new URLSearchParams(window.location.search).get("mode") === "partner"));
-  }, [partner]);
 
   useEffect(() => {
     const dialog = filterDialog.current;
@@ -86,7 +88,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     if (partnerMode) params.set("view", "partner");
     void fetch(`/api/v1/catalog/products?${params}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal })
       .then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{ items: Product[]; total: number }>; })
-      .then((result) => { setItems(result.items); setTotal(result.total); setLoaded(true); })
+      .then((result) => { if (!controller.signal.aborted) { setItems(result.items); setTotal(result.total); setCatalogMode(partnerMode); setLoaded(true); } })
       .catch(() => { if (!controller.signal.aborted) { setError(true); setLoaded(true); } });
     return () => controller.abort();
   }, [filters, page, retry, partnerMode]);
@@ -102,19 +104,24 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     setPage(1); setDrawer(false);
   };
   const reset = () => { setDraft(empty); setFilters(empty); setPage(1); setDrawer(false); setFilterError(""); };
-  const open = async (slug: string) => {
-    setError(false); setLink(""); setLinkError("");
-    try {
-      const response = await fetch(`/api/v1/catalog/products/${encodeURIComponent(slug)}${partnerMode ? "?view=partner" : ""}`, { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) throw new Error();
-      setDetail(await response.json() as Detail);
-    } catch { setError(true); }
-  };
+  const open = (slug: string) => setSelectedSlug(slug);
 
   useEffect(() => {
-    const slug = new URLSearchParams(window.location.search).get("product");
-    if (slug) void open(slug);
-  }, []);
+    if (productSlug) setSelectedSlug(productSlug);
+  }, [productSlug]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDetail(null); setError(false); setLink(""); setLinkError("");
+    if (selectedSlug) {
+      void fetch(`/api/v1/catalog/products/${encodeURIComponent(selectedSlug)}${partnerMode ? "?view=partner" : ""}`,
+        { credentials: "same-origin", cache: "no-store", signal: controller.signal })
+        .then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<Detail>; })
+        .then((result) => { if (!controller.signal.aborted) { setDetail(result); setDetailMode(partnerMode); } })
+        .catch(() => { if (!controller.signal.aborted) setError(true); });
+    }
+    return () => controller.abort();
+  }, [selectedSlug, partnerMode, retry]);
 
   const copyReferral = async (productId: string | null) => {
     setLinkLoading(true); setLinkError(""); setLink("");
@@ -157,11 +164,13 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
       {linkError && <p role="alert" className="mt-2 text-danger">{linkError}</p>}
     </section>}
     {error && <div role="alert" className="mb-5 flex items-center gap-4 text-danger">Не удалось загрузить каталог.
-      <button type="button" className="min-h-11 underline" onClick={() => { if (detail) void open(detail.slug); else setRetry((n) => n + 1); }}>Повторить</button></div>}
-    {detail ? <section>
+      <button type="button" className="min-h-11 underline" onClick={() => setRetry((n) => n + 1)}>Повторить</button></div>}
+    {selectedSlug && !detail ? <p role="status">Загрузка товара…</p> : detail ? <section>
       <button type="button" className="mb-5 min-h-11 underline" onClick={() => {
-        setDetail(null); setLink(""); setLinkError("");
-        if (window.location.search) window.history.replaceState(null, "", "/shop");
+        setSelectedSlug(null); setDetail(null); setLink(""); setLinkError("");
+        const params = new URLSearchParams(searchParams);
+        params.delete("product");
+        router.replace(`/shop${params.size ? `?${params}` : ""}`);
       }}>← Все товары</button>
       <h2 className="mb-2 text-3xl font-bold">{detail.title}</h2>
       {detail.brand && <p className="text-ink-secondary">{detail.brand}</p>}
@@ -240,7 +249,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
           <div className="flex gap-3"><button type="button" className="app-button min-h-11 flex-1" onClick={reset}>Сбросить</button>
             <button className="app-button app-button-primary min-h-11 flex-1">Показать товары</button></div>
         </form></dialog>
-      {!loaded ? <div aria-label="Загрузка товаров" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((n) =>
+      {!loaded || catalogMode !== partnerMode ? <div aria-label="Загрузка товаров" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((n) =>
         <div key={n} className="h-64 animate-pulse rounded-xl bg-surface" />)}</div>
       : items.length === 0 && !error ? <div className="py-12 text-center text-ink-secondary">
         <p>{Object.values(filters).some(Boolean) ? "По выбранным условиям ничего не найдено." : "Пока нет опубликованных товаров."}</p>
