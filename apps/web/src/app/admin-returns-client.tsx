@@ -189,7 +189,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
       <label>Статус<select className="block min-h-11 w-full bg-slate-900" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
         <option value="">Все статусы</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>ID заказа<input className="block min-h-11 w-full bg-slate-900" pattern={uuidPattern} value={draft.orderId} onChange={(e) => setDraft({ ...draft, orderId: e.target.value })} /></label>
-      <button className="min-h-11 rounded bg-blue-600 px-4">Применить фильтры</button></form>}
+      <button className="min-h-11 rounded bg-primary text-on-primary px-4">Применить фильтры</button></form>}
     {loading && <div aria-label="Загрузка возвратов" className="h-24 animate-pulse rounded bg-slate-900" />}
     {!returnId && result && !blocked && <>
       {!result.items.length && <p>По выбранным условиям возвратов нет. Измените фильтры.</p>}
@@ -203,7 +203,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
         <form aria-label="Выбор заказа для возврата" className="mt-3 grid gap-3 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void loadOrder(orderInput); }}>
           <label>ID заказа<input className="block min-h-11 w-full bg-slate-800" pattern={uuidPattern} value={orderInput}
             onChange={(e) => setOrderInput(e.target.value)} /></label>
-          <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending}>Найти заказ</button></form>
+          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending}>Найти заказ</button></form>
         {order && ["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && <form aria-label="Оформление возврата" onSubmit={submitCreate} className="mt-3 space-y-3">
           <p>Заказ {order.publicNumber} · {labels[order.status] ?? order.status}</p>
           {order.items?.map((item) => <div key={item.id} className="rounded bg-slate-800 p-3">
@@ -213,7 +213,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
               value={quantities[item.id] ?? 0} onChange={(e) => setQuantities({ ...quantities, [item.id]: Math.max(0, Math.min(item.quantity, Number(e.target.value) || 0)) })} /></label></div>)}
           <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Предполагаемое сторно наценки" : "Ожидаемое уменьшение комиссии"}: {money(preview, order.currency)} — применится при завершении возврата.</p>
           <label className="block">Причина возврата<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-          <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || !Object.values(quantities).some((q) => q > 0)}>{pending === "create" ? "Сохранение…" : "Зарегистрировать возврат"}</button>
+          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || !Object.values(quantities).some((q) => q > 0)}>{pending === "create" ? "Сохранение…" : "Зарегистрировать возврат"}</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setOrder(null); setQuantities({}); setReason(""); setOrderInput(""); }}>Сбросить</button>
         </form>}</section></>}
     {returnId && detail && !blocked && <>
@@ -229,7 +229,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
         : detail.status === "COMPLETED" ? "Возвращённая комиссия" : "Ожидаемое уменьшение комиссии"}: {money(detail.reversalPreviewMinor, detail.currency)}{detail.status === "REQUESTED" && " — применится при завершении возврата."}</p>
       <p>Завершение возврата не увеличивает остаток. Получение товара и его состояние нужно подтвердить отдельно.</p>
       {detail.status === "REQUESTED" && <section className="flex flex-wrap gap-3">
-        <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
+        <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
         <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отклонить возврат"}</button></section>}
       {confirmComplete && detail.status === "REQUESTED" && <section aria-label="Подтверждение завершения возврата" className="rounded border border-slate-600 p-4">
         <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Завершить возврат и сторнировать наценку" : "Завершить возврат и уменьшить комиссию на"} {money(detail.reversalPreviewMinor, detail.currency)}? Уже выплаченное вознаграждение образует задолженность {detail.economicRegime === "DROPSHIP_MARKUP" ? "дропшиппера" : "партнёра"}.</p>
@@ -261,7 +261,7 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
             {detail.items.some(item => item.physicalAcceptanceAllowed && item.quantity > (item.inspectedQuantity ?? 0)) && <>
               <label className="block">Основание приёмки<textarea className="block w-full bg-slate-900" required maxLength={500} value={inspectionReason} onChange={event => setInspectionReason(event.target.value)} /></label>
               <label className="flex gap-2"><input type="checkbox" checked={inspected} onChange={event => setInspected(event.target.checked)} />Подтверждаю, что товар получен и проверен на пригодность к продаже</label>
-              <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!inspected || !!pending || loading}>{pending === "inspect" ? "Сохранение…" : "Сохранить приём товара"}</button>
+              <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!inspected || !!pending || loading}>{pending === "inspect" ? "Сохранение…" : "Сохранить приём товара"}</button>
             </>}
           </form>
         </section>}
