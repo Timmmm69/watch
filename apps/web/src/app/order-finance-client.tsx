@@ -71,7 +71,7 @@ export function OrderFinance({ orderId, request }: { orderId: string; request: (
           <p>Укажите идентификатор латиницей. Не вводите номера карт, счетов, пароли или ссылки.</p>
           <label className="block">Основание записи<textarea className="block w-full bg-slate-800" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} /></label>
           <label className="block"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} /> Подтверждаю, что проверил данные операции или итог расходов</label>
-          <button className="min-h-11 rounded bg-blue-600 px-4" disabled={!confirmed}>Сохранить операцию</button>
+          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!confirmed}>Сохранить операцию</button>
           <button type="button" className="block min-h-11 underline" disabled={!confirmed || !reason.trim()} onClick={()=>void save(true)}>Подтвердить проверенный итог расходов {money(facts.recordedExpensesMinor)}</button>
         </fieldset>
       </form>
