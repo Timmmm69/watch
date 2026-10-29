@@ -66,9 +66,9 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
       }
       return response.json() as Promise<AuthResponse>;
     }).then((result) => {
-      // A session refresh may carry a default `/shop` target.  Only the signed
-      // Telegram launch may navigate away from the page the buyer already chose.
-      const explicitShopTarget = Boolean(initData && result.launchTarget?.startsWith("/shop"));
+      // Only a signed launch with a referral/offer query may redirect the buyer.
+      // A session refresh's default `/shop` must preserve the current screen.
+      const explicitShopTarget = Boolean(initData && result.launchTarget?.startsWith("/shop?"));
       const target = explicitShopTarget ? result.launchTarget! : result.partner ? "/partner" : "/shop";
       if ((!launchNavigationHandled && explicitShopTarget) || window.location.pathname === "/") {
         launchNavigationHandled = true;

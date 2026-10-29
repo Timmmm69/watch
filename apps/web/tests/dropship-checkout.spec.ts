@@ -33,8 +33,8 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
     await expect(page.getByText("Розничная цена — от 100,00")).toBeVisible();
     await expect(page.getByText("TEST ONLY sales material")).toBeVisible();
     await expect(page.getByText(/TEST-T48 · Розничная цена: .*Цена магазина для вас: .* · Доступно: 10/)).toBeVisible();
-    await expect(page.getByRole("button", { name: /Скопировать ссылку/ })).toHaveCount(0);
-    await page.getByRole("link", { name: "Оформить заказ", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Скопировать ссылку на товар", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Оформить заказ клиенту", exact: true }).click();
     await fill(page);
     await page.getByLabel("Количество", { exact: true }).fill("2");
     await expect(page.getByRole("region", { name: "Предварительный расчёт" })).toContainText("Стоимость часов для покупателя: 290.00 BYN");
@@ -92,13 +92,13 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
     await page.context().addCookies([{ name: "watch_session", value: fixture.owners[2]!.token, domain: "127.0.0.1", path: "/" }]);
     await page.goto(`/admin/products/${fixture.product}`);
     const variant = page.getByRole("form", { name: "Вариант TEST-T48", exact: true });
-    await expect(variant.getByLabel("Цена магазина для партнёра (в копейках)")).toHaveValue("10000");
-    await variant.getByLabel("Цена магазина для партнёра (в копейках)").fill("12000");
+    await expect(variant.getByLabel("Цена магазина для продавца D (копейки)")).toHaveValue("10000");
+    await variant.getByLabel("Цена магазина для продавца D (копейки)").fill("12000");
     await variant.getByRole("button", { name: "Сохранить вариант" }).click();
     await expect(page.getByRole("status")).toContainText("Вариант сохранён");
     await page.reload();
-    await expect(variant.getByLabel("Цена магазина для партнёра (в копейках)")).toHaveValue("12000");
-    await expect(variant.getByLabel("Розничная цена (minor)")).toHaveValue("10000");
+    await expect(variant.getByLabel("Цена магазина для продавца D (копейки)")).toHaveValue("12000");
+    await expect(variant.getByLabel("Розничная цена P (копейки)")).toHaveValue("10000");
     expect((await fixture.pool.query("SELECT price_minor,dropship_price_minor FROM product_variants")).rows[0]).toEqual({ price_minor: 10000, dropship_price_minor: 12000 });
   });
 

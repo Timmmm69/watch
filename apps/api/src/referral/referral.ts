@@ -165,6 +165,6 @@ export class ReferralService {
       await client.query("INSERT INTO carts(id,buyer_user_id) VALUES($1,$2) ON CONFLICT(buyer_user_id) DO NOTHING", [randomUUID(),buyer.id]);
       await client.query("UPDATE carts SET pending_attribution_touch_id=$2,updated_at=now() WHERE buyer_user_id=$1", [buyer.id,touch!.id]);
     }
-    return product ? `/shop?product=${encodeURIComponent(product.slug)}` : "/shop";
+    return product ? `/shop?product=${encodeURIComponent(product.slug)}` : supportsPending ? "/shop?referral=offer" : "/shop";
   }
 }
