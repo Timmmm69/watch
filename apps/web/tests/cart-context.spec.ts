@@ -104,8 +104,14 @@ test("context request blocks duplicate clicks and checkout until complete", asyn
     await expect(select).toBeDisabled();
     await expect(page.getByRole("button", { name: "Обычная покупка", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Оформить заказ" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Увеличить WATCH", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Удалить WATCH", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Очистить корзину", exact: true })).toBeDisabled();
     await expect.poll(() => requests).toBe(1);
   } finally { release(); }
   await expect(page.getByRole("button", { name: "Повторить выбор источника" })).toBeVisible();
   await expect(select).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Увеличить WATCH", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Удалить WATCH", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Очистить корзину", exact: true })).toBeEnabled();
 });

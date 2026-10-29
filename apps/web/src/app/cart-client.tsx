@@ -180,17 +180,17 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
         {item.issues.map((issue) => <p key={issue} className="mb-2 text-warning">{messages[issue]}</p>)}
         {errors[item.variantId] && <p role="alert" className="mb-2 text-danger">{errors[item.variantId]}</p>}
         <div className="flex flex-wrap items-center gap-3" aria-label={`Количество ${item.sku}`}>
-          <button type="button" aria-label={`Уменьшить ${item.sku}`} disabled={readOnly || pending.has(item.variantId) || item.quantity <= 1}
+          <button type="button" aria-label={`Уменьшить ${item.sku}`} disabled={contextPending || readOnly || pending.has(item.variantId) || item.quantity <= 1}
             className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity - 1)}>−</button>
           <span aria-live="polite">{item.quantity}</span>
-          <button type="button" aria-label={`Увеличить ${item.sku}`} disabled={readOnly || pending.has(item.variantId) || item.quantity >= 99 || item.issues.length > 0}
+          <button type="button" aria-label={`Увеличить ${item.sku}`} disabled={contextPending || readOnly || pending.has(item.variantId) || item.quantity >= 99 || item.issues.length > 0}
             className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity + 1)}>+</button>
-          <button type="button" disabled={readOnly || pending.has(item.variantId)} className="min-h-11 px-3 underline disabled:opacity-40"
+          <button type="button" disabled={contextPending || readOnly || pending.has(item.variantId)} className="min-h-11 px-3 underline disabled:opacity-40"
             onClick={() => void mutate(item.variantId)}>Удалить {item.sku}</button>
           {pending.has(item.variantId) && <span role="status" className="animate-pulse">Сохранение…</span>}
         </div>
       </li>)}</ul>
-      <button type="button" disabled={readOnly || pending.has("clear")} className="mt-4 min-h-11 underline disabled:opacity-40"
+      <button type="button" disabled={contextPending || readOnly || pending.has("clear")} className="mt-4 min-h-11 underline disabled:opacity-40"
         onClick={() => void mutate("clear", undefined, true)}>{pending.has("clear") ? "Очистка…" : "Очистить корзину"}</button>
       {errors.clear && <p role="alert" className="text-danger">{errors.clear}</p>}
       <section className="fixed inset-x-0 bottom-0 border-t border-hairline bg-canvas px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
