@@ -212,21 +212,25 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
   const [added, setAdded] = useState(false);
   const selected = variants.find((variant) => variant.id === selectedId);
   const quantity = cart?.items.find((item) => item.variantId === selectedId)?.quantity ?? 0;
-  return <section className="app-panel sticky bottom-0 mt-5 pb-[max(1rem,env(safe-area-inset-bottom))]" aria-label="Добавление товара в корзину">
-    <label>Вариант товара<select className="app-input ml-3 min-h-11 px-3" value={selectedId}
+  return <section className="app-panel mt-5 mb-[calc(6rem+env(safe-area-inset-bottom))] sm:mb-0" aria-label="Добавление товара в корзину">
+    <label className="block">Вариант товара<select className="app-input mt-2 min-h-11 w-full px-3 sm:ml-3 sm:mt-0 sm:w-auto" value={selectedId}
       onChange={(event) => { setSelectedId(event.target.value); setAdded(false); }}>
       {variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.sku}</option>)}
     </select></label>
     {selected && <p className="my-3">{money(selected.priceMinor, currency)}</p>}
-    <button type="button" disabled={!cart || readOnly || !selected || selected.availability !== "IN_STOCK" || quantity >= 99 || pending.has(selectedId)}
-      className="app-button app-button-primary min-h-11 px-4 disabled:opacity-40" onClick={() => {
-        setAdded(false); void mutate(selectedId, quantity + 1).then((success) => setAdded(Boolean(success)));
-      }}>{pending.has(selectedId) ? "Добавление…" : "Добавить в корзину"}</button>
     {selected && selected.availability !== "IN_STOCK" && <p className="mt-2 text-warning">Этот вариант сейчас нельзя заказать.</p>}
     {quantity >= 99 && <p className="mt-2 text-warning">Можно заказать не больше 99 единиц одного варианта.</p>}
     {added && <p role="status" className="mt-2 text-emerald-300">Добавлено в корзину.</p>}
     {(errors[selectedId] || error) && <p role="alert" className="mt-2 text-danger">{errors[selectedId] || error}</p>}
-    <Link href="/cart" className="ml-4 inline-flex min-h-11 items-center underline">Корзина ({cart?.items.length ?? 0})</Link>
+    <div role="group" aria-label="Действия с товаром" className="fixed inset-x-0 bottom-0 z-10 border-t border-hairline bg-canvas px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:static sm:mt-3 sm:border-0 sm:bg-transparent sm:p-0">
+      <div className="mx-auto flex max-w-5xl items-center gap-3">
+        <button type="button" disabled={!cart || readOnly || !selected || selected.availability !== "IN_STOCK" || quantity >= 99 || pending.has(selectedId)}
+          className="app-button app-button-primary min-h-11 min-w-0 flex-1 px-4 disabled:opacity-40 sm:flex-none" onClick={() => {
+            setAdded(false); void mutate(selectedId, quantity + 1).then((success) => setAdded(Boolean(success)));
+          }}>{pending.has(selectedId) ? "Добавление…" : "Добавить в корзину"}</button>
+        <Link href="/cart" className="inline-flex min-h-11 shrink-0 items-center underline">Корзина ({cart?.items.length ?? 0})</Link>
+      </div>
+    </div>
   </section>;
 }
 
