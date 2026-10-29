@@ -1,3 +1,4 @@
+import { salesChannel } from "./views.js";
 import { randomUUID } from "node:crypto";
 import { reconcileOverpayment } from "../finance/coverage.js";
 import type { Pool, PoolClient } from "pg";
@@ -16,7 +17,7 @@ interface OrderRow {
   created_at: Date; updated_at: Date; confirmed_at: Date | null; fulfilling_at: Date | null; shipped_at: Date | null;
   delivered_at: Date | null; completed_at: Date | null; cancelled_at: Date | null; delivery_failed_at: Date | null;
   completion_eligible_at: Date | null;
-  economic_regime: string; inventory_mode?: string | null;
+  origin: string; economic_regime: string; inventory_mode?: string | null;
 }
 const timestampColumns = {
   CONFIRMED: "confirmed_at", FULFILLING: "fulfilling_at", SHIPPED: "shipped_at", DELIVERED: "delivered_at",
@@ -30,7 +31,7 @@ export class AdminOrderService {
   private project(row: OrderRow, now = new Date()) {
     const stateAt = row.shipped_at ?? row.fulfilling_at ?? row.confirmed_at ?? row.created_at;
     return { id: row.id, publicNumber: row.public_number, status: row.status, currency: row.currency, totalMinor: row.total_minor,
-      economicRegime: row.economic_regime, nativeInventory: usesNativeInventory(row),
+      salesChannel: salesChannel(row), economicRegime: row.economic_regime, nativeInventory: usesNativeInventory(row),
       partnerIdSnapshot: row.partner_id_snapshot, attributionTouchId: row.attribution_touch_id,
       commissionEligibleSnapshot: row.commission_eligible_snapshot,
       createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
@@ -48,6 +49,7 @@ export class AdminOrderService {
     const values: unknown[] = [];
     const predicates: string[] = [];
     const add = (sql: string, value: unknown) => { values.push(value); predicates.push(sql.replace("?", `$${values.length}`)); };
+    if (query.salesChannel) predicates.push(query.salesChannel === "PARTNER" ? "o.origin='DROPSHIPPER'" : query.salesChannel === "REFERRAL" ? "o.origin<>'DROPSHIPPER' AND o.partner_id_snapshot IS NOT NULL" : "o.origin<>'DROPSHIPPER' AND o.partner_id_snapshot IS NULL");
     if (query.status) add("o.status = ?", query.status);
     if (query.number) add("o.public_number = ?", query.number);
     if (query.partnerId) add("o.partner_id_snapshot = ?", query.partnerId);

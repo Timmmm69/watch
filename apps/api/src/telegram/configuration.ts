@@ -1,7 +1,7 @@
 // These operations run only from the explicit telegram:configure command.
 // Telegram limits: https://core.telegram.org/bots/api#setmydescription (512),
 // https://core.telegram.org/bots/api#setmyshortdescription (120).
-export const botDescription = "Выбирайте часы в каталоге и обращайтесь в магазин по вопросам покупки и доставки.\n\nПродаёте часы своим покупателям? Подключайтесь как партнёр: оформляйте заказы, следите за заработком и запрашивайте выплаты.";
+export const botDescription = "Выбирайте часы в каталоге и оформляйте заказ. По вопросам оплаты и доставки обращайтесь в магазин.\n\nПродаёте часы своим покупателям? Подключайтесь как партнёр: оформляйте заказы клиентам или делитесь партнёрской ссылкой, следите за заработком и запрашивайте выплаты.";
 export const botShortDescription = "Каталог часов и связь с магазином. Для партнёров — заказы, заработок и выплаты.";
 
 export function botConfiguration(appBaseUrl: string, webhookSecret: string) {

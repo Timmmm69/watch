@@ -38,7 +38,7 @@ describe("EventOutbox", () => {
         FOR UPDATE SKIP LOCKED LIMIT 1
       )
       UPDATE events AS e SET status = 'PROCESSING', attempts = e.attempts + 1,
-        processing_started_at = now(), lease_expires_at = now() + ($2::int * interval '1 second')
+        processing_started_at = now(), lease_expires_at = now() + ($1::int * interval '1 second')
       FROM candidate WHERE e.id = candidate.id
       RETURNING e.id, e.type, e.aggregate_type AS "aggregateType", e.aggregate_id AS "aggregateId",
                 e.dedupe_key AS "dedupeKey", e.payload, e.attempts, e.lease_expires_at AS "leaseExpiresAt"
@@ -49,7 +49,8 @@ describe("EventOutbox", () => {
     expect(claimed!.id).toBe("e1");
     expect(claimed!.attempts).toBe(0);
     const update = pool.queries.find((q) => q.sql.includes("UPDATE events AS e SET status = 'PROCESSING'"));
-    expect(update?.params).toEqual([8, 60]);
+    expect(update?.params).toEqual([60]);
+    expect(update?.sql).not.toContain("$2");
   });
 
   it("returns null when no event is available", async () => {
@@ -63,7 +64,7 @@ describe("EventOutbox", () => {
         FOR UPDATE SKIP LOCKED LIMIT 1
       )
       UPDATE events AS e SET status = 'PROCESSING', attempts = e.attempts + 1,
-        processing_started_at = now(), lease_expires_at = now() + ($2::int * interval '1 second')
+        processing_started_at = now(), lease_expires_at = now() + ($1::int * interval '1 second')
       FROM candidate WHERE e.id = candidate.id
       RETURNING e.id, e.type, e.aggregate_type AS "aggregateType", e.aggregate_id AS "aggregateId",
                 e.dedupe_key AS "dedupeKey", e.payload, e.attempts, e.lease_expires_at AS "leaseExpiresAt"

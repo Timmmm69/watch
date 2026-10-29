@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { currentLegalDocuments, loadApiRuntimeConfig } from "@watch/config";
+import { currentLegalDocuments, loadApiRuntimeConfig, telegramAccessAllowlist } from "@watch/config";
 import { createDatabasePool } from "@watch/db";
 import { bootstrapRelease, provisionBootstrapAdmin } from "./bootstrap.js";
 import { verifyInstalledRelease } from "./readiness.js";
@@ -16,7 +16,11 @@ let stage = "config";
 try {
   const runtime = loadApiRuntimeConfig();
   if (command === "config") {
-    console.log(JSON.stringify({ status: "ok", command, productionApprovalSha256: runtime.productionApprovalSha256 }));
+    const allowlist = telegramAccessAllowlist(runtime);
+    console.log(JSON.stringify({ status: "ok", command, privateAccess: runtime.WATCH_PRIVATE_ACCESS === "1",
+      publicShop: runtime.WATCH_PUBLIC_SHOP === "1",
+      allowedTelegramIds: allowlist ? [...allowlist] : undefined,
+      productionApprovalSha256: runtime.productionApprovalSha256 }));
   } else if (command === "database-name") {
     const database = decodeURIComponent(new URL(runtime.DATABASE_URL).pathname.slice(1));
     if (!/^(watch|watch_restore_[a-z0-9_]+)$/.test(database)) throw new Error("Unsupported deployment database name");

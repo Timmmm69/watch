@@ -103,11 +103,12 @@ function VariantForm({ variant, mutate, save }: FormActions & { variant?: Varian
     <h3>{variant ? `${variant.sku} · ${variantStatusLabels[variant.status] ?? "Статус уточняется"} · ${variant.currency}` : "Новый вариант (черновик)"}</h3>
     <Field label="SKU"><input className={inputClass} name="sku" required maxLength={100} readOnly={!!variant} defaultValue={variant?.sku} /></Field>
     <Field label="Свойства варианта (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
-    <Field label="Розничная цена (minor)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
-    <p>Цена публичного каталога. Итоговую цену заказа партнёр указывает при оформлении для своего покупателя.</p>
-    <Field label="Цена магазина для партнёра (в копейках)"><input className={inputClass} name="dropshipPriceMinor" type="number" required={variant?.dropshipPriceMinor != null} min={0} max={2000000000} step={1} defaultValue={variant?.dropshipPriceMinor ?? ""} /></Field>
-    <p>Изменение цены партнёра требует подтверждения нового расчёта. Цены уже созданных заказов сохраняются.</p>
-    <Field label="Комиссия за единицу (в копейках)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
+    <Field label="Розничная цена P (копейки)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
+    <p>Её видят все покупатели: пришедшие сами и по ссылке партнёра.</p>
+    <Field label="Цена магазина для продавца D (копейки)"><input className={inputClass} name="dropshipPriceMinor" type="number" required={variant?.dropshipPriceMinor != null} min={0} max={2000000000} step={1} defaultValue={variant?.dropshipPriceMinor ?? ""} /></Field>
+    <p>Продавец видит D только в рабочем режиме и может оформить заказ клиенту по согласованной цене не ниже D. Уже созданные заказы не пересчитываются.</p>
+    <Field label="Комиссия по реферальной ссылке C (копейки)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
+    <p>Это отдельная выплата продавцу, когда покупатель сам оформляет заказ по его ссылке по розничной цене P.</p>
     <Field label="Расчёт с поставщиком (в копейках, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
     <Field label="Ключ товара во внешнем источнике"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>
     {variant && <><Field label="Страховой резерв"><input className={inputClass} name="safetyBuffer" type="number" required min={0} step={1} defaultValue={variant.inventory?.safetyBuffer ?? 0} /></Field>

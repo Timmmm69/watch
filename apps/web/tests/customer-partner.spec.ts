@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { dropshipFixture, disposableUrl } from "../../api/test/dropship-fixture";
 
-test.describe("approved customer and partner journeys on real PostgreSQL", () => {
+test.describe("independent retail and partner journeys on real PostgreSQL", () => {
   test.skip(!disposableUrl(), "Requires disposable local WATCH_T48_DATABASE_URL");
   test.describe.configure({ mode: "serial" });
   let f: Awaited<ReturnType<typeof dropshipFixture>>;
@@ -15,7 +15,7 @@ test.describe("approved customer and partner journeys on real PostgreSQL", () =>
   test.afterEach(async () => { await f?.close(); });
 
   for (const [width, colorScheme] of [[390, "light"], [320, "dark"], [1280, "light"]] as const) {
-    test(`buyer contact preserves model and recipient at ${width} ${colorScheme}`, async ({ page, context }) => {
+    test(`retail catalog keeps partner commercial data private at ${width} ${colorScheme}`, async ({ page, context }) => {
       await page.setViewportSize({ width, height: 844 });
       await page.emulateMedia({ colorScheme });
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -23,14 +23,14 @@ test.describe("approved customer and partner journeys on real PostgreSQL", () =>
       await expect(page.getByRole("heading", { name: "Каталог часов", exact: true })).toBeVisible();
       await page.screenshot({ path: `test-results/ux-buyer-catalog-${width}-${colorScheme}.png`, fullPage: true });
       await page.getByRole("button", { name: /Тестовые часы T48/ }).click();
-      const action = page.getByRole("link", { name: "Уточнить и заказать", exact: true });
+      const action = page.getByRole("link", { name: "Задать вопрос магазину", exact: true });
       const url = new URL((await action.getAttribute("href"))!);
       expect(url.origin + url.pathname).toBe("https://t.me/test_support");
       expect(url.searchParams.get("text")).toContain("Тестовые часы T48");
       expect(url.searchParams.get("text")).toContain("TEST-T48");
       await expect(page.getByText("TEST ONLY sales material")).toHaveCount(0);
       await expect(page.getByText(/Ваша цена|Ожидаемый заработок|Комиссия/)).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "Оформить заказ", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Добавить в корзину", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Скопировать запрос", exact: true }).click();
       await expect(page.getByRole("status")).toContainText("Запрос скопирован");
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(url.searchParams.get("text"));
@@ -50,12 +50,12 @@ test.describe("approved customer and partner journeys on real PostgreSQL", () =>
     await page.screenshot({ path: "test-results/ux-onboarding-mobile.png", fullPage: true });
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Принять условия и начать" }).click();
-    await expect(page.getByRole("heading", { name: "Оформите первый заказ для покупателя" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Два способа продажи" })).toBeVisible();
     const created = (await f.pool.query("SELECT id,status FROM partners WHERE user_id=$1", [f.owners[2]!.user])).rows[0];
     expect(created.status).toBe("ACTIVE");
     expect((await f.pool.query("SELECT 1 FROM partner_terms_acceptances WHERE partner_id=$1", [created.id])).rowCount).toBe(1);
     await page.screenshot({ path: "test-results/ux-first-dashboard-mobile.png", fullPage: true });
-    await page.goto(`/checkout?product=${f.slug}&variant=${f.variant}`);
+    await page.goto(`/checkout?mode=partner&product=${f.slug}&variant=${f.variant}`);
     const price = page.getByLabel("Цена для покупателя за 1 шт., BYN");
     await price.fill("90");
     await page.getByLabel("Имя получателя", { exact: true }).fill("Тестовый получатель");
@@ -80,7 +80,7 @@ test.describe("approved customer and partner journeys on real PostgreSQL", () =>
     await f.pool.query("UPDATE partners SET status='BLOCKED' WHERE id=$1", [created.id]);
     await page.goto("/partner");
     await expect(page.getByText(/Новые заказы и заявки на выплату недоступны/)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Оформите первый заказ для покупателя" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Два способа продажи" })).toHaveCount(0);
     await page.screenshot({ path: "test-results/ux-blocked-partner-mobile.png", fullPage: true });
   });
 });

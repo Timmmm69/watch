@@ -14,12 +14,17 @@ import { OwnerAnalyticsService } from "../analytics/owner.js";
 let f: Awaited<ReturnType<typeof referralFixture>>;
 afterEach(async () => { await f?.close(); });
 const cart = () => new CartService(f.pool, "BYN");
+async function acceptPendingReferral(userId = f.buyer.user) {
+  const pending = (await cart().read(userId)).pendingReferral;
+  if (pending) await cart().chooseContext(userId, { channel: "REFERRAL", touchId: pending.touchId }, false);
+}
 const worker = () => new OrderCompletionWorker(f.pool);
 const money = () => new OrderMoneyService(f.pool);
 const actor = () => f.buyer.user;
 const fact = (amountMinor: number, extra = {}) => ({ operationKey: randomUUID(), reference: `TEST:${randomUUID().slice(0,8)}:${randomUUID().slice(0,8)}`,
   reason: "TEST ONLY confirmed cash", confirmed: true, occurredAt: new Date().toISOString(), kind: "RECEIPT", amountMinor, ...extra });
 async function place(q = 1, key = randomUUID()) {
+  await acceptPendingReferral();
   await cart().put(f.buyer.user, f.variant, q);
   return (await f.service.checkout(f.buyer.user, key, f.request(q))).order;
 }
@@ -41,6 +46,7 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
     expect(launch.statusCode).toBe(200); expect(launch.json().launchTarget).toContain(f.slug);
     await f.app.inject({ method: "POST", url: "/api/v1/auth/telegram", payload: { initData } });
     expect((await f.pool.query("SELECT count(*)::int AS n FROM attribution_touches")).rows[0].n).toBe(1);
+    await acceptPendingReferral();
     const headers = f.buyer.headers;
     const product = await f.app.inject({ url: `/api/v1/catalog/products/${f.slug}`, headers });
     expect(product.statusCode).toBe(200); expect(product.json().variants[0].priceMinor).toBe(15000);
@@ -61,18 +67,20 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
     f = await referralFixture();
     await f.click(0); await f.click(1);
     for (const owner of f.owners) {
-      const result = await f.app.inject({ url: `/api/v1/catalog/products/${f.slug}`, headers: owner.headers });
+      const result = await f.app.inject({ url: `/api/v1/catalog/products/${f.slug}?view=partner`, headers: owner.headers });
       expect(result.json().variants[0].priceMinor).toBe(15000);
       if (owner.partner) expect(result.json().partnerView.variants[0].commissionUnitMinor).toBe(2000);
     }
     await place(); expect((await f.pool.query("SELECT partner_id FROM commissions")).rows[0].partner_id).toBe(f.owners[1]!.partner);
   });
 
-  it("expires attribution after exactly 30 days; organic and self-referral purchases create no commission", async () => {
-    f = await referralFixture(); await f.click();
+  it("expires attribution after exactly 7 days; organic and self-referral purchases create no commission", async () => {
+    f = await referralFixture(); await f.click(); await acceptPendingReferral();
     const touch = (await f.pool.query("SELECT * FROM attribution_touches")).rows[0];
-    expect(touch.expires_at - touch.occurred_at).toBe(30 * 86400000);
+    expect(touch.expires_at - touch.occurred_at).toBe(7 * 86400000);
     await f.pool.query("UPDATE attribution_touches SET occurred_at=now()-interval '31 days',expires_at=now()-interval '1 day'");
+    await expect(place()).rejects.toMatchObject({code:"CART_CHANGED"});
+    await cart().chooseContext(f.buyer.user,{channel:"DIRECT"},true);
     await place();
     await f.click(0, 1); await cart().put(f.owners[0]!.user, f.variant, 1);
     await f.service.checkout(f.owners[0]!.user, "self", f.request());
@@ -96,7 +104,7 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
   });
 
   it("requires retail price reconfirmation and snapshots fixed commission and original procurement allocation", async () => {
-    f = await referralFixture(); await f.click(); await cart().put(f.buyer.user, f.variant, 1);
+    f = await referralFixture(); await f.click(); await acceptPendingReferral(); await cart().put(f.buyer.user, f.variant, 1);
     expect((await f.app.inject({ method: "PATCH", url: `/api/v1/admin/variants/${f.variant}`,
       headers: f.buyer.headers, payload: { priceMinor: 16000 } })).statusCode).toBe(200);
     await expect(f.service.checkout(f.buyer.user, "price", f.request())).rejects.toMatchObject({ code: "PRICE_CHANGED" });
@@ -124,14 +132,17 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
   });
 
   for (const blocked of ["partner", "user", "terms"] as const) it(`does not accrue a new commission after ${blocked} eligibility is revoked`, async () => {
-    f = await referralFixture(); await f.click();
+    f = await referralFixture(); await f.click(); await acceptPendingReferral();
     if (blocked === "partner") await f.pool.query("UPDATE partners SET status='BLOCKED' WHERE id=$1", [f.owners[0]!.partner]);
     if (blocked === "user") await f.pool.query("UPDATE users SET is_blocked=true WHERE id=$1", [f.owners[0]!.user]);
     if (blocked === "terms") {
       const next = { id: randomUUID(), version: "next" }; f.docs.PARTNER_TERMS = next;
       await f.pool.query("INSERT INTO legal_documents(id,type,version,sha256,content_markdown,effective_at,requires_reacceptance) VALUES($1,'PARTNER_TERMS',$2,$3,'TEST',now(),true)", [next.id, next.version, "a".repeat(64)]);
     }
-    await place(); expect((await f.pool.query("SELECT count(*)::int AS n FROM commissions")).rows[0].n).toBe(0);
+    await expect(place()).rejects.toMatchObject({ code: "CART_CHANGED" });
+    await cart().chooseContext(f.buyer.user, { channel: "DIRECT" }, true);
+    await place();
+    expect((await f.pool.query("SELECT count(*)::int AS n FROM commissions")).rows[0].n).toBe(0);
   });
 
   it("holds for 14 days and requires actual cash coverage before release and paid payout", async () => {
@@ -142,6 +153,7 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
     await money().record(order.id, actor(), fact(15000), "money");
     expect(await worker().completeOrder(order.id)).toBe(false); expect(await balance()).toBe(0);
     // A separate order with zero fixture hold exercises the post-hold financial gates.
+    await f.click();
     const next = await place(); await deliver(next.id);
     expect(await worker().completeOrder(next.id)).toBe(false);
     await money().record(next.id, actor(), fact(10000), "money"); expect(await worker().completeOrder(next.id)).toBe(false);
@@ -178,7 +190,7 @@ describe.skipIf(!disposableUrl())("Referral commerce with native PostgreSQL inve
   });
 
   it("rolls back all native effects on a late failure and serializes shipment versus cancellation", async () => {
-    f = await referralFixture(1); await f.click(); await cart().put(f.buyer.user, f.variant, 1);
+    f = await referralFixture(1); await f.click(); await acceptPendingReferral(); await cart().put(f.buyer.user, f.variant, 1);
     await f.pool.query(`CREATE FUNCTION fail_referral_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.type='ORDER_CREATED' THEN RAISE EXCEPTION 'TEST late failure'; END IF; RETURN NEW; END $$;
       CREATE TRIGGER fail_referral_event BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION fail_referral_event()`);

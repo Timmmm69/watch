@@ -1,0 +1,18 @@
+# Owner-operated friends-only profile. HTTPS, production cookies, roles and CSRF
+# remain enabled. WATCH_PUBLIC_SHOP=1 explicitly opens Telegram login to buyers;
+# otherwise the API enforces the Telegram allowlist on login and sessions.
+x-private: &private
+  environment:
+    WATCH_PRIVATE_ACCESS: "1"
+    WATCH_PRODUCTION_APPROVAL_FILE: ""
+services:
+  api:
+    <<: *private
+    volumes: !override []
+  worker:
+    <<: *private
+    volumes: !override []
+  bootstrap:
+    <<: *private
+    volumes: !override
+      - ${WATCH_BOOTSTRAP_DIR:-../bootstrap}:/run/bootstrap:ro

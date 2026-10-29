@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CatalogService, type PartnerViewContext } from "./catalog.js";
 
 describe("native shop buyer prices", () => {
-  it.each([false, true])("serves retail prices to buyers and D only to partners (partner=%s)", async (isPartner) => {
+  it.each([false, true])("keeps retail P unchanged and exposes D only to the partner workspace (partner=%s)", async (isPartner) => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes("SELECT * FROM products")) return { rows: [{ id: "product", title: "Watch", slug: "watch", description: "", brand: null }] };
       if (sql.includes("SELECT COUNT(*)")) return { rows: [{ count: 1 }] };
@@ -19,8 +19,8 @@ describe("native shop buyer prices", () => {
       userBlocked: false, partnerTermsReacceptRequired: false };
     const list = await service.listStorefrontProducts({ page: 1, limit: 20 }, ctx);
     const detail = await service.getStorefrontProduct("watch", ctx);
-    expect(list.items[0]?.priceFromMinor).toBe(isPartner ? 10000 : 20000);
-    expect(detail.variants[0]?.priceMinor).toBe(isPartner ? 10000 : 20000);
+    expect(list.items[0]?.priceFromMinor).toBe(20000);
+    expect(detail.variants[0]?.priceMinor).toBe(20000);
     if (isPartner) expect(detail.variants[0]).toHaveProperty("dropshipPriceMinor", 10000);
     else {
       expect(detail.variants[0]).not.toHaveProperty("dropshipPriceMinor");

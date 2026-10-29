@@ -104,7 +104,8 @@ export function serializeSessionCookie(token: string, expiresAt: Date, secure: b
 }
 
 export class SessionStore {
-  constructor(private readonly pool: Pool, private readonly adminTelegramIds: ReadonlySet<string> = new Set()) {}
+  constructor(private readonly pool: Pool, private readonly adminTelegramIds: ReadonlySet<string> = new Set(),
+    private readonly allowedTelegramIds?: ReadonlySet<string>) {}
 
   async loadCurrent(token: string): Promise<AuthenticatedSession | null> {
     if (!isSessionToken(token)) return null;
@@ -117,6 +118,7 @@ export class SessionStore {
     `, [hashSessionToken(token)]);
     const row = result.rows[0];
     if (!row) return null;
+    if (this.allowedTelegramIds && !this.allowedTelegramIds.has(row.telegram_user_id)) return null;
     return { session: mapSession(row), user: mapUser({ ...row, id: row.current_user_id }) };
   }
 
@@ -125,6 +127,7 @@ export class SessionStore {
     currentToken?: string | null,
     onLockedUser?: (client: PoolClient, user: CurrentUser) => Promise<string | null>
   ): Promise<IssuedSession> {
+    if (this.allowedTelegramIds && !this.allowedTelegramIds.has(identity.telegramUserId)) throw new BlockedUserError();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -144,7 +147,7 @@ export class SessionStore {
       if (!user) throw new Error("User upsert failed");
       await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [user.id]);
       if (user.is_blocked) throw new BlockedUserError();
-      const launchTarget = await onLockedUser?.(client, mapUser(user)) ?? "/shop";
+      const launchTarget = await onLockedUser?.(client, mapUser(user)) ?? undefined;
 
       let existing: SessionRow | undefined;
       if (currentToken && isSessionToken(currentToken)) {
@@ -157,7 +160,7 @@ export class SessionStore {
       if (existing && existing.user_id === user.id && existing.revoked_at === null && existing.is_live) {
         await client.query("UPDATE sessions SET last_seen_at = now() WHERE id = $1", [existing.id]);
         await client.query("COMMIT");
-        return { user: mapUser(user), session: mapSession(existing), token: currentToken!, reused: true, launchTarget };
+        return { user: mapUser(user), session: mapSession(existing), token: currentToken!, reused: true, ...(launchTarget ? { launchTarget } : {}) };
       }
       if (existing && existing.user_id !== user.id && existing.revoked_at === null) {
         await client.query("UPDATE sessions SET revoked_at = now() WHERE id = $1", [existing.id]);
@@ -171,7 +174,7 @@ export class SessionStore {
       const session = created.rows[0];
       if (!session) throw new Error("Session insert failed");
       await client.query("COMMIT");
-      return { user: mapUser(user), session: mapSession(session), token, reused: false, launchTarget };
+      return { user: mapUser(user), session: mapSession(session), token, reused: false, ...(launchTarget ? { launchTarget } : {}) };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

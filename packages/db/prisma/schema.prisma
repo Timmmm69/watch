@@ -286,6 +286,10 @@ model Cart {
   buyerUserId String     @unique @map("buyer_user_id") @db.Uuid
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  purchaseChannel String @default("DIRECT") @map("purchase_channel") @db.VarChar(16)
+  attributionTouchId String? @map("attribution_touch_id") @db.Uuid
+  attributionExpiresAt DateTime? @map("attribution_expires_at") @db.Timestamptz(6)
+  pendingAttributionTouchId String? @map("pending_attribution_touch_id") @db.Uuid
   buyer       User       @relation(fields: [buyerUserId], references: [id], onDelete: Restrict)
   items       CartItem[]
 

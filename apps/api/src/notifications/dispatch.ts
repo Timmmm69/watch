@@ -183,7 +183,9 @@ async function dispatchOrderCreated(
         `Товар: ${product}.`,
         `Сумма: ${formatMoney(summary.totalMinor, summary.currency)}.`,
         pendingCommissionText(summary),
-        "Товар зарезервирован. Оплата пока не подтверждена. Проверяйте статус и данные доставки в заказе.",
+        summary.economicRegime === "DROPSHIP_MARKUP"
+          ? "Товар зарезервирован. Оплата пока не подтверждена. Проверяйте статус и данные доставки в заказе."
+          : "Клиент самостоятельно оформил заказ по вашей ссылке. Товар зарезервирован. Оплата пока не подтверждена.",
         `Подробнее: ${orderUrl(config.appBaseUrl, publicNumber, "partner")}`
       ].join("\n");
       errors.push(...await sendAll(pool, [recipient], text, send));

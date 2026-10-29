@@ -26,7 +26,7 @@ test.describe("Cart end-to-end with a real DB Session", () => {
       VALUES ($1,100,'OK',now()),($2,NULL,'UNINITIALIZED',NULL)`, [variant,unavailable]);
     // Test-only API uses the normal Session middleware; there is no test-auth route.
     app = createApp({ logger: false, checkReadiness: async () => undefined,
-      auth: { store: new SessionStore(pool, new Set()), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "http://127.0.0.1:3000", adminIds: () => new Set() },
+      auth: { store: new SessionStore(pool, new Set()), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000", adminIds: () => new Set() },
       cart: new CartService(pool, platformCurrency), catalog: { service: new CatalogService(pool, platformCurrency) } });
     await app.listen({ host: "127.0.0.1", port: 3001 });
   });

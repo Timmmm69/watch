@@ -57,6 +57,11 @@ export const apiRuntimeConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   RELEASE_TAG: z.string().optional(),
   WATCH_PRODUCTION_APPROVAL_FILE: z.string().optional(),
+  // Explicit owner-operated friends-only deployment; never a commercial approval.
+  WATCH_PRIVATE_ACCESS: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
+  // Owner opt-in: every verified Telegram identity may enter the shop; roles stay separate.
+  WATCH_PUBLIC_SHOP: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
+  PRIVATE_TELEGRAM_IDS: z.string().transform(parseAdminIds).optional(),
   // Explicit private prepare/stage or bootstrap/import CLI policy; never authorizes traffic.
   WATCH_CLOSED_ACCEPTANCE: z.preprocess((value) => value === "" ? undefined : value, z.enum(["1"]).optional()),
   // Only individual proxy addresses are accepted; no wildcard/CIDR/hop-count trust.
@@ -100,6 +105,9 @@ export const apiRuntimeConfigSchema = z.object({
   LEGAL_PRIVACY_ID: z.string().uuid().optional(),
   LEGAL_PRIVACY_VERSION: legalVersion.optional()
 }).superRefine((value, ctx) => {
+  if (value.WATCH_PRIVATE_ACCESS === "1" && (value.INVENTORY_PROVIDER !== "native" || value.ADMIN_TELEGRAM_IDS.length === 0)) {
+    ctx.addIssue({ code: "custom", message: "Private access requires native inventory and a configured owner", path: ["WATCH_PRIVATE_ACCESS"] });
+  }
   if (value.NODE_ENV === "production") {
     const origin = new URL(value.APP_BASE_URL);
     if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
@@ -155,6 +163,12 @@ export const apiRuntimeConfigSchema = z.object({
 
 export type ApiRuntimeConfig = z.infer<typeof apiRuntimeConfigSchema> & { productionApproval?: ProductionApproval; productionApprovalSha256?: string };
 
+export function telegramAccessAllowlist(runtime: Pick<ApiRuntimeConfig,
+  "WATCH_PRIVATE_ACCESS" | "WATCH_PUBLIC_SHOP" | "ADMIN_TELEGRAM_IDS" | "PRIVATE_TELEGRAM_IDS">): Set<string> | undefined {
+  return runtime.WATCH_PRIVATE_ACCESS === "1" && runtime.WATCH_PUBLIC_SHOP !== "1"
+    ? new Set([...runtime.ADMIN_TELEGRAM_IDS, ...(runtime.PRIVATE_TELEGRAM_IDS ?? [])]) : undefined;
+}
+
 export type LegalDocumentType = "PARTNER_TERMS" | "SALES_TERMS" | "PRIVACY";
 
 export interface LegalDocumentRef {
@@ -183,8 +197,12 @@ export function loadApiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ApiR
     GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON_B64:undefined,
   } : env);
   if (runtime.NODE_ENV !== "production") return runtime;
-  const { approval, sha256 } = readProductionApprovalWithDigest(runtime.WATCH_PRODUCTION_APPROVAL_FILE, runtime.WATCH_CLOSED_ACCEPTANCE === "1");
   if (!env.ORDER_HOLD_DAYS || !env.ORDER_OVERDUE_SECONDS) throw new Error("Production requires explicit ORDER_HOLD_DAYS and ORDER_OVERDUE_SECONDS");
+  if (runtime.WATCH_PRIVATE_ACCESS === "1") {
+    if (!/^[a-f0-9]{40}$/.test(runtime.RELEASE_TAG ?? "")) throw new Error("Private deployment requires an exact release SHA");
+    return runtime;
+  }
+  const { approval, sha256 } = readProductionApprovalWithDigest(runtime.WATCH_PRODUCTION_APPROVAL_FILE, runtime.WATCH_CLOSED_ACCEPTANCE === "1");
   const bindings = [
     [runtime.INVENTORY_PROVIDER, approval.operatingModel.inventoryProvider],
     [runtime.RELEASE_TAG, approval.releaseSha], [runtime.APP_BASE_URL, approval.appBaseUrl],

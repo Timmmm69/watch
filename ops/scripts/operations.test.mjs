@@ -151,7 +151,7 @@ test("prepare bootstraps a fresh native database while keeping writers and publi
 test("stage verifies internal services without starting the public proxy", async () => {
   const {calls,run}=runner();
   await deploy("stage",run,async()=>assert.fail("must not run public smoke"),async()=>assert.fail("must not open traffic"));
-  assert.ok(calls.some(a=>a.at(-1)==="verify"));
+  assert.ok(calls.some(a=>a.at(-1)==="verify" && a[0]==="exec" && a.includes("runtime-secrets")));
   assert.ok(calls.some(a=>a[0]==="up" && a.includes("api")));
   assert.equal(calls.some(a=>a[0]==="up" && a.includes("reverse-proxy")),false);
 });

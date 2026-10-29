@@ -90,12 +90,19 @@ export class CheckoutService {
         return { order: project(existing), created: false };
       }
       const native = (await client.query("SELECT 1 FROM inventory_authority")).rowCount !== 0;
+      const contextAwareNative = native && (await client.query<{ exists: boolean }>("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='carts'::regclass AND attname='purchase_channel' AND NOT attisdropped) AS exists")).rows[0]!.exists;
       const inventoryService = new NativeInventoryService(this.pool);
       // Use the serialization time after waiting for Buyer, rather than a stale BEGIN timestamp.
       const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
-      const touch = (await client.query<{ id: string; partner_id: string }>(`
-        SELECT id, partner_id FROM attribution_touches WHERE buyer_user_id = $1
-          AND occurred_at <= $2 AND expires_at > $2 ORDER BY occurred_at DESC, id DESC LIMIT 1`, [buyerId, now])).rows[0];
+      const cart = contextAwareNative
+        ? (await client.query<{ id: string; purchase_channel: "DIRECT" | "REFERRAL"; attribution_touch_id: string | null; attribution_expires_at: Date | null }>("SELECT id,purchase_channel,attribution_touch_id,attribution_expires_at FROM carts WHERE buyer_user_id = $1 FOR UPDATE", [buyerId])).rows[0]
+        : (await client.query<{ id: string; purchase_channel?: "DIRECT" | "REFERRAL"; attribution_touch_id?: string | null; attribution_expires_at?: Date | null }>("SELECT id FROM carts WHERE buyer_user_id = $1 FOR UPDATE", [buyerId])).rows[0];
+      if (!cart) throw new CheckoutError("CART_EMPTY");
+      const touch = contextAwareNative && cart.purchase_channel === "REFERRAL" && cart.attribution_touch_id && cart.attribution_expires_at && cart.attribution_expires_at > now
+        ? (await client.query<{ id: string; partner_id: string }>(`SELECT t.id,t.partner_id FROM attribution_touches t JOIN referral_links l ON l.id=t.referral_link_id
+            WHERE t.id=$1 AND t.buyer_user_id=$2 AND t.expires_at>$3 AND l.status='ACTIVE'`, [cart.attribution_touch_id,buyerId,now])).rows[0]
+        : !contextAwareNative ? (await client.query<{ id: string; partner_id: string }>(`SELECT id,partner_id FROM attribution_touches WHERE buyer_user_id=$1 AND occurred_at <= $2 AND expires_at > $2 ORDER BY occurred_at DESC,id DESC LIMIT 1`,[buyerId,now])).rows[0] : undefined;
+      if (contextAwareNative && cart.purchase_channel === "REFERRAL" && !touch) throw new CheckoutError("CART_CHANGED", { reason: "REFERRAL_UNAVAILABLE" });
       let eligible = false;
       if (touch) {
         const partner = (await client.query<{ id: string; user_id: string; status: PartnerStatus }>(
@@ -106,8 +113,17 @@ export class CheckoutService {
         eligible = partner.user_id !== buyerId && partnerProgramMutationAllowed({ userBlocked: user?.is_blocked ?? true,
           partnerStatus: partner.status, partnerTermsCurrent: partnerTermsCurrent(terms.requires_reacceptance, accepted) });
       }
-      const cart = (await client.query<{ id: string }>("SELECT id FROM carts WHERE buyer_user_id = $1 FOR UPDATE", [buyerId])).rows[0];
-      if (!cart) throw new CheckoutError("CART_EMPTY");
+      // Serialize a selected referral with revocation before any stock or money write.
+      if (contextAwareNative && touch) {
+        const activeLink = await client.query(`SELECT l.id FROM referral_links l
+          JOIN attribution_touches t ON t.referral_link_id=l.id
+          WHERE t.id=$1 AND l.status='ACTIVE' AND t.expires_at>clock_timestamp()
+          FOR SHARE OF l`, [touch.id]);
+        if (!activeLink.rowCount) throw new CheckoutError("CART_CHANGED", { reason: "REFERRAL_UNAVAILABLE" });
+      }
+      if (contextAwareNative && cart.purchase_channel === "REFERRAL" && !eligible) {
+        throw new CheckoutError("CART_CHANGED", { reason: "REFERRAL_UNAVAILABLE" });
+      }
       const lines = (await client.query<Line>("SELECT variant_id, quantity FROM cart_items WHERE cart_id = $1 ORDER BY variant_id", [cart.id])).rows;
       if (!lines.length) throw new CheckoutError("CART_EMPTY");
       if (lines.length > MAX_CART_LINES) throw new CheckoutError("CART_LINE_LIMIT_EXCEEDED");
@@ -153,7 +169,8 @@ export class CheckoutService {
       const totals = commercial.map((row, index) => {
         const quantity = BigInt(lines[index]!.quantity);
         const lineTotal = checkedMoney(BigInt(row.price_minor) * quantity);
-        commissionGross += BigInt(row.partner_commission_unit_minor) * quantity;
+        const commissionUnitSnapshot = contextAwareNative && !eligible ? 0 : row.partner_commission_unit_minor;
+        commissionGross += BigInt(commissionUnitSnapshot) * quantity;
         checkedMoney(commissionGross);
         if (row.supplier_settlement_unit_minor !== null) {
           settlementGross += BigInt(row.supplier_settlement_unit_minor) * quantity;
@@ -187,7 +204,7 @@ export class CheckoutService {
         await client.query(`INSERT INTO order_items (id, order_id, variant_id, sku_snapshot, title_snapshot, attributes_snapshot,
           quantity, unit_price_minor, partner_commission_unit_snapshot_minor, supplier_settlement_unit_snapshot_minor, line_total_minor${native ? ", allocated_procurement_cost_minor" : ""})
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11${native ? ",$12" : ""})`, [randomUUID(), id, row.id, row.sku, row.title, JSON.stringify(row.attributes),
-          lines[index]!.quantity, row.price_minor, row.partner_commission_unit_minor, row.supplier_settlement_unit_minor, totals[index], ...(native ? [allocateCost(stocks.get(row.id)!.native_free_value_minor,
+          lines[index]!.quantity, row.price_minor, contextAwareNative && !eligible ? 0 : row.partner_commission_unit_minor, row.supplier_settlement_unit_minor, totals[index], ...(native ? [allocateCost(stocks.get(row.id)!.native_free_value_minor,
             stocks.get(row.id)!.native_on_hand - stocks.get(row.id)!.native_reserved_quantity, lines[index]!.quantity)] : [])]);
         if (native) await inventoryService.reserve(client, { actorUserId: buyerId, operationKey: `order:${id}:reserve`,
           reason: "Buyer checkout", occurredAt: now }, stocks.get(row.id)!, id, lines[index]!.quantity);
@@ -200,7 +217,8 @@ export class CheckoutService {
       await client.query(`INSERT INTO events (id, type, aggregate_type, aggregate_id, dedupe_key, payload, created_at)
         VALUES ($1,'ORDER_CREATED','Order',$2,$3,$4,$5)`, [randomUUID(), id, `order:${id}:created`, JSON.stringify(payload), now]);
       await client.query("DELETE FROM cart_items WHERE cart_id = $1", [cart.id]);
-      await client.query("UPDATE carts SET updated_at = $2 WHERE id = $1", [cart.id, now]);
+      if (contextAwareNative) await client.query("UPDATE carts SET purchase_channel='DIRECT',attribution_touch_id=NULL,attribution_expires_at=NULL,pending_attribution_touch_id=NULL,updated_at = $2 WHERE id = $1", [cart.id, now]);
+      else await client.query("UPDATE carts SET updated_at = $2 WHERE id = $1", [cart.id, now]);
       await client.query("COMMIT");
       return { order: project(order), created: true };
     } catch (error) { await client.query("ROLLBACK"); throw error; }

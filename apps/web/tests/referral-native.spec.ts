@@ -19,6 +19,11 @@ test.describe("Referral buyer storefront with real native PostgreSQL/API", () =>
     }, telegramLaunch(link.url));
     await page.goto("/shop");
     await expect(page.getByRole("heading", { name: "Тестовые часы T48", exact: true })).toBeVisible();
+    // Attribution is explicitly selected while the cart is empty, so we do not
+    // silently discard a shopper's existing retail cart.
+    await page.goto("/cart");
+    await page.getByRole("button", { name: "Продолжить по ссылке партнёра", exact: true }).click();
+    await page.goto(`/shop?product=${f.slug}`);
     await expect(page.getByRole("button", { name: "Добавить в корзину" })).toBeEnabled();
     await page.getByRole("button", { name: "Добавить в корзину" }).click();
     await page.getByRole("link", { name: /Корзина/ }).click();
@@ -48,7 +53,7 @@ test.describe("Referral buyer storefront with real native PostgreSQL/API", () =>
     await expect(page.getByRole("button", { name: "Создать заказ", exact: true })).toBeDisabled();
     await page.getByLabel("Я проверил и принимаю новую сумму заказа").check();
     let lost = false;
-    await page.route("**/api/v1/orders", async route => {
+    await page.route("**/api/v1/checkout", async route => {
       const response = await route.fetch();
       if (!lost) { lost = true; expect(response.status()).toBe(201); await route.abort(); }
       else { expect(response.status()).toBe(200); await route.fulfill({ response }); }
@@ -63,7 +68,7 @@ test.describe("Referral buyer storefront with real native PostgreSQL/API", () =>
   test("partner sees fixed commission, promotional material and working personal links", async ({ page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.context().addCookies([{ name: "watch_session", value: f.owners[0]!.token, domain: "127.0.0.1", path: "/" }]);
-    await page.goto("/shop");
+    await page.goto("/shop?mode=partner");
     await page.getByRole("button", { name: "Скопировать ссылку на магазин" }).click();
     await expect(page.getByText(/Ссылка скопирована: https:\/\/t.me\//)).toBeVisible();
     await page.getByRole("button", { name: /Тестовые часы T48/ }).click();

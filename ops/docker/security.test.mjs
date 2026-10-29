@@ -70,6 +70,12 @@ test("production Compose isolates services, secrets and migration ordering", () 
   assert.equal(config.services.worker.networks.proxy, undefined);
   const proxyIp = config.services["reverse-proxy"].networks.proxy.ipv4_address;
   assert.equal(config.services.api.environment.API_TRUSTED_PROXY_IP, proxyIp);
+  const dynamicRange = config.networks.proxy.ipam.config[0].ip_range;
+  assert.ok(dynamicRange, "Static trusted proxy must be excluded from automatic allocation");
+  const ipNumber = ip => ip.split(".").reduce((value, octet) => value * 256 + Number(octet), 0);
+  const [dynamicStart, prefix] = dynamicRange.split("/");
+  assert.ok(ipNumber(proxyIp) < ipNumber(dynamicStart)
+    || ipNumber(proxyIp) >= ipNumber(dynamicStart) + 2 ** (32 - Number(prefix)));
   assert.equal(config.services.api.environment.WATCH_PRODUCTION_APPROVAL_FILE, "/run/production-approval.json");
   for (const name of ["api", "worker", "bootstrap"]) {
     const mount = config.services[name].volumes.find((volume) => volume.target === "/run/production-approval.json");

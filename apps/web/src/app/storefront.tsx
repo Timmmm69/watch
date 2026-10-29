@@ -49,7 +49,12 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   const [link, setLink] = useState("");
   const [linkError, setLinkError] = useState("");
   const [linkLoading, setLinkLoading] = useState(false);
+  const [partnerMode, setPartnerMode] = useState(false);
   const limit = 20;
+
+  useEffect(() => {
+    setPartnerMode(Boolean(partner && new URLSearchParams(window.location.search).get("mode") === "partner"));
+  }, [partner]);
 
   useEffect(() => {
     const dialog = filterDialog.current;
@@ -78,12 +83,13 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     if (filters.maxPrice) params.set("maxPriceMinor", String(Math.round(Number(filters.maxPrice) * 100)));
     if (filters.availability) params.set("availability", filters.availability);
     setLoaded(false); setError(false);
+    if (partnerMode) params.set("view", "partner");
     void fetch(`/api/v1/catalog/products?${params}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal })
       .then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{ items: Product[]; total: number }>; })
       .then((result) => { setItems(result.items); setTotal(result.total); setLoaded(true); })
       .catch(() => { if (!controller.signal.aborted) { setError(true); setLoaded(true); } });
     return () => controller.abort();
-  }, [filters, page, retry]);
+  }, [filters, page, retry, partnerMode]);
 
   const apply = (event: FormEvent) => {
     event.preventDefault();
@@ -99,7 +105,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   const open = async (slug: string) => {
     setError(false); setLink(""); setLinkError("");
     try {
-      const response = await fetch(`/api/v1/catalog/products/${encodeURIComponent(slug)}`, { credentials: "same-origin", cache: "no-store" });
+      const response = await fetch(`/api/v1/catalog/products/${encodeURIComponent(slug)}${partnerMode ? "?view=partner" : ""}`, { credentials: "same-origin", cache: "no-store" });
       if (!response.ok) throw new Error();
       setDetail(await response.json() as Detail);
     } catch { setError(true); }
@@ -131,15 +137,17 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     <header className="shop-header mb-4 flex flex-wrap items-center justify-between gap-3"><h1>Watch</h1>
       <span className="min-w-0 break-words text-sm text-muted">Здравствуйте, {name}</span></header>
     <nav className="mb-5 flex flex-wrap gap-4">
-      {(!nativeCommerce || partner) && <Link className="min-h-11 underline" href={nativeCommerce ? "/partner/orders" : "/orders"}>Мои заказы</Link>}
+      {!partnerMode && <Link className="min-h-11 underline" href="/orders">Мои заказы</Link>}
       {partner ? <Link className="min-h-11 underline" href="/partner">Партнёрский кабинет</Link>
         : <Link className="min-h-11 underline" href="/partner/onboarding">Продавать с нами</Link>}
       {partnerTermsReacceptRequired && <Link className="min-h-11 underline" href="/partner/onboarding">Принять новые условия</Link>}
     </nav>
-    {!nativeCommerce && !detail && <CartIndicator csrfToken={csrfToken} />}
-    {nativeCommerce && !partner && !detail && <p className="mb-5 text-ink-secondary">Выберите модель и напишите в магазин из карточки часов, чтобы согласовать покупку и доставку.</p>}
+    {!partnerMode && !detail && <CartIndicator csrfToken={csrfToken} />}
+    {partner && <Link className="min-h-11 underline" href={partnerMode ? "/shop" : "/shop?mode=partner"}>{partnerMode ? "Покупать для себя" : "Рабочий режим продавца"}</Link>}
+    {!partnerMode && !detail && <p className="mb-5 text-ink-secondary">Выберите часы и оформите покупку в корзине. Вопросы по товару и доставке можно задать магазину.</p>}
+    {!partnerMode && new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("referral") === "unavailable" && <p role="status" className="mb-5 text-warning">Ссылка недоступна. Можно купить напрямую.</p>}
     {partner?.status === "BLOCKED" && <p role="status" className="mb-5 text-warning">Новые заказы и заявки на выплату недоступны. Каталог и история доступны для просмотра.</p>}
-    {!nativeCommerce && partner && !detail && <section className="app-panel mb-6" aria-label="Партнёрская ссылка">
+    {partnerMode && partner && !detail && <section className="app-panel mb-6" aria-label="Партнёрская ссылка">
       <h2 className="text-lg font-bold">Ваша ссылка на магазин</h2>
       {partner.status === "ACTIVE" && !partnerTermsReacceptRequired
         ? <button type="button" disabled={linkLoading} className="app-button app-button-primary mt-3 min-h-11 px-4 disabled:opacity-50"
@@ -162,39 +170,43 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         ? <img key={asset.id} src={asset.mediaUrl} alt={detail.title} className="w-full rounded-xl bg-surface object-contain" />
         : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-surface" />
           : asset.text ? <p key={asset.id} className="rounded-xl bg-surface p-4">{asset.text}</p> : null)}</div>
-      {detail.partnerView && <div className="app-panel mt-6">
-        <h3 className="mb-3 text-lg font-bold">{nativeCommerce ? "Материалы для продажи" : "Партнёрская информация"}</h3>
-        {!nativeCommerce && (detail.partnerView.referralEligible
+      {partnerMode && detail.partnerView && <div className="app-panel mt-6">
+        <h3 className="mb-3 text-lg font-bold">Материалы и условия для продажи</h3>
+        {detail.partnerView.referralEligible
           ? <button type="button" disabled={linkLoading} className="app-button app-button-primary mb-3 min-h-11 px-4 disabled:opacity-50"
               onClick={() => void copyReferral(detail.id)}>Скопировать ссылку на товар</button>
-          : <p className="mb-3 text-warning">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>)}
+          : <p className="mb-3 text-warning">{reasonLabel(detail.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>}
         {link && <p className="mb-3 break-all text-sm text-success">Ссылка скопирована: {link}</p>}
         {linkError && <p role="alert" className="mb-3 text-danger">{linkError}</p>}
-        {!nativeCommerce && <table className="w-full text-left text-sm"><thead><tr className="text-muted"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия</th></tr></thead><tbody>
+        <table className="w-full text-left text-sm"><thead><tr className="text-muted"><th className="pb-2">Артикул</th><th className="pb-2">Комиссия по ссылке</th></tr></thead><tbody>
           {detail.partnerView.variants.map((variant) => <tr key={variant.id} className="border-t border-hairline">
             <td className="py-2">{detail.variants.find((v) => v.id === variant.id)?.sku ?? variant.id}</td>
             <td className="py-2 text-success">{price(variant.commissionUnitMinor, detail.currency)}</td>
           </tr>)}
-        </tbody></table>}
+        </tbody></table>
         {detail.partnerView.assets.length > 0 && <div className="mt-4 grid gap-4 sm:grid-cols-2">{detail.partnerView.assets.map((asset) => asset.type === "IMAGE" && asset.mediaUrl
           ? <img key={asset.id} src={asset.mediaUrl} alt="Партнёрский материал" className="w-full rounded-xl bg-canvas object-contain" />
           : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-canvas" />
             : asset.text ? <p key={asset.id} className="rounded-xl bg-canvas p-4">{asset.text}</p> : null)}</div>}
       </div>}
-      <p className="mt-6 text-lg font-medium">{nativeCommerce && partner ? "Ваша цена — от " : "От "}{price(detail.priceFromMinor, detail.currency)}</p>
+      <p className="mt-6 text-lg font-medium">{partnerMode ? "Розничная цена — от " : "От "}{price(detail.priceFromMinor, detail.currency)}</p>
       <p className="mt-2">{labels[detail.availability]}</p>
-      {nativeCommerce && !partner ? <section className="mt-5 space-y-3" aria-label="Варианты товара">
-        <p>Показана цена каталога. Итоговую стоимость часов и доставку согласуйте с магазином. Если вы уже общаетесь со своим продавцом, продолжите покупку у него.</p>
+      {!partnerMode ? <section className="mt-5 space-y-3" aria-label="Варианты товара">
+        <p>Показана цена магазина. Оформите заказ самостоятельно или задайте вопрос магазину.</p>
         {detail.variants.map((variant) => <section key={variant.id} className="app-panel space-y-3">
           <h3 className="font-bold">{variant.sku} · {price(variant.priceMinor, detail.currency)}</h3><p>{labels[variant.availability]}</p>
-          <ShopContact primary contact={supportContact} label="Уточнить и заказать" draft={`Здравствуйте! Хочу уточнить покупку часов «${detail.title}», вариант ${variant.sku}. Цена каталога: ${price(variant.priceMinor, detail.currency)}. Подскажите итоговую стоимость и условия доставки.`} />
+          <ShopContact contact={supportContact} label="Задать вопрос магазину" draft={`Здравствуйте! Хочу уточнить покупку часов «${detail.title}», вариант ${variant.sku}. Цена каталога: ${price(variant.priceMinor, detail.currency)}. Подскажите условия доставки.`} />
         </section>)}
-      </section> : nativeCommerce ? <section className="mt-5 space-y-3" aria-label="Выбор варианта часов">{detail.variants.map((variant) => <div key={variant.id} className="app-panel">
-        <p>{variant.sku} · Ваша цена за 1 шт.: {price(variant.dropshipPriceMinor ?? null, detail.currency)} · Доступно: {variant.sellable ?? 0}</p>
+        {detail.variants.length > 0 && <ProductCartActions variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />}
+        {detail.variants.length === 0 && <CartIndicator csrfToken={csrfToken} />}
+      </section> : <section className="mt-5 space-y-3" aria-label="Выбор варианта часов">{detail.variants.map((variant) => <div key={variant.id} className="app-panel">
+        <p>{variant.sku} · Розничная цена: {price(variant.priceMinor, detail.currency)}</p>
+        <p>Цена магазина для вас: {price(variant.dropshipPriceMinor ?? null, detail.currency)} · Доступно: {variant.sellable ?? 0}</p>
+        {detail.partnerView?.variants.find((item) => item.id === variant.id) && <p className="text-success">Комиссия за самостоятельную покупку по вашей ссылке: {price(detail.partnerView.variants.find((item) => item.id === variant.id)!.commissionUnitMinor, detail.currency)}</p>}
         {variant.dropshipPriceMinor != null && variant.availability === "IN_STOCK" && partner?.status === "ACTIVE" && !partnerTermsReacceptRequired && !detail.partnerView?.readOnlyReason
-          ? <Link className="inline-flex min-h-11 items-center underline" href={`/checkout?product=${encodeURIComponent(detail.slug)}&variant=${variant.id}`}>Оформить заказ</Link>
+          ? <Link className="inline-flex min-h-11 items-center underline" href={`/checkout?mode=partner&product=${encodeURIComponent(detail.slug)}&variant=${variant.id}`}>Оформить заказ клиенту</Link>
           : <p>{detail.partnerView?.readOnlyReason === "PARTNER_BLOCKED" ? "Новые заказы недоступны. Обратитесь в поддержку." : partnerTermsReacceptRequired || detail.partnerView?.readOnlyReason === "TERMS_REACCEPT_REQUIRED" ? "Примите текущие условия в кабинете." : "Оформление недоступно."}</p>}
-      </div>)}</section> : <ProductCartActions key={detail.id} variants={detail.variants} currency={detail.currency} csrfToken={csrfToken} />}
+      </div>)}</section>}
     </section> : <>
       <h2 className="mb-4 text-2xl font-bold tracking-tight">Каталог часов</h2>
       <form onSubmit={apply} className="shop-search mb-5 flex gap-2"><label className="sr-only" htmlFor="shop-search">Поиск товаров</label>
@@ -241,9 +253,9 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
             : <div className="shop-product-media flex aspect-square items-center justify-center text-muted">Watch</div>}
           <div className="p-5"><h2 className="text-lg font-bold">{product.title}</h2>
             {product.brand && <p className="mt-1 text-sm text-muted">{product.brand}</p>}
-            <p className="shop-product-price mt-4">{nativeCommerce && partner ? "Ваша цена — от " : "От "}{price(product.priceFromMinor, product.currency)}</p>
+            <p className="shop-product-price mt-4">{partnerMode ? "Розничная цена — от " : "От "}{price(product.priceFromMinor, product.currency)}</p>
             <p className="mt-2 text-sm text-muted">{labels[product.availability]}</p>
-            {!nativeCommerce && product.partnerView && <div className="mt-3 border-t border-hairline pt-2 text-sm">
+            {partnerMode && product.partnerView && <div className="mt-3 border-t border-hairline pt-2 text-sm">
               <p className="text-success">Комиссия: {price(product.partnerView.commissionFromMinor, product.currency)} – {price(product.partnerView.commissionToMinor, product.currency)}</p>
               {product.partnerView.referralEligible
                 ? <p className="text-link">Реферальная ссылка: доступна</p>

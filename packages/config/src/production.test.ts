@@ -3,7 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadApiRuntimeConfig, productionApprovalSchema, assertApprovedLegalArtifact } from "./index.js";
+import { loadApiRuntimeConfig, productionApprovalSchema, assertApprovedLegalArtifact, telegramAccessAllowlist } from "./index.js";
 import { productionApprovalFixture } from "../../../ops/scripts/fixtures/production-approval.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "watch-production-"));
@@ -28,6 +28,32 @@ const approval = productionApprovalSchema.parse(productionApprovalFixture(env));
 function publish(value: unknown = approval) { writeFileSync(file, JSON.stringify(value)); }
 
 describe("production launch gate", () => {
+  it("supports an explicitly owner-restricted private instance without claiming commercial approval", () => {
+    const privateEnv = { ...env, INVENTORY_PROVIDER: "native", WATCH_PRIVATE_ACCESS: "1",
+      WATCH_PRODUCTION_APPROVAL_FILE: undefined, PRIVATE_TELEGRAM_IDS: "43,44" };
+    const runtime = loadApiRuntimeConfig(privateEnv);
+    expect(runtime.productionApproval).toBeUndefined();
+    expect(runtime.PRIVATE_TELEGRAM_IDS).toEqual(["43", "44"]);
+    expect(runtime.ADMIN_TELEGRAM_IDS).toEqual(["42"]);
+    expect(telegramAccessAllowlist(runtime)).toEqual(new Set(["42", "43", "44"]));
+    const publicShop = loadApiRuntimeConfig({ ...privateEnv, WATCH_PUBLIC_SHOP: "1" });
+    expect(telegramAccessAllowlist(publicShop)).toBeUndefined();
+    expect(publicShop.ADMIN_TELEGRAM_IDS).toEqual(["42"]);
+    expect(telegramAccessAllowlist(loadApiRuntimeConfig({ ...privateEnv, WATCH_PUBLIC_SHOP: "" })))
+      .toEqual(new Set(["42", "43", "44"]));
+    expect(() => loadApiRuntimeConfig({ ...privateEnv, WATCH_PUBLIC_SHOP: "true" })).toThrow();
+    for (const changed of [
+      { ...privateEnv, WATCH_PRIVATE_ACCESS: undefined },
+      { ...privateEnv, WATCH_PRIVATE_ACCESS: "true" },
+      { ...privateEnv, ADMIN_TELEGRAM_IDS: "" },
+      { ...privateEnv, INVENTORY_PROVIDER: "google_sheets" },
+      { ...privateEnv, APP_BASE_URL: "http://watch.company.org" },
+      { ...privateEnv, API_TRUSTED_PROXY_IP: undefined },
+      { ...privateEnv, CSRF_SECRET: "short" },
+      { ...privateEnv, ORDER_OVERDUE_SECONDS: undefined },
+      { ...privateEnv, RELEASE_TAG: "latest" },
+    ]) expect(() => loadApiRuntimeConfig(changed)).toThrow();
+  });
   it("native production has no live Google credential or worksheet prerequisite", () => {
     const {spreadsheetId:_sheet,worksheetName:_tab,...infrastructure}=approval.infrastructure;
     publish({...productionApprovalFixture({...env,INVENTORY_PROVIDER:"native"}),infrastructure});

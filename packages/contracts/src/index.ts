@@ -117,6 +117,15 @@ export const cartResponseSchema = z.object({
   })).max(MAX_CART_LINES),
   totalMinor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   canCheckout: z.boolean()
+  ,purchaseContext: z.object({
+    channel: z.enum(["DIRECT", "REFERRAL"]),
+    available: z.boolean(),
+    touchId: z.string().uuid().nullable(),
+    expiresAt: z.string().datetime().nullable(),
+    referralProductId: z.string().uuid().nullable(),
+    partnerDisplayName: z.string().min(1).max(200).nullable()
+  }).optional(),
+  pendingReferral: z.object({ touchId: z.string().uuid(), expiresAt: z.string().datetime(), referralProductId: z.string().uuid().nullable(), partnerDisplayName: z.string().min(1).max(200) }).nullable().optional()
 });
 export type CartView = z.infer<typeof cartResponseSchema>;
 
@@ -262,7 +271,8 @@ const queryBoolean = z.enum(["true", "false"]).transform((value) => value === "t
 export const adminOrderListQuerySchema = pageQuerySchema.extend({
   status: orderStatusSchema.optional(), number: z.string().trim().min(1).max(32).optional(),
   partnerId: z.string().uuid().optional(), dateFrom: z.iso.datetime({ offset: true }).optional(),
-  dateTo: z.iso.datetime({ offset: true }).optional(), overdue: queryBoolean, reconciliationPending: queryBoolean
+  dateTo: z.iso.datetime({ offset: true }).optional(), overdue: queryBoolean, reconciliationPending: queryBoolean,
+  salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 }).strict().refine((q) => !q.dateFrom || !q.dateTo || Date.parse(q.dateFrom) <= Date.parse(q.dateTo), "Invalid date range");
 export type AdminOrderListQuery = z.infer<typeof adminOrderListQuerySchema>;
 
@@ -320,7 +330,8 @@ export const buyerOrderListItemSchema = z.object({
   totalMinor: moneyMinor,
   currency: z.string().length(3),
   itemCount: z.number().int().min(0),
-  createdAt: z.string().datetime()
+  createdAt: z.string().datetime(),
+  salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 });
 
 export const buyerOrderDetailSchema = z.object({
@@ -334,11 +345,12 @@ export const buyerOrderDetailSchema = z.object({
   timeline: z.array(orderTimelineEntrySchema),
   fulfillment: fulfillmentDetailSchema.nullable(),
   supportContact: z.string(),
-  createdAt: z.string().datetime()
+  createdAt: z.string().datetime(),
+  salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 });
 
 export const partnerOrderListQuerySchema = pageQuerySchema.extend({
-  status: orderStatusSchema.optional()
+  status: orderStatusSchema.optional(), salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 });
 export type PartnerOrderListQuery = z.infer<typeof partnerOrderListQuerySchema>;
 
@@ -350,7 +362,8 @@ export const partnerOrderListItemSchema = z.object({
   currency: z.string().length(3),
   commissionEligibleSnapshot: z.boolean(),
   itemCount: z.number().int().min(0),
-  createdAt: z.string().datetime()
+  createdAt: z.string().datetime(),
+  salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 });
 
 export const partnerOrderDetailSchema = z.object({
@@ -366,10 +379,12 @@ export const partnerOrderDetailSchema = z.object({
   supportContact: z.string(),
   createdAt: z.string().datetime(),
   economicRegime: z.enum(["LEGACY_FIXED", "DROPSHIP_MARKUP"]).optional(),
-  fulfillment: fulfillmentDetailSchema.nullable().optional()
+  fulfillment: fulfillmentDetailSchema.nullable().optional(),
+  salesChannel: z.enum(["DIRECT", "REFERRAL", "PARTNER"]).optional()
 });
 
 export const storefrontProductsQuerySchema = pageQuerySchema.extend({
+  view: z.literal("partner").optional(),
   q: z.string().trim().min(1).max(100).optional(),
   category: z.string().min(1).max(140).optional(),
   brand: z.string().min(1).max(120).optional(),

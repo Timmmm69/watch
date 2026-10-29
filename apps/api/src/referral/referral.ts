@@ -122,38 +122,49 @@ export class ReferralService {
 
   async processLaunch(client: PoolClient, buyer: CurrentUser, identity: TelegramIdentity): Promise<string | null> {
     const value = identity.startParam;
-    if (!value?.startsWith("r_") || !/^r_[A-Za-z0-9_-]{32}$/.test(value)) return null;
-    const replay = await client.query("SELECT 1 FROM attribution_touches WHERE source_fingerprint = $1", [identity.replayIdentity]);
-    if (replay.rowCount) return null;
+    if (!value?.startsWith("r_")) return null;
+    if (!/^r_[A-Za-z0-9_-]{32}$/.test(value)) return "/shop?referral=unavailable";
+    const replay = await client.query<{ id: string }>("SELECT id FROM attribution_touches WHERE source_fingerprint = $1", [identity.replayIdentity]);
+    // Telegram can replay the same signed launch when the Mini App is reopened.
+    // A completed checkout must never resurrect its old attribution offer.
+    if (replay.rowCount) {
+      return null;
+    }
     const candidate = (await client.query<LinkRow>(
       "SELECT id, token, partner_id, product_id, status FROM referral_links WHERE token = $1", [value.slice(2)])).rows[0];
-    if (!candidate) return null;
+    if (!candidate) return "/shop?referral=unavailable";
     const partner = (await client.query<PartnerRow>(`
       SELECT p.id, p.status, p.user_id FROM partners p
       WHERE p.id = $1 FOR UPDATE OF p
     `, [candidate.partner_id])).rows[0];
-    if (!partner) return null;
+    if (!partner) return "/shop?referral=unavailable";
     const link = (await client.query<LinkRow>(
       "SELECT id, token, partner_id, product_id, status FROM referral_links WHERE id = $1 FOR UPDATE", [candidate.id])).rows[0];
-    if (!link || link.status !== "ACTIVE" || link.token !== value.slice(2) || link.partner_id !== partner.id) return null;
+    if (!link || link.status !== "ACTIVE" || link.token !== value.slice(2) || link.partner_id !== partner.id) return "/shop?referral=unavailable";
     let product: ProductRow | undefined;
     if (link.product_id) {
       product = (await client.query<ProductRow>(
         "SELECT id, slug, status FROM products WHERE id = $1 FOR UPDATE", [link.product_id])).rows[0];
-      if (!product || product.status !== "ACTIVE") return null;
+      if (!product || product.status !== "ACTIVE") return "/shop?referral=unavailable";
     }
     if (partner.user_id === buyer.id) {
       await client.query(`INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id)
         VALUES ($1, $2, 'SELF_REFERRAL_ATTEMPT', 'ReferralLink', $3)`, [randomUUID(), buyer.id, link.id]);
-      return null;
+      return "/shop?referral=unavailable";
     }
     const partnerUser = await client.query<{ is_blocked: boolean }>("SELECT is_blocked FROM users WHERE id = $1", [partner.user_id]);
     if (!partnerProgramMutationAllowed({ userBlocked: partnerUser.rows[0]?.is_blocked ?? true, partnerStatus: partner.status,
-      partnerTermsCurrent: await this.termsCurrent(client, partner.id) })) return null;
-    await client.query(`INSERT INTO attribution_touches
+      partnerTermsCurrent: await this.termsCurrent(client, partner.id) })) return "/shop?referral=unavailable";
+    const supportsPending = (await client.query<{ exists: boolean }>("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='carts'::regclass AND attname='pending_attribution_touch_id' AND NOT attisdropped) AS exists")).rows[0]!.exists;
+    const touch = (await client.query<{ id: string }>(`INSERT INTO attribution_touches
       (id, buyer_user_id, partner_id, referral_link_id, source_fingerprint, occurred_at, expires_at)
-      VALUES ($1, $2, $3, $4, $5, now(), now() + interval '30 days')`,
-    [randomUUID(), buyer.id, partner.id, link.id, identity.replayIdentity]);
-    return product ? `/shop?product=${encodeURIComponent(product.slug)}` : "/shop";
+      VALUES ($1, $2, $3, $4, $5, now(), now() + ${supportsPending ? "interval '7 days'" : "interval '30 days'"}) RETURNING id`,
+    [randomUUID(), buyer.id, partner.id, link.id, identity.replayIdentity])).rows[0];
+    // A launch is only an offer. The buyer explicitly chooses it for a purchase context.
+    if (supportsPending) {
+      await client.query("INSERT INTO carts(id,buyer_user_id) VALUES($1,$2) ON CONFLICT(buyer_user_id) DO NOTHING", [randomUUID(),buyer.id]);
+      await client.query("UPDATE carts SET pending_attribution_touch_id=$2,updated_at=now() WHERE buyer_user_id=$1", [buyer.id,touch!.id]);
+    }
+    return product ? `/shop?product=${encodeURIComponent(product.slug)}` : supportsPending ? "/shop?referral=offer" : "/shop";
   }
 }

@@ -22,7 +22,7 @@ describe("T39 Partner navigation authority", () => {
   it.each([null, "ACTIVE", "BLOCKED"] as const)("uses current Partner state for the Main Mini App: %s", async (status) => {
     const partner = status ? { id: "p1", status } : null;
     const app = createApp({ checkReadiness: async () => undefined, logger: false,
-      auth: { store: { upsertUserAndIssueSession: vi.fn().mockResolvedValue({ ...current, token: "a".repeat(43), launchTarget: "/shop" }) } as unknown as SessionStore,
+      auth: { store: { upsertUserAndIssueSession: vi.fn().mockResolvedValue({ ...current, token: "a".repeat(43) }) } as unknown as SessionStore,
         csrfSecret: secret, appBaseUrl: "https://app.example", adminIds: () => new Set(), botToken },
       partner: { loadState: vi.fn().mockResolvedValue({ partner, partnerTermsReacceptRequired: false }), onboard: vi.fn() } });
     const response = await app.inject({ method: "POST", url: "/api/v1/auth/telegram", payload: { initData: signedLaunch() } });

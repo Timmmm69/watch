@@ -75,8 +75,8 @@ test("catalog happy path: category, DRAFT product, variant, storage image, publi
   await core.getByLabel("Статус товара").selectOption("ACTIVE"); await core.getByRole("button").click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз."); expect(state.current().status).toBe("DRAFT");
   const newVariant = page.getByRole("form", { name: "Новый вариант", exact: true });
-  await newVariant.getByLabel("SKU", { exact: true }).fill("SKU-42"); await newVariant.getByLabel("Розничная цена (minor)", { exact: true }).fill("10000");
-  await newVariant.getByLabel("Комиссия за единицу (в копейках)", { exact: true }).fill("1000"); await newVariant.getByLabel("Расчёт с поставщиком", { exact: false }).fill("5000");
+  await newVariant.getByLabel("SKU", { exact: true }).fill("SKU-42"); await newVariant.getByLabel("Розничная цена P (копейки)", { exact: true }).fill("10000");
+  await newVariant.getByLabel("Комиссия по реферальной ссылке C (копейки)", { exact: true }).fill("1000"); await newVariant.getByLabel("Расчёт с поставщиком", { exact: false }).fill("5000");
   await newVariant.getByLabel("Ключ товара во внешнем источнике").fill("sheet-42"); await newVariant.getByRole("button").click();
   const editVariant = page.getByRole("form", { name: "Вариант SKU-42", exact: true });
   await expect(editVariant).toBeVisible(); await editVariant.getByLabel("Статус варианта").selectOption("ACTIVE");

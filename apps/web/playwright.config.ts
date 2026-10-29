@@ -7,7 +7,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["json", { outputFile: "test-results/playwright.json" }]] : "list",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
     ...devices["Desktop Chrome"],
     channel: process.env.PLAYWRIGHT_CHANNEL,
     trace: "retain-on-failure",
@@ -15,8 +15,8 @@ export default defineConfig({
   },
   webServer: {
     // The existing real-backend suites use Next's development API proxy.
-    command: "pnpm dev --hostname 127.0.0.1 --port 3000",
-    url: "http://127.0.0.1:3000",
+    command: `pnpm dev --hostname 127.0.0.1 --port ${process.env.PLAYWRIGHT_PORT ?? "3000"}`,
+    url: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
     reuseExistingServer: !process.env.CI
   }
 });

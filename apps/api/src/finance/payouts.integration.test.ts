@@ -161,8 +161,10 @@ describe.skipIf(!pool)("T33 payouts against PostgreSQL", () => {
     await commission(5000);
     await pool!.query("DELETE FROM partner_terms_acceptances WHERE partner_id=$1", [partner]);
     const newTerms = { id: randomUUID(),version: "required" };
+    // Exercise already-effective terms, independently of PostgreSQL microseconds
+    // being truncated when the service reads its clock as a JavaScript Date.
     await pool!.query(`INSERT INTO legal_documents (id,type,version,sha256,content_markdown,effective_at,requires_reacceptance)
-      VALUES ($1,'PARTNER_TERMS',$2,$3,'Terms',now(),true)`, [newTerms.id,newTerms.version,randomBytes(32).toString("hex")]);
+      VALUES ($1,'PARTNER_TERMS',$2,$3,'Terms',now()-interval '1 second',true)`, [newTerms.id,newTerms.version,randomBytes(32).toString("hex")]);
     await expect(new PayoutService(pool!,"BYN",newTerms).request(user,"stale")).rejects.toMatchObject({ code: "TERMS_REACCEPT_REQUIRED" });
     await pool!.query("UPDATE users SET is_blocked=true WHERE id=$1", [user]);
     await expect(service.request(user,"global")).rejects.toMatchObject({ code: "USER_BLOCKED" });
