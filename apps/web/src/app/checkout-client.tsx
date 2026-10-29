@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Cart } from "./cart-client";
+import type { ContextualCart } from "./cart-client";
 
 type Document = { id: string; version: string; contentMarkdown: string };
 type Documents = { SALES_TERMS: Document; PRIVACY: Document };
@@ -27,14 +27,14 @@ const messages: Record<string, string> = {
 };
 const money = (minor: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(minor / 100);
 class ApiError extends Error {
-  constructor(readonly code: string, readonly details: { affectedVariantIds?: string[] } = {}) {
+  constructor(readonly code: string, readonly details: { affectedVariantIds?: string[]; reason?: string } = {}) {
     super(messages[code] ?? "Не удалось выполнить запрос. Повторите попытку.");
   }
 }
 
 export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
   const router = useRouter();
-  const [cart, setCart] = useState<Cart | null>(null);
+  const [cart, setCart] = useState<ContextualCart | null>(null);
   const [documents, setDocuments] = useState<Documents | null>(null);
   const currentDocuments = useRef<Documents | null>(null);
   const legalSequence = useRef(0);
@@ -88,7 +88,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
     setDocuments(next); setLegalReady(true);
   }, [request]);
   const loadCart = useCallback(async () => {
-    const next: Cart = await request("/api/v1/cart");
+    const next: ContextualCart = await request("/api/v1/cart");
     setCart(next);
     if (!next.items.length) router.replace("/cart");
     return next;
@@ -140,12 +140,17 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
     busy.current = true; setPending(true); setError("");
     try {
-      const result: Order = await request("/api/v1/orders", body, submission.current.key);
+      const result: Order = await request("/api/v1/checkout", body, submission.current.key);
       completed.current = true; setOrder(result);
     } catch (cause) {
       const failure = cause as ApiError;
       setError(failure instanceof ApiError ? failure.message : "Ответ не получен. Повторите отправку: для тех же данных используется тот же ключ заказа.");
       try {
+        if (failure.code === "CART_CHANGED" && failure.details?.reason === "REFERRAL_UNAVAILABLE") {
+          await loadCart();
+          setError("Ссылка партнёра больше недоступна. Вернитесь в корзину и выберите обычную покупку.");
+          return;
+        }
         if (failure.code === "TERMS_VERSION_CHANGED") await loadDocuments();
         if (["PRICE_CHANGED", "CART_CHANGED", "CART_EMPTY", "OUT_OF_STOCK", "INVENTORY_STALE", "INVENTORY_UNKNOWN"].includes(failure.code)) {
           if (failure.code === "PRICE_CHANGED") { setPriceConfirmation(true); setPriceConfirmed(false); }
@@ -161,7 +166,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
     } finally { busy.current = false; setPending(false); }
   };
 
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 pb-12 text-slate-100"><div className="mx-auto max-w-2xl">
+  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-12 text-ink"><div className="mx-auto max-w-2xl">
     <Link href="/cart" className="inline-flex min-h-11 items-center underline">← Корзина</Link>
     <h1 className="my-5 text-2xl font-semibold">{order ? "Заказ создан" : "Оформление заказа"}</h1>
     {order ? <section aria-live="polite"><p className="text-xl">Заказ {order.publicNumber}</p><p>Статус: {order.status}</p>
@@ -170,8 +175,10 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
       <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link></section> : <>
       {error && <p role="alert" className="my-4 text-amber-300">{error}</p>}
       <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить данные заказа</button>
-      {!cart && <div aria-label="Загрузка заказа" className="my-5 h-36 animate-pulse rounded-xl bg-slate-900" />}
-      {cart && <section aria-label="Состав заказа" className="my-5 rounded-xl bg-slate-900 p-4"><ul>{cart.items.map((item) => <li key={item.variantId} className="mb-3">
+      {!cart && <div aria-label="Загрузка заказа" className="my-5 h-36 animate-pulse rounded-xl bg-surface" />}
+      {cart?.purchaseContext?.channel === "REFERRAL" && <p className="app-panel my-4">{cart.purchaseContext.available === false ? <>Ссылка партнёра больше недоступна. Вернитесь в корзину и выберите обычную покупку.</> : <>Покупка по ссылке партнёра{cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Розничная цена для вас не меняется.</>}</p>}
+      {cart?.pendingReferral && <p className="app-panel my-4">Сейчас выбрана обычная покупка. Открытая ссылка партнёра не применяется к этому заказу.</p>}
+      {cart && <section aria-label="Состав заказа" className="app-panel my-5"><ul>{cart.items.map((item) => <li key={item.variantId} className="mb-3">
         <p>{item.title} · {item.sku} · {item.quantity} шт. × {money(item.priceMinor, cart.currency)}</p>
         <p>{money(item.lineTotalMinor, cart.currency)}</p>
         {item.issues.map((issue) => <p key={issue} className="text-amber-300">{issue === "ITEM_UNAVAILABLE" ? "Товар больше недоступен." : messages[issue]}</p>)}
@@ -185,26 +192,26 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
         {(Object.keys(labels) as (keyof Fields)[]).map((name) => <div key={name}>
           <label htmlFor={name} className="mb-2 block">{labels[name]}</label>
           {name === "address" || name === "comment" ? <textarea id={name} name={name} value={fields[name]} disabled={pending || readOnly}
-            aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`} className="min-h-24 w-full rounded-lg bg-slate-800 p-3"
+            aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`} className="app-input min-h-24 w-full p-3"
             onChange={(event) => setFields({ ...fields, [name]: event.target.value })} onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })}
             onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />
             : <input id={name} name={name} type={name === "phone" ? "tel" : "text"} autoComplete={name === "phone" ? "tel" : "name"}
               value={fields[name]} disabled={pending || readOnly} aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`}
-              className="min-h-11 w-full rounded-lg bg-slate-800 p-3" onChange={(event) => setFields({ ...fields, [name]: event.target.value })}
+              className="app-input min-h-11 w-full p-3" onChange={(event) => setFields({ ...fields, [name]: event.target.value })}
               onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />}
           {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="mt-1 text-amber-300">{fieldErrors[name]}</p>}
         </div>)}
         {!documents && <div aria-label="Загрузка документов" className="h-24 animate-pulse rounded-lg bg-slate-900" />}
         {documents && (["SALES_TERMS", "PRIVACY"] as const).map((type) => <section key={type}>
-          <details className="rounded-lg bg-slate-900 p-4"><summary className="cursor-pointer">{type === "SALES_TERMS" ? "Условия продажи" : "Политика конфиденциальности"} · {documents[type].version}</summary>
+          <details className="app-panel"><summary className="cursor-pointer">{type === "SALES_TERMS" ? "Условия продажи" : "Политика конфиденциальности"} · {documents[type].version}</summary>
             <pre className="mt-3 whitespace-pre-wrap font-sans text-sm">{documents[type].contentMarkdown}</pre></details>
           <label className="flex min-h-11 items-center gap-3 py-3"><input type="checkbox" checked={accepted[type]} disabled={!legalReady || pending || readOnly}
             onChange={(event) => setAccepted({ ...accepted, [type]: event.target.checked })} />
             {type === "SALES_TERMS" ? "Принимаю текущие условия продажи" : "Ознакомлен(а) с текущей политикой конфиденциальности"}</label>
         </section>)}
-        <div className="sticky bottom-0 border-t border-slate-700 bg-slate-950 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <button type="submit" disabled={pending || readOnly || !cart?.canCheckout || !legalReady || !accepted.SALES_TERMS || !accepted.PRIVACY || (priceConfirmation && !priceConfirmed)}
-            className="min-h-11 w-full rounded-lg bg-blue-600 px-4 disabled:opacity-40">{pending ? "Отправка…" : "Создать заказ"}</button>
+        <div className="sticky bottom-0 border-t border-hairline bg-canvas py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button type="submit" disabled={pending || readOnly || !cart?.canCheckout || !legalReady || !accepted.SALES_TERMS || !accepted.PRIVACY || (priceConfirmation && !priceConfirmed) || (cart?.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
+            className="app-button app-button-primary min-h-11 w-full px-4 disabled:opacity-40">{pending ? "Отправка…" : "Создать заказ"}</button>
           {pending && <span role="status" className="animate-pulse">Создаём заказ…</span>}
         </div>
       </form>

@@ -87,7 +87,7 @@ export function DropshipCheckoutScreen({ csrfToken, partner, termsReacceptRequir
     setHasSelection(!!slug);
     if (!slug || !partner || partner.status !== "ACTIVE" || needsTerms) { setLoading(false); return; }
     setError(""); setLoading(true);
-    void Promise.all([request(`/api/v1/catalog/products/${encodeURIComponent(slug)}`),
+    void Promise.all([request(`/api/v1/catalog/products/${encodeURIComponent(slug)}?view=partner`),
       request("/api/v1/legal/PARTNER_TERMS/current"), request("/api/v1/legal/PRIVACY/current")])
       .then(([next, terms, privacy]) => {
         if (!active) return;
@@ -147,7 +147,7 @@ export function DropshipCheckoutScreen({ csrfToken, partner, termsReacceptRequir
         .map((byte) => byte.toString(16).padStart(2, "0")).join("");
       if (submission.current?.fingerprint !== digest) submission.current = { fingerprint: digest, key: crypto.randomUUID() };
       try { sessionStorage.setItem(storageKey, JSON.stringify(submission.current)); } catch { /* Memory fallback. */ }
-      const result = await request("/api/v1/orders", parsed.data satisfies DropshipCheckoutRequest, submission.current.key);
+      const result = await request("/api/v1/partner/orders/checkout", parsed.data satisfies DropshipCheckoutRequest, submission.current.key);
       setOrder(result);
       try { sessionStorage.removeItem(storageKey); } catch { /* Nothing to clear. */ }
     } catch (cause) {

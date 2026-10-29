@@ -1,3 +1,5 @@
+> Superseded for new purchases by [three independent sales channels](three-sales-channels.md) and FULL_BUILD_SPEC section 33. This document retains the earlier single-flow implementation history.
+
 # Customer and partner journey — 2026-10-28
 
 The owner's approved journey supersedes the new-sale UI in Section 31 of

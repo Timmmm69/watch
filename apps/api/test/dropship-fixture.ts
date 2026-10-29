@@ -35,6 +35,7 @@ export function disposableUrl() {
 
 export async function dropshipFixture(quantity = 10, cost = "800.02", adminAccess = false, migrationThrough = "99999999999999", historicalBuyerFlow = false) {
   const url = disposableUrl();
+  const appBaseUrl = process.env.WATCH_TEST_APP_BASE_URL ?? process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
   if (!url) throw new Error("WATCH_T48_DATABASE_URL is required");
   const schema = `t48_${randomUUID().replaceAll("-", "")}`;
   const admin = new Pool({ connectionString: url });
@@ -52,7 +53,7 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
     await pool.query("INSERT INTO users(id,telegram_user_id,first_name,is_admin) VALUES($1,$2,'TEST ONLY',true)", [user, i + 1]);
     if (partner) await pool.query("INSERT INTO partners(id,user_id) VALUES($1,$2)", [partner, user]);
     await pool.query("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES($1,$2,$3,now()+interval '1 hour')", [session, user, hashSessionToken(token)]);
-    owners.push({ user, partner, token, headers: { cookie: `watch_session=${token}`, origin: "http://127.0.0.1:3000", "x-csrf-token": deriveCsrfToken(csrfSecret, session) } });
+    owners.push({ user, partner, token, headers: { cookie: `watch_session=${token}`, origin: appBaseUrl, "x-csrf-token": deriveCsrfToken(csrfSecret, session) } });
   }
   const supplier = randomUUID();
   await pool.query("INSERT INTO suppliers(id,name) VALUES($1,'TEST ONLY Supplier')", [supplier]);
@@ -87,11 +88,16 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   const orders = new AdminOrderService(pool), returns = new AdminReturnService(pool);
   const app = createApp({ nativeCommerce: !historicalBuyerFlow, supportContact: "@test_support", logger: false, checkReadiness: async () => undefined,
     earnings: new PartnerEarningsService(pool),
-    auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl: "http://127.0.0.1:3000", adminIds: () => adminIds,
+    auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl, adminIds: () => adminIds,
       botToken: "123456:TEST_ONLY_referral" },
     ...(adminAccess ? { orders, returns, money: new OrderMoneyService(pool), payouts: new PayoutService(pool, "BYN", docs.PARTNER_TERMS, 1),
       analytics: new AnalyticsService(pool, "BYN", "Europe/Minsk", 600, 86400) } : {}),
-    checkout: historicalBuyerFlow ? new CheckoutService(pool, "BYN", docs) : new DropshipCheckoutService(pool, "BYN", docs), legal, partner: new PartnerService(pool, legal), orderViews: views,
+    // Keep the legacy dependency for historical route tests, while exercising the
+    // separated production endpoints in all disposable API fixtures.
+    checkout: historicalBuyerFlow ? new CheckoutService(pool, "BYN", docs) : new DropshipCheckoutService(pool, "BYN", docs),
+    buyerCheckout: new CheckoutService(pool, "BYN", docs),
+    partnerCheckout: new DropshipCheckoutService(pool, "BYN", docs),
+    legal, partner: new PartnerService(pool, legal), orderViews: views,
     catalog: { service: catalog }, assets: { service: new AssetService(pool, storage) },
     cart: new CartService(pool, "BYN"), referral: new ReferralService(pool, legal, "test_bot") });
   const request = (r = 14500, q = 1) => ({ items: [{ variantId: variant.id, quantity: q, expectedDropshipPriceMinor: 10000, customerUnitPriceMinor: r }],

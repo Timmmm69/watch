@@ -45,12 +45,13 @@ test("fresh Telegram Buyer deep link remains on order; redacted PII is hidden", 
 
 test("blocked Partner history and direct Telegram detail use public number without Buyer PII", async ({ page }) => {
   const launches = await auth(page, true, true, false, true);
-  await page.route("**/api/v1/partner/orders?*", (route) => route.fulfill({ json: { items: [summary], total: 1, page: 1, limit: 20 } }));
+  await page.route("**/api/v1/partner/orders?*", (route) => route.fulfill({ json: { items: [{ ...summary, salesChannel: "REFERRAL" }], total: 1, page: 1, limit: 20 } }));
   // Defense in depth: even an unexpected fulfillment field must never render in Partner context.
-  await page.route(`**/api/v1/partner/orders/${publicNumber}`, (route) => route.fulfill({ json: detail }));
+  await page.route(`**/api/v1/partner/orders/${publicNumber}`, (route) => route.fulfill({ json: { ...detail, salesChannel: "REFERRAL" } }));
   await page.goto("/partner/orders");
   await expect(page.getByText(/Доступен только просмотр истории/)).toBeVisible();
   await page.getByRole("link", { name: `Заказ ${publicNumber}` }).click();
+  await expect(page.getByText("По вашей ссылке")).toBeVisible();
   await expect(page.getByText("Комиссия при оформлении за заказ: 20.00 BYN")).toBeVisible();
   await expect(page.getByText(/Private/)).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Данные доставки" })).toHaveCount(0);

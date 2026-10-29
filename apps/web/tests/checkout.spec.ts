@@ -56,7 +56,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
       (id,type,version,sha256,content_markdown,effective_at) VALUES ($1,$2,$3,$4,$5,now())`,
       [doc.id, type, doc.version, randomBytes(32).toString("hex"), type === "PRIVACY" ? "Тестовая политика конфиденциальности" : "Тестовые условия продажи"]);
     app = createApp({ logger: false, checkReadiness: async () => undefined,
-      auth: { store: new SessionStore(pool, new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))])), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: "http://127.0.0.1:3000", adminIds: () => new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]) },
+      auth: { store: new SessionStore(pool, new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))])), csrfSecret: Buffer.alloc(32, 3), appBaseUrl: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000", adminIds: () => new Set([String(BigInt(`0x${buyer.replaceAll("-", "").slice(0, 15)}`))]) },
       orders: new AdminOrderService(pool),
       orderViews: new OrderViewService(pool, "@support"),
       cart: new CartService(pool, currency), checkout: new CheckoutService(pool, currency, docs), legal: new LegalDocuments(pool, docs) });
@@ -122,7 +122,7 @@ test.describe("Checkout with seeded PostgreSQL Session and real API", () => {
     await expect(page).toHaveURL(/\/checkout$/);
     await fill(page);
     const keys: string[] = [];
-    await page.route("**/api/v1/orders", async (route) => {
+    await page.route("**/api/v1/checkout", async (route) => {
       keys.push(route.request().headers()["idempotency-key"]!);
       const response = await route.fetch();
       if (keys.length === 1) { expect(response.status()).toBe(201); await route.abort("failed"); }
@@ -195,7 +195,7 @@ async function mockCheckout(page: Page) {
 test("checkout success CTA opens Buyer order by public number", async ({ page }) => {
   await mockCheckout(page);
   const order = { publicNumber: "W-T40", status: "PLACED", totalMinor: 1000, currency: "BYN" };
-  await page.route("**/api/v1/orders", (route) => route.fulfill({ status: 201, json: order }));
+  await page.route("**/api/v1/checkout", (route) => route.fulfill({ status: 201, json: order }));
   await page.route("**/api/v1/orders/W-T40", (route) => route.fulfill({ json: { ...order, id: "order", createdAt: "2026-10-01T09:00:00Z",
     timeline: [{ status: "PLACED", at: "2026-10-01T09:00:00Z" }], items: [], fulfillment: null, supportContact: "@support" } }));
   await page.goto("/checkout"); await fill(page);
@@ -207,7 +207,7 @@ test("checkout success CTA opens Buyer order by public number", async ({ page })
 test("validation focuses first invalid field; canonical retry keeps key and edits rotate it", async ({ page }) => {
   await mockCheckout(page);
   const submissions: { key: string; body: Record<string, unknown> }[] = [];
-  await page.route("**/api/v1/orders", (route) => {
+  await page.route("**/api/v1/checkout", (route) => {
     submissions.push({ key: route.request().headers()["idempotency-key"]!, body: route.request().postDataJSON() });
     return route.abort("failed");
   });
@@ -229,7 +229,7 @@ test("validation focuses first invalid field; canonical retry keeps key and edit
 test("one auth recovery then reopen state; submit spinner prevents duplicate requests", async ({ page }) => {
   await mockCheckout(page); let attempts = 0, sessions = 0;
   await page.route("**/api/v1/auth/session", (route) => { sessions++; return route.fulfill({ json: { user: { firstName: "Buyer" }, csrfToken: "recovered" } }); });
-  await page.route("**/api/v1/orders", async (route) => {
+  await page.route("**/api/v1/checkout", async (route) => {
     attempts++;
     await new Promise((resolve) => setTimeout(resolve, 150));
     return route.fulfill({ status: 401, json: { error: { code: "SESSION_EXPIRED" } } });
@@ -253,7 +253,7 @@ for (const [code, text] of [["OUT_OF_STOCK", "Недостаточно това�
   test(`${code} preserves fields and prevents submission of unavailable lines`, async ({ page }) => {
     await mockCheckout(page);
     await page.goto("/checkout"); await fill(page);
-    await page.route("**/api/v1/orders", (route) => route.fulfill({ status: code === "USER_BLOCKED" ? 403 : 409,
+    await page.route("**/api/v1/checkout", (route) => route.fulfill({ status: code === "USER_BLOCKED" ? 403 : 409,
       json: { error: { code, details: { affectedVariantIds: [fixtureCart.items[0]!.variantId] } } } }));
     await page.route("**/api/v1/cart", (route) => route.fulfill({ json: { ...fixtureCart, canCheckout: false,
       items: [{ ...fixtureCart.items[0], issues: [code] }] } }));

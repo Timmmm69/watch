@@ -72,9 +72,7 @@ export function PartnerOnboarding({ auth, onAccepted }: { auth: PartnerAuth; onA
   };
   return <section className="app-panel my-6 space-y-4" aria-label="Условия партнёрской программы">
     <h1>{reaccept ? "Принять новые условия" : "Продавать с нами"}</h1>
-    <p>{auth.nativeCommerce
-      ? "Вы выбираете часы, устанавливаете цену для покупателя и указываете данные получателя. Магазин получает оплату по заказу. Ваш ожидаемый заработок — разница между ценой продажи и вашей ценой. Доступность выплаты зависит от доставки, подтверждённой оплаты и возвратов. Доставка согласуется отдельно."
-      : "Делитесь ссылкой на магазин или товар. Комиссия фиксируется при создании заказа и становится доступной после доставки и периода удержания. Выплаты переводит сотрудник магазина вне приложения."}</p>
+    <p>Есть два независимых способа продажи: оформляйте заказ клиенту по согласованной цене или делитесь своей ссылкой на магазин и товар. По ссылке покупатель видит обычную цену магазина, а вам начисляется установленная комиссия. Магазин получает оплату по заказу; выплаты партнёрам выполняются отдельно после доставки, проверки оплаты и учёта возвратов.</p>
     {error && <p role="alert" className="text-warning">{error}</p>}
     {!document ? <><p role="status">Загрузка условий…</p><button className="min-h-11 underline" disabled={pending} onClick={() => { setError(""); void loadTerms(); }}>Повторить загрузку</button></> : <>
       <p>Версия: {document.version} · Действует с {new Date(document.effectiveAt).toLocaleDateString("ru-BY")}</p>
@@ -126,13 +124,13 @@ export function PartnerDashboard({ auth, onAccepted }: { auth: PartnerAuth; onAc
          <Link href="/shop">Выбрать часы</Link><Link href="/partner/orders">Заказы</Link><Link href="/partner/earnings">Доходы</Link><Link href="/partner/payouts">Выплаты</Link>
       </nav>
       <ShopContact contact={auth.supportContact} label="Поддержка партнёров" />
-      {!blocked && auth.nativeCommerce && orders?.length === 0 && <section className="app-panel space-y-3"><h2 className="text-lg font-bold">Оформите первый заказ для покупателя</h2><p>Выберите часы, укажите цену продажи и данные получателя.</p><Link className="app-button app-button-primary" href="/shop">Выбрать часы</Link></section>}
+      {!blocked && <section className="app-panel space-y-3"><h2 className="text-lg font-bold">Два способа продажи</h2><p>Оформите заказ клиенту сами: вы укажете согласованную цену и получателя. Или поделитесь реферальной ссылкой: покупатель оформит заказ по розничной цене магазина, а комиссия будет учтена отдельно.</p><Link className="app-button app-button-primary" href="/shop?mode=partner">Оформить заказ клиенту</Link><Link className="ml-4 inline-flex min-h-11 items-center underline" href="/shop?mode=partner">Открыть ссылки и материалы</Link></section>}
       <PartnerEarnings compact blocked={blocked} />
-      {!auth.nativeCommerce && <section aria-label="Партнёрская ссылка" className="app-panel"><h2 className="text-lg font-bold">Ваша ссылка на магазин</h2>
+      <section aria-label="Партнёрская ссылка" className="app-panel"><h2 className="text-lg font-bold">Ваша ссылка на магазин</h2>
         <button className="app-button app-button-primary mt-3 min-h-11 px-4 disabled:opacity-40" disabled={pending || blocked || !!auth.partnerTermsReacceptRequired} onClick={() => void getLink()}>Получить ссылку</button>
         {link && <><p className="mt-3 break-all">{link}</p><button className="min-h-11 underline" onClick={() => { void navigator.clipboard.writeText(link).catch(() => setError("Не удалось скопировать. Скопируйте показанную ссылку вручную.")); }}>Скопировать ссылку</button></>}
         {error && <p role="alert">{error}</p>}
-      </section>}
+      </section>
       <section id="orders" className="app-panel"><h2 className="text-lg font-bold">Последние заказы</h2>
         {ordersError ? <><p role="alert">Не удалось загрузить заказы.</p><button className="min-h-11 underline" onClick={() => setRetry((n) => n + 1)}>Повторить</button></>
            : orders === null ? <p role="status">Загрузка заказов…</p> : !orders.length ? <p>Заказов пока нет</p> : <ul>{orders.map((order) => <li className="mt-3" key={order.publicNumber}><Link className="inline-flex min-h-11 items-center underline" href={`/partner/orders/${encodeURIComponent(order.publicNumber)}`}>{order.publicNumber}</Link> · {orderStatuses[order.status] ?? order.status} · {new Intl.NumberFormat("ru-BY", { style: "currency", currency: order.currency }).format(order.totalMinor / 100)}</li>)}</ul>}

@@ -14,6 +14,7 @@ import { ReferralService } from "./referral/referral.js";
 import { TelegramInbox } from "./telegram/inbox.js";
 import { InventoryService } from "./inventory/service.js";
 import { CartService } from "./cart/cart.js";
+import { CheckoutService } from "./orders/checkout.js";
 import { DropshipCheckoutService } from "./orders/dropship-checkout.js";
 import { AdminOrderService } from "./orders/admin.js";
 import { AdminReturnService } from "./returns/returns.js";
@@ -75,7 +76,8 @@ const app = createApp({
   orderViews: new OrderViewService(pool, runtimeConfig.SUPPORT_CONTACT),
   earnings: new PartnerEarningsService(pool),
   payouts: new PayoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig).PARTNER_TERMS!, runtimeConfig.MIN_PAYOUT_MINOR),
-  checkout: new DropshipCheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig)),
+  buyerCheckout: new CheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig)),
+  partnerCheckout: new DropshipCheckoutService(pool, runtimeConfig.PLATFORM_CURRENCY, currentLegalDocuments(runtimeConfig)),
   inventory: { service: inventoryService, ...(inventoryOrchestrator ? { orchestrator: inventoryOrchestrator } : {}) },
   assets: { service: assetService },
   webhook: { secret: runtimeConfig.TELEGRAM_WEBHOOK_SECRET, inbox: new TelegramInbox(pool) }

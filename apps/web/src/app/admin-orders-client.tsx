@@ -12,6 +12,7 @@ const actions: Record<string, string> = { CONFIRMED: "Подтвердить з�
 const reservationLabels: Record<string, string> = { ACTIVE: "Активен", RELEASED: "Освобождён", CONSUMED: "Использован" };
 const sourceLabels: Record<string, string> = { OK: "Данные доступны", UNINITIALIZED: "Нет данных об остатке", MISSING: "Товар не найден в источнике остатков", INVALID: "Ошибка данных остатков" };
 type Order = { id: string; publicNumber: string; status: string; totalMinor: number; currency: string; overdue: boolean;
+  salesChannel?: "DIRECT" | "REFERRAL" | "PARTNER";
   economicRegime?: string; nativeInventory?: boolean;
   partnerIdSnapshot: string | null; attributionTouchId: string | null; commissionEligibleSnapshot: boolean; allowedTransitions: string[];
   completionEligibleAt: string | null; timeline: { status: string; at: string }[];
@@ -44,7 +45,7 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
   const [attested, setAttested] = useState(false);
   const [draft, setDraft] = useState(() => {
     const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
-    return { status: params.get("status") ?? "", number: "", partnerId: "", dateFrom: "", dateTo: "",
+    return { status: params.get("status") ?? "", salesChannel: params.get("salesChannel") ?? "", number: "", partnerId: "", dateFrom: "", dateTo: "",
       overdue: params.get("overdue") === "true", reconciliationPending: params.get("reconciliationPending") === "true" };
   });
   const [query, setQuery] = useState(() => {
@@ -153,6 +154,8 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
     {!orderId && !blocked && <form onSubmit={filter} className="grid gap-3 sm:grid-cols-2">
       <label>Статус<select className="block min-h-11 w-full bg-slate-900" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
         <option value="">Все статусы</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>Способ продажи<select className="block min-h-11 w-full bg-slate-900" value={draft.salesChannel} onChange={(e) => setDraft({ ...draft, salesChannel: e.target.value })}>
+        <option value="">Все способы</option><option value="DIRECT">Покупка в магазине</option><option value="REFERRAL">Покупка по ссылке партнёра</option><option value="PARTNER">Оформлено продавцом</option></select></label>
       <label>Номер заказа<input className="block min-h-11 w-full bg-slate-900" maxLength={32} value={draft.number} onChange={(e) => setDraft({ ...draft, number: e.target.value })} /></label>
       <label>ID партнёра<input className="block min-h-11 w-full bg-slate-900" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" value={draft.partnerId} onChange={(e) => setDraft({ ...draft, partnerId: e.target.value })} /></label>
       {(["dateFrom", "dateTo"] as const).map((key) => <label key={key}>{key === "dateFrom" ? "Начало периода" : "Конец периода"}
@@ -165,11 +168,11 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
       {!result.items.length && <p>По выбранным условиям заказов нет. Измените фильтры.</p>}
       <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded bg-slate-900 p-4">
         <Link className="inline-flex min-h-11 items-center underline" href={`/admin/orders/${item.id}`}>{item.publicNumber}</Link>
-        <p>{labels[item.status]} · {money(item.totalMinor, item.currency)}{item.overdue ? " · Просрочен" : ""}</p></li>)}</ul>
+        <p>{labels[item.status]} · {money(item.totalMinor, item.currency)}{item.overdue ? " · Просрочен" : ""}</p><p className="text-sm text-slate-400">{item.salesChannel === "DIRECT" ? "Покупка в магазине" : item.salesChannel === "REFERRAL" ? "Покупка по ссылке партнёра" : item.salesChannel === "PARTNER" ? "Оформлено продавцом" : "Исторический заказ"}</p></li>)}</ul>
       <nav aria-label="Страницы заказов" className="flex gap-4"><button className="min-h-11" disabled={result.page <= 1 || loading} onClick={() => turnPage(result.page - 1)}>Назад</button>
         <span>Страница {result.page}</span><button className="min-h-11" disabled={result.page * result.limit >= result.total || loading} onClick={() => turnPage(result.page + 1)}>Далее</button></nav></>}
     {order && !blocked && <>
-      <h2 className="text-xl">{order.publicNumber}</h2><p>{labels[order.status]} · {money(order.totalMinor, order.currency)}{order.overdue ? " · Просрочен" : ""}</p>
+      <h2 className="text-xl">{order.publicNumber}</h2><p>{labels[order.status]} · {money(order.totalMinor, order.currency)}{order.overdue ? " · Просрочен" : ""}</p><p>{order.salesChannel === "DIRECT" ? "Покупка в магазине" : order.salesChannel === "REFERRAL" ? "Покупка по ссылке партнёра" : order.salesChannel === "PARTNER" ? "Оформлено продавцом" : "Исторический заказ"}</p>
       {["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && orderId &&
         <p><Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns?order=${orderId}`}>Оформить возврат</Link>
           {order.status === "SHIPPED" && " · В том числе отказ от получения или недоставка"}</p>}

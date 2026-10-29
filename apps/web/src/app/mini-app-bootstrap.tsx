@@ -66,8 +66,11 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
       }
       return response.json() as Promise<AuthResponse>;
     }).then((result) => {
-      const target = result.launchTarget?.includes("?product=") ? result.launchTarget : result.partner ? "/partner" : "/shop";
-      if ((!launchNavigationHandled && target.includes("?product=")) || window.location.pathname === "/") {
+      // A session refresh may carry a default `/shop` target.  Only the signed
+      // Telegram launch may navigate away from the page the buyer already chose.
+      const explicitShopTarget = Boolean(initData && result.launchTarget?.startsWith("/shop"));
+      const target = explicitShopTarget ? result.launchTarget! : result.partner ? "/partner" : "/shop";
+      if ((!launchNavigationHandled && explicitShopTarget) || window.location.pathname === "/") {
         launchNavigationHandled = true;
         if (target.startsWith("/shop") && screen === "shop") window.history.replaceState(null, "", target);
         else { router.replace(target); return; }
@@ -119,7 +122,10 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
   if (state.auth && screen === "adminPayouts") return state.auth.isAdmin
     ? <AdminPayoutsScreen key={payoutId ?? partnerId ?? "list"} csrfToken={state.auth.csrfToken} payoutId={payoutId} partnerId={partnerId} />
     : <main className="app-shell min-h-dvh bg-canvas text-ink"><p role="alert">Выплаты в этом разделе доступны только администратору.</p><a href="/shop">В каталог</a></main>;
-  if (state.auth?.nativeCommerce && (screen === "cart" || screen === "checkout")) return <DropshipCheckoutScreen csrfToken={state.auth.csrfToken}
+  // Retail checkout is always available. The partner workflow is an explicit mode so a
+  // partner can also buy personally without exposing partner prices to that purchase.
+  const partnerOrderMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "partner";
+  if (state.auth && partnerOrderMode && screen === "checkout") return <DropshipCheckoutScreen csrfToken={state.auth.csrfToken}
     supportContact={state.auth.supportContact} partner={state.auth.partner ?? null} termsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
   if (state.auth && screen === "cart") return <CartScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;

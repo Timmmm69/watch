@@ -5,13 +5,13 @@ const partner = { id: "00000000-0000-4000-8000-000000000002", status: "ACTIVE" }
 const product = { title: "Тестовые часы", slug: "test-watch", currency: "BYN", variants: [
   { id: variantId, sku: "TEST", dropshipPriceMinor: 8000, sellable: 5, availability: "IN_STOCK" }
 ] };
-const checkout = `/checkout?product=test-watch&variant=${variantId}`;
+const checkout = `/checkout?mode=partner&product=test-watch&variant=${variantId}`;
 const document = { id: "00000000-0000-4000-8000-000000000003", version: "v1", contentMarkdown: "Тестовые условия", effectiveAt: "2026-10-01", sha256: "a".repeat(64) };
 const order = { publicNumber: "W-UX", currency: "BYN", totalMinor: 10000, remunerationTotalMinor: 2000 };
 async function fixture(page: Page) {
   await page.route("https://telegram.org/js/telegram-web-app.js", route => route.fulfill({ contentType: "application/javascript", body: "" }));
   await page.route("**/api/v1/auth/session", route => route.fulfill({ json: { user: { firstName: "Test" }, partner, nativeCommerce: true, csrfToken: "fixture" } }));
-  await page.route("**/api/v1/catalog/products/test-watch", route => route.fulfill({ json: product }));
+  await page.route("**/api/v1/catalog/products/test-watch*", route => route.fulfill({ json: product }));
   await page.route("**/api/v1/legal/*/current", route => route.fulfill({ json: document }));
 }
 async function fill(page: Page) {
@@ -29,8 +29,8 @@ test("native checkout distinguishes loading, missing selection and invalid varia
   await expect(page.getByRole("button", { name: "Повторить загрузку", exact: true })).toHaveCount(0);
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/api/v1/catalog/products/test-watch", async route => { await gate; await route.fulfill({ json: product }); });
-  await page.goto("/checkout?product=test-watch&variant=missing");
+  await page.route("**/api/v1/catalog/products/test-watch*", async route => { await gate; await route.fulfill({ json: product }); });
+  await page.goto("/checkout?mode=partner&product=test-watch&variant=missing");
   await expect(page.getByRole("status")).toHaveText("Загрузка товара и условий…");
   release();
   await expect(page.getByText("Выберите доступный вариант товара для оформления.")).toBeVisible();
@@ -42,7 +42,7 @@ test("native checkout distinguishes loading, missing selection and invalid varia
 for (const privacyChanged of [false, true]) test(`terms reacceptance preserves the form; privacy changed: ${privacyChanged}`, async ({ page }) => {
   await fixture(page);
   let submissions = 0;
-  await page.route("**/api/v1/orders", route => route.fulfill(++submissions === 1
+  await page.route("**/api/v1/partner/orders/checkout", route => route.fulfill(++submissions === 1
     ? { status: 403, json: { error: { code: "TERMS_REACCEPT_REQUIRED" } } }
     : { status: 201, json: order }));
   await page.route("**/api/v1/partner/onboarding", route => route.fulfill({ json: {} }));
@@ -52,7 +52,7 @@ for (const privacyChanged of [false, true]) test(`terms reacceptance preserves t
   await expect(page.getByText(/Ваш ожидаемый заработок — разница/)).toBeVisible();
   if (privacyChanged) {
     await page.route("**/api/v1/legal/PRIVACY/current", route => route.fulfill({ json: { ...document, id: "00000000-0000-4000-8000-000000000004", version: "v2" } }));
-    await page.route("**/api/v1/catalog/products/test-watch", route => route.fulfill({ json: { ...product, variants: product.variants.map(item => ({ ...item, dropshipPriceMinor: 9000 })) } }));
+    await page.route("**/api/v1/catalog/products/test-watch*", route => route.fulfill({ json: { ...product, variants: product.variants.map(item => ({ ...item, dropshipPriceMinor: 9000 })) } }));
   }
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Принять новые условия", exact: true }).click();
@@ -74,7 +74,7 @@ for (const privacyChanged of [false, true]) test(`terms reacceptance preserves t
 
 test("document reload failure has recovery without losing the form", async ({ page }) => {
   await fixture(page);
-  await page.route("**/api/v1/orders", route => route.fulfill({ status: 409, json: { error: { code: "TERMS_VERSION_CHANGED" } } }));
+  await page.route("**/api/v1/partner/orders/checkout", route => route.fulfill({ status: 409, json: { error: { code: "TERMS_VERSION_CHANGED" } } }));
   await page.goto(checkout); await fill(page);
   await page.route("**/api/v1/legal/*/current", route => route.fulfill({ status: 503, json: { error: { code: "DEPENDENCY_UNAVAILABLE" } } }));
   await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();
@@ -91,7 +91,7 @@ test("document reload failure has recovery without losing the form", async ({ pa
 test("native checkout refreshes stale CSRF once and keeps request identity", async ({ page }) => {
   await fixture(page);
   const attempts: { key: string; csrf: string }[] = [];
-  await page.route("**/api/v1/orders", route => {
+  await page.route("**/api/v1/partner/orders/checkout", route => {
     attempts.push({ key: route.request().headers()["idempotency-key"]!, csrf: route.request().headers()["x-csrf-token"]! });
     return route.fulfill(attempts.length === 1 ? { status: 403, json: { error: { code: "CSRF_INVALID" } } } : { status: 201, json: order });
   });
@@ -115,7 +115,7 @@ test("onboarding returns to the selected checkout product", async ({ page }) => 
 
 for (const code of ["PARTNER_BLOCKED", "USER_BLOCKED"]) test(`a new ${code} response removes order actions immediately`, async ({ page }) => {
   await fixture(page);
-  await page.route("**/api/v1/orders", route => route.fulfill({ status: 403, json: { error: { code } } }));
+  await page.route("**/api/v1/partner/orders/checkout", route => route.fulfill({ status: 403, json: { error: { code } } }));
   await page.goto(checkout); await fill(page);
   await page.getByRole("button", { name: "Оформить заказ", exact: true }).click();
   await expect(page.getByRole("button", { name: "Оформить заказ", exact: true })).toHaveCount(0);

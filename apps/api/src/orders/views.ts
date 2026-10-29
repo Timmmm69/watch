@@ -18,6 +18,8 @@ interface OrderRow {
   total_minor: number;
   commission_eligible_snapshot: boolean;
   economic_regime: "LEGACY_FIXED" | "DROPSHIP_MARKUP";
+  origin: string;
+  partner_id_snapshot: string | null;
   created_at: Date;
   confirmed_at: Date | null;
   fulfilling_at: Date | null;
@@ -65,9 +67,15 @@ function timeline(row: OrderRow) {
   ];
 }
 
+export function salesChannel(row: { origin?: string; economic_regime?: string; partner_id_snapshot?: string | null }) {
+  return row.origin === "DROPSHIPPER" || row.economic_regime === "DROPSHIP_MARKUP" ? "PARTNER" as const
+    : row.partner_id_snapshot ? "REFERRAL" as const : "DIRECT" as const;
+}
+
 function baseDetail(row: OrderRow, supportContact: string) {
   return {
     id: row.id,
+    salesChannel: salesChannel(row),
     publicNumber: row.public_number,
     status: row.status,
     currency: row.currency,
@@ -103,6 +111,7 @@ export class OrderViewService {
     return {
       items: rows.map((row) => ({
         id: row.id,
+        salesChannel: salesChannel(row),
         publicNumber: row.public_number,
         status: row.status,
         totalMinor: row.total_minor,
@@ -153,6 +162,9 @@ export class OrderViewService {
       values.push(query.status);
       predicates.push(`status = $${values.length}`);
     }
+    if (query.salesChannel) {
+      predicates.push(query.salesChannel === "PARTNER" ? "origin='DROPSHIPPER'" : query.salesChannel === "REFERRAL" ? "origin<>'DROPSHIPPER' AND partner_id_snapshot IS NOT NULL" : "origin<>'DROPSHIPPER' AND partner_id_snapshot IS NULL");
+    }
     const where = predicates.join(" AND ");
     const total = Number((await this.pool.query<{ total: string }>(
       `SELECT count(*)::text AS total FROM orders WHERE ${where}`, values
@@ -166,6 +178,7 @@ export class OrderViewService {
     return {
       items: rows.map((row) => ({
         id: row.id,
+        salesChannel: salesChannel(row),
         publicNumber: row.public_number,
         status: row.status,
         totalMinor: row.total_minor,
@@ -191,7 +204,7 @@ export class OrderViewService {
       ...baseDetail(row, this.supportContact),
       economicRegime: row.economic_regime,
       // Historical referral partners never gain access to Buyer recipient PII.
-      ...(row.economic_regime === "DROPSHIP_MARKUP" ? { fulfillment: await this.fulfillmentDetail(row.id) } : {}),
+      ...(row.origin === "DROPSHIPPER" && row.economic_regime === "DROPSHIP_MARKUP" ? { fulfillment: await this.fulfillmentDetail(row.id) } : {}),
       items: items.map((item) => ({
         id: item.id,
         variantId: item.variant_id,

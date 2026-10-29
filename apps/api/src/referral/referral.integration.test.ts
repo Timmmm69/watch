@@ -98,7 +98,7 @@ describe.skipIf(!databaseUrl)("Referral attribution against PostgreSQL", () => {
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ids.buyer]);
-      expect(await referral!.processLaunch(client, buyer, identity(`r_${genericToken}`))).toBeNull();
+      expect(await referral!.processLaunch(client, buyer, identity(`r_${genericToken}`))).toBe("/shop?referral=unavailable");
       await client.query("COMMIT");
     } finally { client.release(); }
     expect((await pool!.query("SELECT count(*)::int AS n FROM attribution_touches WHERE buyer_user_id = $1", [ids.buyer])).rows[0].n).toBe(1);
@@ -123,7 +123,7 @@ describe.skipIf(!databaseUrl)("Referral attribution against PostgreSQL", () => {
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ids.partnerUser]);
-      expect(await referral!.processLaunch(client, { ...buyer, id: ids.partnerUser }, identity(`r_${productToken}`))).toBeNull();
+      expect(await referral!.processLaunch(client, { ...buyer, id: ids.partnerUser }, identity(`r_${productToken}`))).toBe("/shop?referral=unavailable");
       await client.query("COMMIT");
     } finally { client.release(); }
     expect((await pool!.query("SELECT count(*)::int AS n FROM attribution_touches WHERE buyer_user_id = $1", [ids.partnerUser])).rows[0].n).toBe(0);
@@ -138,7 +138,7 @@ describe.skipIf(!databaseUrl)("Referral attribution against PostgreSQL", () => {
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ids.buyer]);
-      expect(await referral!.processLaunch(client, buyer, identity(`r_${blockedLink}`))).toBeNull();
+      expect(await referral!.processLaunch(client, buyer, identity(`r_${blockedLink}`))).toBe("/shop?referral=unavailable");
       await client.query("COMMIT");
     } finally { client.release(); }
     await pool!.query("UPDATE partners SET status = 'ACTIVE' WHERE id = $1", [ids.partner]);
@@ -151,7 +151,7 @@ describe.skipIf(!databaseUrl)("Referral attribution against PostgreSQL", () => {
     try {
       await archivedClient.query("BEGIN");
       await archivedClient.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [ids.buyer]);
-      expect(await referral!.processLaunch(archivedClient, buyer, identity(`r_${blockedLink}`))).toBeNull();
+      expect(await referral!.processLaunch(archivedClient, buyer, identity(`r_${blockedLink}`))).toBe("/shop?referral=unavailable");
       await archivedClient.query("COMMIT");
     } finally { archivedClient.release(); }
     await expect(pool!.query(`INSERT INTO attribution_touches

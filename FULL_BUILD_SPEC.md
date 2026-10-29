@@ -1,12 +1,12 @@
-# Full Build Specification v1.6 — Customer and partner journeys
+# Full Build Specification v1.7 — Independent sales channels
 
 **Project:** Telegram Partner Commerce Platform  
 **Status:** authoritative implementation specification  
-**Version:** 1.6-customer-partner-ux
+**Version:** 1.7-independent-sales-channels
 **Date:** 2026-10-28 (owner-approved customer and partner journey)
 **Implementation status:** frozen for implementation. Application code proceeds only through an explicit vertical-slice task from Section 21; this document defines requirements but does not itself authorize an unscoped whole-project implementation.
 
-**Current business authority:** Section 32 records the owner-approved 2026-10-28 journey and supersedes conflicting new-sale decisions in Section 31. New native orders are created by partners for recipients using Section 30 prices and remuneration. Buyers browse and agree purchases with the shop/seller. Historical orders, fixed commissions, native inventory safeguards and applied migrations remain intact.
+**Current business authority:** Section 33 records the owner-approved three independent purchase channels and supersedes conflicting single-flow restrictions in Sections 31-32. Direct buyers and referral buyers purchase at owner-set retail P; partners may also create recipient orders at agreed R >= shop D. Referral C is fixed by the owner separately. All channels use native inventory and preserve historical orders, commissions and migrations.
 
 **Source-of-truth status:** this document supersedes `FULL_BUILD_SPEC_v1.2.md`, `FULL_BUILD_SPEC_v1.1.md`, `FULL_BUILD_SPEC_v1.0.md` and the previous `PRODUCT.md`, `MVP.md`, `ARCHITECTURE.md`, `DATA_MODEL.md`, `BUSINESS_RULES.md`, `BACKLOG.md`, `DECISIONS.md` as active implementation sources. The only active implementation requirements are **this document** plus Project Instructions. Older files may remain only as historical artifacts; they must be excluded from Codex implementation context or visibly marked `HISTORICAL — DO NOT USE FOR IMPLEMENTATION` by the project/tooling layer. If a tool automatically injects those files as active requirements, S00 must not start until that context is corrected.
 
@@ -2328,3 +2328,7 @@ The explicit implementation instruction approves the Section 30 partner-created-
 - Git publication does not authorize deployment, production migrations, live bot configuration, actual transfers or acceptance of legal documents on anyone’s behalf. Operational approvals and legal artifacts need separate verification before deploying the changed order-entry flow.
 
 Implementation and verification details: [customer-partner-ux.md](docs/customer-partner-ux.md).
+
+# 33. Three independent sales channels — 2026-10-28
+
+The owner explicitly requested all three purchase scenarios together. Section 32's single partner-created-order restriction is superseded for new orders. DIRECT buyers purchase at retail P without a partner. PARTNER creators enter agreed R >= shop D and earn R-D. REFERRAL buyers purchase at P and the referring partner earns the owner-set fixed commission C. The purchase source belongs to the cart/order, not the inventory provider or a permanent buyer relationship. Retail and partner workspace views are explicit. Historical orders/migrations/commissions remain immutable. See docs/three-sales-channels.md for attribution, visibility, retries, money and rollout rules.

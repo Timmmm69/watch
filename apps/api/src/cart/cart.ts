@@ -6,8 +6,10 @@ import { computeInventoryAvailability, DEFAULT_INVENTORY_MAX_AGE_SECONDS, type I
 export class CartError extends Error {
   constructor(public readonly code: "NOT_FOUND" | "VALIDATION_ERROR" | "PRODUCT_NOT_ACTIVE" | "VARIANT_NOT_ACTIVE"
     | "CART_LINE_LIMIT_EXCEEDED" | "OUT_OF_STOCK" | "INVENTORY_STALE" | "INVENTORY_UNKNOWN"
-    | "INTERNAL_INVARIANT_VIOLATION") { super(code); }
+    | "INTERNAL_INVARIANT_VIOLATION" | "CONTEXT_CONFIRMATION_REQUIRED" | "REFERRAL_UNAVAILABLE") { super(code); }
 }
+
+export type CartPurchaseContext = { channel: "DIRECT" | "REFERRAL"; expiresAt: string | null; referralProductId: string | null };
 
 interface LineRow {
   native_authority?: boolean; native_on_hand?: number | null; native_reserved_quantity?: number | null;
@@ -50,6 +52,13 @@ export class CartService {
   }
 
   private async project(client: PoolClient, id: string): Promise<CartView> {
+    const supportsContext = (await client.query<{ exists: boolean }>("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='carts'::regclass AND attname='purchase_channel' AND NOT attisdropped) AS exists")).rows[0]!.exists;
+    let context: { purchase_channel: "DIRECT" | "REFERRAL"; attribution_touch_id: string | null; attribution_expires_at: Date | null; product_id: string | null; partner_name: string | null; source_active: boolean; pending_id: string | null; pending_expires_at: Date | null; pending_product_id: string | null; pending_partner_name: string | null; pending_source_active: boolean } | undefined;
+    if (supportsContext) context = (await client.query<{ purchase_channel: "DIRECT" | "REFERRAL"; attribution_touch_id: string | null; attribution_expires_at: Date | null; product_id: string | null; partner_name: string | null; source_active: boolean; pending_id: string | null; pending_expires_at: Date | null; pending_product_id: string | null; pending_partner_name: string | null; pending_source_active: boolean }>(`
+      SELECT c.purchase_channel,c.attribution_touch_id,c.attribution_expires_at,l.product_id,pu.first_name AS partner_name,COALESCE(l.status='ACTIVE' AND p.status='ACTIVE' AND NOT pu.is_blocked,false) AS source_active,pt.id AS pending_id,pt.expires_at AS pending_expires_at,pl.product_id AS pending_product_id,ppu.first_name AS pending_partner_name,COALESCE(pl.status='ACTIVE' AND pp.status='ACTIVE' AND NOT ppu.is_blocked,false) AS pending_source_active
+      FROM carts c LEFT JOIN attribution_touches t ON t.id=c.attribution_touch_id LEFT JOIN referral_links l ON l.id=t.referral_link_id LEFT JOIN partners p ON p.id=t.partner_id LEFT JOIN users pu ON pu.id=p.user_id
+      LEFT JOIN attribution_touches pt ON pt.id=c.pending_attribution_touch_id LEFT JOIN referral_links pl ON pl.id=pt.referral_link_id LEFT JOIN partners pp ON pp.id=pt.partner_id LEFT JOIN users ppu ON ppu.id=pp.user_id
+      WHERE c.id=$1`, [id])).rows[0];
     const rows = (await client.query<LineRow>(`
       SELECT ci.variant_id, ci.quantity, v.product_id, v.sku, v.price_minor, v.currency,
         p.slug, p.title, p.status AS product_status, v.status AS variant_status,
@@ -76,10 +85,35 @@ export class CartService {
         availability: inventory.availability, issues };
     });
     if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new CartError("INTERNAL_INVARIANT_VIOLATION");
-    return { id, currency: this.currency, items, totalMinor: Number(total), canCheckout: items.length > 0 && items.every((item) => item.issues.length === 0) };
+    const activeReferral = context?.purchase_channel === "REFERRAL" && context.attribution_expires_at && context.attribution_expires_at > new Date() && context.source_active;
+    const active = activeReferral ? context! : undefined;
+    return { id, currency: this.currency, items, totalMinor: Number(total), canCheckout: items.length > 0 && items.every((item) => item.issues.length === 0),
+      purchaseContext: { channel: context?.purchase_channel === "REFERRAL" ? "REFERRAL" : "DIRECT", available: context?.purchase_channel !== "REFERRAL" || !!active, touchId: context?.attribution_touch_id ?? null, expiresAt: context?.attribution_expires_at?.toISOString() ?? null,
+        referralProductId: context?.product_id ?? null, partnerDisplayName: context?.partner_name ?? null },
+      pendingReferral: context?.pending_id && context.pending_expires_at && context.pending_expires_at > new Date() && context.pending_source_active ? { touchId: context.pending_id, expiresAt: context.pending_expires_at.toISOString(), referralProductId: context.pending_product_id, partnerDisplayName: context.pending_partner_name ?? "Партнёр" } : null };
   }
 
   read(userId: string): Promise<CartView> { return this.withCart(userId); }
+
+  async chooseContext(userId: string, context: { channel: "DIRECT" } | { channel: "REFERRAL"; touchId: string }, confirmReplace: boolean): Promise<CartView> {
+    return this.withCart(userId, async (client, cartId) => {
+      const count = Number((await client.query<{ count: string }>("SELECT count(*)::text AS count FROM cart_items WHERE cart_id=$1", [cartId])).rows[0]!.count);
+      const current = (await client.query<{ purchase_channel: string; attribution_touch_id: string | null }>("SELECT purchase_channel,attribution_touch_id FROM carts WHERE id=$1 FOR UPDATE", [cartId])).rows[0]!;
+      const changing = context.channel !== current.purchase_channel || (context.channel === "REFERRAL" && context.touchId !== current.attribution_touch_id);
+      if (count && changing && !confirmReplace) throw new CartError("CONTEXT_CONFIRMATION_REQUIRED" as never);
+      if (count && changing) await client.query("DELETE FROM cart_items WHERE cart_id=$1", [cartId]);
+      if (context.channel === "DIRECT") await client.query("UPDATE carts SET purchase_channel='DIRECT',attribution_touch_id=NULL,attribution_expires_at=NULL,pending_attribution_touch_id=NULL WHERE id=$1", [cartId]);
+      else {
+        const touch = (await client.query<{ id: string; expires_at: Date }>(`SELECT t.id,t.expires_at FROM attribution_touches t
+          JOIN referral_links l ON l.id=t.referral_link_id JOIN partners p ON p.id=t.partner_id JOIN users u ON u.id=p.user_id
+          WHERE t.id=$1 AND t.buyer_user_id=$2 AND p.user_id <> $2 AND t.expires_at>now() AND l.status='ACTIVE' AND p.status='ACTIVE' AND NOT u.is_blocked`, [context.touchId,userId])).rows[0];
+        if (!touch) throw new CartError("REFERRAL_UNAVAILABLE" as never);
+        const pending = (await client.query<{ pending_attribution_touch_id: string | null }>("SELECT pending_attribution_touch_id FROM carts WHERE id=$1",[cartId])).rows[0];
+        if (!pending || pending.pending_attribution_touch_id !== context.touchId) throw new CartError("REFERRAL_UNAVAILABLE" as never);
+        await client.query("UPDATE carts SET purchase_channel='REFERRAL',attribution_touch_id=$2,attribution_expires_at=$3,pending_attribution_touch_id=NULL WHERE id=$1", [cartId,touch.id,touch.expires_at]);
+      }
+    });
+  }
 
   put(userId: string, variantId: string, quantity: number): Promise<CartView> {
     if (!cartItemRequestSchema.safeParse({ quantity }).success) return Promise.reject(new CartError("VALIDATION_ERROR"));

@@ -40,14 +40,13 @@ describe("Telegram bot commands", () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes("LEFT JOIN partners"))).toHaveLength(5);
   });
 
-  it.each([null, "ACTIVE"])("explains native commerce without offering a retail cart for %s", async (status) => {
+  it.each([null, "ACTIVE"])("explains independent native purchase paths for %s", async (status) => {
     const query = vi.fn().mockResolvedValue({ rows: [{ is_blocked: false, partner_status: status }] });
     const send = vi.fn().mockResolvedValue(undefined);
     await processTelegramUpdate({ query } as unknown as Pool, message("/start"), { ...config, nativeCommerce: true }, send);
     const body = send.mock.calls[0]![1];
-    expect(paths(body)).not.toContain("/cart");
-    expect(body.text).not.toMatch(/комисси|ссылк/);
-    expect(body.text).toContain(status ? "данные получателя" : "покупки и доставки");
+    if (status) { expect(body.text).toContain("партнёрской ссылкой"); expect(body.reply_markup.inline_keyboard.flat().some((item: { web_app?: { url: string } }) => item.web_app?.url.endsWith("/shop?mode=partner"))).toBe(true); }
+    else { expect(paths(body)).toContain("/cart"); expect(body.text).toContain("розничной цене"); }
   });
 
   it.each(["/start", "/help", "/catalog"])("keeps native buyer copy about buying watches for %s", async (command) => {
@@ -56,8 +55,8 @@ describe("Telegram bot commands", () => {
     await processTelegramUpdate({ query } as unknown as Pool, message(command), { ...config, nativeCommerce: true }, send);
     const body = send.mock.calls[0]![1];
     expect(body.text).toMatch(/часы/);
-    expect(body.text).not.toMatch(/партнёр|наценк|начислен|комисси|цену продажи|данные получателя/);
-    expect(paths(body)).not.toContain("/cart");
+    expect(body.text).not.toMatch(/наценк|начислен|цену продажи|данные получателя/);
+    if (command !== "/catalog") expect(paths(body)).toContain("/cart");
     expect(paths(body)).not.toContain("/partner");
     expect(body.reply_markup.inline_keyboard.flat()).toContainEqual({ text: "Связаться с магазином", url: "https://t.me/support" });
     if (command !== "/catalog") {
@@ -109,7 +108,7 @@ describe("Telegram bot commands", () => {
       query.mockResolvedValueOnce({ rows: [{ is_blocked: false, partner_status: status }] });
       await processTelegramUpdate({ query } as unknown as Pool, message("/help"), { ...config, nativeCommerce: true }, send);
     }
-    expect(send.mock.calls[0]![1].text).not.toMatch(/партнёр|заработок/);
+    expect(send.mock.calls[0]![1].text).not.toMatch(/заработок/);
     expect(send.mock.calls[1]![1].text).toContain("заказ для покупателя");
     expect(paths(send.mock.calls[1]![1])).toContain("/partner/payouts");
     expect(send.mock.calls[2]![1].text).toContain("заблокирован");

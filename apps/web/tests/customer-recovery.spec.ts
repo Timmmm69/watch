@@ -31,7 +31,7 @@ for (const contact of ["https://shop.example/support", "Контакт мага�
     await page.getByRole("button", { name: "Скопировать запрос" }).click();
     await expect(page.getByRole("status")).toContainText("Не удалось скопировать");
     await expect(page.getByText(/Здравствуйте! Хочу уточнить покупку часов/)).toBeVisible();
-    const action = page.getByRole("link", { name: "Уточнить и заказать" });
+    const action = page.getByRole("link", { name: "Задать вопрос магазину" });
     if (contact.startsWith("https:")) await expect(action).toHaveAttribute("href", contact);
     else { await expect(action).toHaveCount(0); await expect(page.getByText(contact, { exact: false })).toBeVisible(); }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

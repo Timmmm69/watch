@@ -7,6 +7,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type CartLine = { variantId: string; productId: string; slug: string; title: string; sku: string;
   quantity: number; priceMinor: number; lineTotalMinor: number; availability: string; issues: string[] };
 export type Cart = { id: string; currency: string; items: CartLine[]; totalMinor: number; canCheckout: boolean };
+type PurchaseContext = { channel: "DIRECT" | "REFERRAL"; touchId: string | null; expiresAt: string | null;
+  referralProductId: string | null; partnerDisplayName: string | null; available?: boolean };
+type ReferralOffer = Omit<PurchaseContext, "channel">;
+export type ContextualCart = Cart & { purchaseContext?: PurchaseContext; pendingReferral?: ReferralOffer | null };
 const messages: Record<string, string> = {
   ITEM_UNAVAILABLE: "Этот товар больше нельзя заказать. Удалите его из корзины.", PRODUCT_NOT_ACTIVE: "Этот товар больше нельзя заказать. Удалите его из корзины.",
   VARIANT_NOT_ACTIVE: "Выбранный вариант товара больше недоступен. Удалите его из корзины.", OUT_OF_STOCK: "Недостаточно товара в наличии. Уменьшите количество или удалите позицию.",
@@ -19,7 +23,7 @@ const messages: Record<string, string> = {
 const money = (minor: number, currency: string) => new Intl.NumberFormat("ru-BY", { style: "currency", currency }).format(minor / 100);
 
 export function useCart(csrfToken: string) {
-  const [cart, setCart] = useState<Cart | null>(null);
+  const [cart, setCart] = useState<ContextualCart | null>(null);
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -44,7 +48,7 @@ export function useCart(csrfToken: string) {
       if (response.status === 401 || code === "USER_BLOCKED") setReadOnly(true);
       throw new Error(messages[code] ?? "Не удалось обновить корзину. Повторите попытку.");
     }
-    return result as Cart;
+    return result as ContextualCart;
   }, []);
   const refresh = useCallback(async () => {
     const sequence = ++readSequence.current;
@@ -87,33 +91,58 @@ export function useCart(csrfToken: string) {
 export function CartScreen({ csrfToken }: { csrfToken: string }) {
   const { cart, error, errors, pending, readOnly, refresh, mutate } = useCart(csrfToken);
   const router = useRouter();
+  const [contextError, setContextError] = useState("");
   useEffect(() => {
     const back = () => { if (window.history.length > 1) router.back(); else router.replace("/shop"); };
     const button = window.Telegram?.WebApp?.BackButton;
     button?.show(); button?.onClick(back);
     return () => { button?.offClick(back); button?.hide(); };
   }, [router]);
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 pb-36 text-slate-100"><div className="mx-auto max-w-4xl">
+  const selectContext = async (channel: "DIRECT" | "REFERRAL", confirmReplace = false) => {
+    setContextError("");
+    const body = channel === "REFERRAL" && cart?.pendingReferral
+      ? { channel, touchId: cart.pendingReferral.touchId, confirmReplace } : { channel, confirmReplace };
+    const response = await fetch("/api/v1/cart/context", { method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken }, body: JSON.stringify(body) });
+    if (response.status === 409 && !confirmReplace) {
+      const accepted = window.confirm("Смена источника покупки очистит текущую корзину. Продолжить?");
+      if (accepted) await selectContext(channel, true);
+      return;
+    }
+    if (!response.ok) { setContextError("Этот источник покупки больше недоступен. Выберите обычную покупку."); return; }
+    await refresh();
+  };
+  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-36 text-ink"><div className="mx-auto max-w-4xl">
     <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link>
     <h1 className="my-5 text-2xl font-semibold">Корзина</h1>
     {error && <p role="alert" className="mb-4 text-rose-300">{error}</p>}
+    {cart?.purchaseContext?.channel === "REFERRAL" && <section className="app-panel mb-4" aria-label="Покупка по ссылке партнёра">
+      <p>{cart.purchaseContext.available === false ? "Ссылка партнёра больше недоступна. Этот заказ нельзя оформить по ней." : `Вы покупаете по ссылке партнёра${cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Цена для вас не меняется.`}</p>
+      <button className="mt-2 min-h-11 underline" onClick={() => void selectContext("DIRECT")}>Покупать без ссылки партнёра</button>
+    </section>}
+    {cart?.pendingReferral && <section className="app-panel mb-4" aria-label="Выбор источника покупки">
+      <p>Вы открыли ссылку партнёра{cart.pendingReferral.partnerDisplayName ? ` ${cart.pendingReferral.partnerDisplayName}` : ""}. Выберите, к какой покупке отнести этот заказ.</p>
+      <button className="mt-2 min-h-11 rounded-lg bg-blue-600 px-4" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
+      <button className="ml-3 min-h-11 underline" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button>
+    </section>}
+    {contextError && <p role="alert" className="mb-4 text-danger">{contextError}</p>}
     <button type="button" className="mb-4 min-h-11 underline" onClick={() => void refresh()}>Обновить корзину</button>
-    {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-32 animate-pulse rounded-xl bg-slate-900" />)}</div>}
+    {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-32 animate-pulse rounded-xl bg-surface" />)}</div>}
     {cart?.items.length === 0 && <section className="py-10"><p className="text-xl">В корзине пока нет товаров.</p>
       <Link href="/shop" className="mt-5 inline-flex min-h-11 items-center rounded-lg bg-blue-600 px-4">Выбрать товары</Link></section>}
     {cart && cart.items.length > 0 && <>
-      <ul className="space-y-4">{cart.items.map((item) => <li key={item.variantId} className="rounded-xl bg-slate-900 p-4">
+      <ul className="space-y-4">{cart.items.map((item) => <li key={item.variantId} className="app-panel">
         <h2 className="text-lg font-semibold"><Link href={`/shop?product=${encodeURIComponent(item.slug)}`}>{item.title}</Link></h2>
         <p className="text-sm text-slate-400">Артикул: {item.sku}</p>
         <p className="my-2">{money(item.priceMinor, cart.currency)} за шт. · {money(item.lineTotalMinor, cart.currency)}</p>
         {item.issues.map((issue) => <p key={issue} className="mb-2 text-amber-300">{messages[issue]}</p>)}
-        {errors[item.variantId] && <p role="alert" className="mb-2 text-rose-300">{errors[item.variantId]}</p>}
+        {errors[item.variantId] && <p role="alert" className="mb-2 text-danger">{errors[item.variantId]}</p>}
         <div className="flex flex-wrap items-center gap-3" aria-label={`Количество ${item.sku}`}>
           <button type="button" aria-label={`Уменьшить ${item.sku}`} disabled={readOnly || pending.has(item.variantId) || item.quantity <= 1}
-            className="min-h-11 min-w-11 rounded-lg bg-slate-700 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity - 1)}>−</button>
+            className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity - 1)}>−</button>
           <span aria-live="polite">{item.quantity}</span>
           <button type="button" aria-label={`Увеличить ${item.sku}`} disabled={readOnly || pending.has(item.variantId) || item.quantity >= 99 || item.issues.length > 0}
-            className="min-h-11 min-w-11 rounded-lg bg-slate-700 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity + 1)}>+</button>
+            className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity + 1)}>+</button>
           <button type="button" disabled={readOnly || pending.has(item.variantId)} className="min-h-11 px-3 underline disabled:opacity-40"
             onClick={() => void mutate(item.variantId)}>Удалить {item.sku}</button>
           {pending.has(item.variantId) && <span role="status" className="animate-pulse">Сохранение…</span>}
@@ -122,11 +151,11 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
       <button type="button" disabled={readOnly || pending.has("clear")} className="mt-4 min-h-11 underline disabled:opacity-40"
         onClick={() => void mutate("clear", undefined, true)}>{pending.has("clear") ? "Очистка…" : "Очистить корзину"}</button>
       {errors.clear && <p role="alert" className="text-rose-300">{errors.clear}</p>}
-      <section className="fixed inset-x-0 bottom-0 border-t border-slate-700 bg-slate-950 px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <section className="fixed inset-x-0 bottom-0 border-t border-hairline bg-canvas px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-4xl"><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
           {!cart.canCheckout && <p className="text-sm text-amber-300">Проверьте отмеченные товары перед оформлением заказа.</p>}
-          <button type="button" disabled={readOnly || !cart.canCheckout || pending.size > 0}
-            onClick={() => router.push("/checkout")} className="mt-2 min-h-11 w-full rounded-lg bg-blue-600 disabled:opacity-40">Оформить заказ</button>
+          <button type="button" disabled={readOnly || !cart.canCheckout || pending.size > 0 || (cart.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
+            onClick={() => router.push("/checkout")} className="app-button app-button-primary mt-2 min-h-11 w-full disabled:opacity-40">Оформить заказ</button>
         </div>
       </section>
     </>}
@@ -141,20 +170,20 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
   const [added, setAdded] = useState(false);
   const selected = variants.find((variant) => variant.id === selectedId);
   const quantity = cart?.items.find((item) => item.variantId === selectedId)?.quantity ?? 0;
-  return <section className="sticky bottom-0 mt-5 rounded-xl bg-slate-900 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]" aria-label="Добавление товара в корзину">
-    <label>Вариант товара<select className="ml-3 min-h-11 rounded-lg bg-slate-800 px-3" value={selectedId}
+  return <section className="app-panel sticky bottom-0 mt-5 pb-[max(1rem,env(safe-area-inset-bottom))]" aria-label="Добавление товара в корзину">
+    <label>Вариант товара<select className="app-input ml-3 min-h-11 px-3" value={selectedId}
       onChange={(event) => { setSelectedId(event.target.value); setAdded(false); }}>
       {variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.sku}</option>)}
     </select></label>
     {selected && <p className="my-3">{money(selected.priceMinor, currency)}</p>}
     <button type="button" disabled={!cart || readOnly || !selected || selected.availability !== "IN_STOCK" || quantity >= 99 || pending.has(selectedId)}
-      className="min-h-11 rounded-lg bg-blue-600 px-4 disabled:opacity-40" onClick={() => {
+      className="app-button app-button-primary min-h-11 px-4 disabled:opacity-40" onClick={() => {
         setAdded(false); void mutate(selectedId, quantity + 1).then((success) => setAdded(Boolean(success)));
       }}>{pending.has(selectedId) ? "Добавление…" : "Добавить в корзину"}</button>
     {selected && selected.availability !== "IN_STOCK" && <p className="mt-2 text-amber-300">Этот вариант сейчас нельзя заказать.</p>}
     {quantity >= 99 && <p className="mt-2 text-amber-300">Можно заказать не больше 99 единиц одного варианта.</p>}
     {added && <p role="status" className="mt-2 text-emerald-300">Добавлено в корзину.</p>}
-    {(errors[selectedId] || error) && <p role="alert" className="mt-2 text-rose-300">{errors[selectedId] || error}</p>}
+    {(errors[selectedId] || error) && <p role="alert" className="mt-2 text-danger">{errors[selectedId] || error}</p>}
     <Link href="/cart" className="ml-4 inline-flex min-h-11 items-center underline">Корзина ({cart?.items.length ?? 0})</Link>
   </section>;
 }
