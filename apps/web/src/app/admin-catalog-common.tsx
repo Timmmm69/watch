@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cloneElement, useCallback, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-export const inputClass = "w-full rounded border border-slate-600 bg-slate-900 p-2";
-export const buttonClass = "min-h-11 rounded border border-slate-600 px-3 py-2 disabled:opacity-40";
+export const inputClass = "app-input w-full";
+export const buttonClass = "app-button disabled:opacity-40";
 export type PageData<T> = { items: T[]; page: number; limit: number; total: number };
 export type Category = { id: string; name: string; slug: string; sortOrder: number; status: string; updatedAt: string };
 export type Variant = { id: string; sku: string; status: string; attributes: Record<string, unknown>; priceMinor: number; dropshipPriceMinor: number | null;
@@ -49,10 +49,10 @@ export function AdminCatalogLayout({ title, back = "/admin", children }: { title
     button?.show(); button?.onClick(goBack);
     return () => { button?.offClick(goBack); button?.hide(); };
   }, [router, back]);
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-5xl space-y-5">
+  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 text-ink"><div className="mx-auto max-w-5xl space-y-5">
     <nav className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/catalog">Каталог</Link>
       <Link href="/admin/inventory">Склад</Link><Link href="/admin/orders?reconciliationPending=true">Заказы на сверку</Link></nav>
-    <h1 className="text-2xl font-semibold">{title}</h1>{children}
+    <h1 className="text-2xl font-bold">{title}</h1>{children}
   </div></main>;
 }
 

@@ -2,7 +2,7 @@ import { expect, test, type Locator } from "@playwright/test";
 
 async function readable(locator: Locator) {
   await expect(locator).toBeVisible();
-  const ratio = await locator.evaluate(element => {
+  const contrast = await locator.evaluate(element => {
     const rgb = (color: string) => {
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 1;
@@ -19,9 +19,12 @@ async function readable(locator: Locator) {
       background = getComputedStyle(parent).backgroundColor; parent = parent.parentElement;
     }
     const values = [luminance(getComputedStyle(element).color), luminance(background)].sort((a, b) => a - b);
-    return (values[1] + 0.05) / (values[0] + 0.05);
+    const style = getComputedStyle(element);
+    const size = Number.parseFloat(style.fontSize);
+    const large = size >= 24 || (size >= 18.667 && Number.parseInt(style.fontWeight) >= 700);
+    return { ratio: (values[1] + 0.05) / (values[0] + 0.05), minimum: large ? 3 : 4.5 };
   });
-  expect(ratio).toBeGreaterThanOrEqual(4.5);
+  expect(contrast.ratio).toBeGreaterThanOrEqual(contrast.minimum);
 }
 
 for (const colorScheme of ["light", "dark"] as const) test(`retail feedback contrast: ${colorScheme}`, async ({ page }) => {

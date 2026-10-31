@@ -49,7 +49,7 @@ export function PartnerEarnings({ compact = false, blocked = false }: { compact?
         </dl>
         <p className="mb-4 text-sm text-muted">Выплата зависит от доставки, подтверждённой оплаты и возвратов. Начисление может быть зарезервировано заявкой или уже выплачено. Актуальные ограничения проверяются при запросе выплаты.</p>
         {data.total === 0 ? <p className="text-muted">Начислений пока нет. После оформления заказа здесь появится ожидаемое вознаграждение.</p> : <>
-          <h3 className="mb-3 font-medium">{compact ? "Последние начисления" : "История вознаграждений"}</h3>
+          <h3 className="mb-3 font-bold">{compact ? "Последние начисления" : "История вознаграждений"}</h3>
           <ul className="space-y-3">{data.items.map((item) => <li key={item.id} className="app-panel">
             <div className="flex flex-wrap justify-between gap-2"><a className="min-h-11 underline" href={`/partner/orders/${encodeURIComponent(item.orderPublicNumber)}`}>Заказ {item.orderPublicNumber}</a><span>{states[item.state]}</span></div>
             <p className="mt-2">Вознаграждение при оформлении: {money(item.grossAmountMinor, data.currency)}</p>

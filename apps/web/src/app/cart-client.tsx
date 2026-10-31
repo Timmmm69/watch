@@ -153,7 +153,7 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
   };
   return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-36 text-ink"><div className="mx-auto max-w-4xl">
     <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link>
-    <h1 className="my-5 text-2xl font-semibold">Корзина</h1>
+    <h1 className="my-5 text-2xl font-bold">Корзина</h1>
     {error && <p role="alert" className="mb-4 text-danger">{error}</p>}
     {cart?.purchaseContext?.channel === "REFERRAL" && <section className="app-panel mb-4" aria-label="Покупка по ссылке партнёра">
       <p>{cart.purchaseContext.available === false ? "Ссылка партнёра больше недоступна. Этот заказ нельзя оформить по ней." : `Вы покупаете по ссылке партнёра${cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Цена для вас не меняется.`}</p>
@@ -161,7 +161,7 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
     </section>}
     {cart?.pendingReferral && <section className="app-panel mb-4" aria-label="Выбор источника покупки">
       <p>Вы открыли ссылку партнёра{cart.pendingReferral.partnerDisplayName ? ` ${cart.pendingReferral.partnerDisplayName}` : ""}. Выберите, к какой покупке отнести этот заказ.</p>
-      <button disabled={contextPending || readOnly || pending.size > 0} className="mt-2 min-h-11 rounded-lg bg-primary text-on-primary px-4 disabled:opacity-40" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="app-button app-button-primary mt-2 min-h-11 px-4 disabled:opacity-40" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
       <button disabled={contextPending || readOnly || pending.size > 0} className="ml-3 min-h-11 underline disabled:opacity-40" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button>
     </section>}
     {contextError && <p role="alert" className="mb-4 text-danger">{contextError}</p>}
@@ -171,10 +171,10 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
     <button type="button" className="mb-4 min-h-11 underline" onClick={() => void refresh()}>Обновить корзину</button>
     {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-32 animate-pulse rounded-xl bg-surface" />)}</div>}
     {cart?.items.length === 0 && <section className="py-10"><p className="text-xl">В корзине пока нет товаров.</p>
-      <Link href="/shop" className="mt-5 inline-flex min-h-11 items-center rounded-lg bg-primary text-on-primary px-4">Выбрать товары</Link></section>}
+      <Link href="/shop" className="app-button app-button-primary mt-5 inline-flex min-h-11 items-center px-4">Выбрать товары</Link></section>}
     {cart && cart.items.length > 0 && <>
       <ul className="space-y-4">{cart.items.map((item) => <li key={item.variantId} className="app-panel">
-        <h2 className="text-lg font-semibold"><Link href={`/shop?product=${encodeURIComponent(item.slug)}`}>{item.title}</Link></h2>
+        <h2 className="text-lg font-bold"><Link href={`/shop?product=${encodeURIComponent(item.slug)}`}>{item.title}</Link></h2>
         <p className="text-sm text-muted">Артикул: {item.sku}</p>
         <p className="my-2">{money(item.priceMinor, cart.currency)} за шт. · {money(item.lineTotalMinor, cart.currency)}</p>
         {item.issues.map((issue) => <p key={issue} className="mb-2 text-warning">{messages[issue]}</p>)}
@@ -220,12 +220,12 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
     {selected && <p className="my-3">{money(selected.priceMinor, currency)}</p>}
     {selected && selected.availability !== "IN_STOCK" && <p className="mt-2 text-warning">Этот вариант сейчас нельзя заказать.</p>}
     {quantity >= 99 && <p className="mt-2 text-warning">Можно заказать не больше 99 единиц одного варианта.</p>}
-    {added && <p role="status" className="mt-2 text-emerald-300">Добавлено в корзину.</p>}
+    {added && <p role="status" className="mt-2 text-success">Добавлено в корзину.</p>}
     {(errors[selectedId] || error) && <p role="alert" className="mt-2 text-danger">{errors[selectedId] || error}</p>}
     <div role="group" aria-label="Действия с товаром" className="fixed inset-x-0 bottom-0 z-10 border-t border-hairline bg-canvas px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:static sm:mt-3 sm:border-0 sm:bg-transparent sm:p-0">
-      <div className="mx-auto flex max-w-5xl items-center gap-3">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
         <button type="button" disabled={!cart || readOnly || !selected || selected.availability !== "IN_STOCK" || quantity >= 99 || pending.has(selectedId)}
-          className="app-button app-button-primary min-h-11 min-w-0 flex-1 px-4 disabled:opacity-40 sm:flex-none" onClick={() => {
+          className="app-button app-button-primary min-h-11 min-w-0 max-w-full flex-1 px-4 disabled:opacity-40 sm:flex-none" onClick={() => {
             setAdded(false); void mutate(selectedId, quantity + 1).then((success) => setAdded(Boolean(success)));
           }}>{pending.has(selectedId) ? "Добавление…" : "Добавить в корзину"}</button>
         <Link href="/cart" className="inline-flex min-h-11 shrink-0 items-center underline">Корзина ({cart?.items.length ?? 0})</Link>
@@ -234,7 +234,7 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
   </section>;
 }
 
-export function CartIndicator({ csrfToken }: { csrfToken: string }) {
+export function CartIndicator({ csrfToken, className = "inline-flex min-h-11 items-center underline" }: { csrfToken: string; className?: string }) {
   const { cart } = useCart(csrfToken);
-  return <Link href="/cart" className="inline-flex min-h-11 items-center underline">Корзина{cart ? ` (${cart.items.length})` : ""}</Link>;
+  return <Link href="/cart" className={className}>Корзина{cart ? ` (${cart.items.length})` : ""}</Link>;
 }

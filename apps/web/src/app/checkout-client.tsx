@@ -169,7 +169,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
 
   return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-12 text-ink"><div className="mx-auto max-w-2xl">
     <Link href="/cart" className="inline-flex min-h-11 items-center underline">← Корзина</Link>
-    <h1 className="my-5 text-2xl font-semibold">{order ? "Заказ создан" : "Оформление заказа"}</h1>
+    <h1 className="my-5 text-2xl font-bold">{order ? "Заказ создан" : "Оформление заказа"}</h1>
     {order ? <section aria-live="polite"><p className="text-xl">Заказ {order.publicNumber}</p><p>Статус: {orderStatuses[order.status] ?? order.status}</p>
       <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Заказ создан. Ожидайте подтверждения оператора.</p>
       <Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="mr-4 inline-flex min-h-11 items-center underline">Посмотреть заказ</Link>
@@ -202,7 +202,7 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
               onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />}
           {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="mt-1 text-danger">{fieldErrors[name]}</p>}
         </div>)}
-        {!documents && <div aria-label="Загрузка документов" className="h-24 animate-pulse rounded-lg bg-slate-900" />}
+        {!documents && <div aria-label="Загрузка документов" className="h-24 animate-pulse rounded-lg bg-surface-muted" />}
         {documents && (["SALES_TERMS", "PRIVACY"] as const).map((type) => <section key={type}>
           <details className="app-panel"><summary className="cursor-pointer">{type === "SALES_TERMS" ? "Условия продажи" : "Политика конфиденциальности"} · {documents[type].version}</summary>
             <pre className="mt-3 whitespace-pre-wrap font-sans text-sm">{documents[type].contentMarkdown}</pre></details>
