@@ -77,7 +77,7 @@ export function PartnerOnboarding({ auth, onAccepted }: { auth: PartnerAuth; onA
     {!document ? <><p role="status">Загрузка условий…</p><button className="min-h-11 underline" disabled={pending} onClick={() => { setError(""); void loadTerms(); }}>Повторить загрузку</button></> : <>
       <p>Версия: {document.version} · Действует с {new Date(document.effectiveAt).toLocaleDateString("ru-BY")}</p>
       <details><summary className="min-h-11 cursor-pointer">Сведения о документе</summary><p className="break-all text-sm text-muted">SHA-256: {document.sha256}</p></details>
-      <article aria-label="Условия партнёрской программы" className="whitespace-pre-wrap break-words rounded bg-canvas p-4">{document.contentMarkdown}</article>
+      <article aria-label="Условия партнёрской программы" className="whitespace-pre-wrap break-words rounded-xl bg-canvas p-4">{document.contentMarkdown}</article>
       <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={accepted} disabled={pending}
         onChange={(event) => setAccepted(event.target.checked)} />Я прочитал и принимаю текущие условия партнёрской программы</label>
       <button className="app-button app-button-primary min-h-11 px-4 disabled:opacity-40" disabled={!accepted || pending} onClick={() => void submit()}>
@@ -118,7 +118,7 @@ export function PartnerDashboard({ auth, onAccepted }: { auth: PartnerAuth; onAc
   return <main className="app-shell min-h-dvh bg-canvas text-ink"><div className="mx-auto max-w-4xl space-y-5">
     <h1>Партнёрский кабинет</h1>
     {!auth.partner ? <PartnerOnboarding auth={auth} onAccepted={onAccepted} /> : <>
-      {blocked && <p role="status" className="rounded bg-warning-soft text-warning p-4">Новые заказы и заявки на выплату недоступны. Историю заказов и начислений можно посмотреть. Чтобы уточнить причину ограничения, напишите в поддержку.</p>}
+      {blocked && <p role="status" className="rounded-xl bg-warning-soft text-warning p-4">Новые заказы и заявки на выплату недоступны. Историю заказов и начислений можно посмотреть. Чтобы уточнить причину ограничения, напишите в поддержку.</p>}
       {!blocked && auth.partnerTermsReacceptRequired && <><p role="alert">{auth.nativeCommerce ? "Для новых заказов и выплат примите текущие условия." : "Для новых ссылок и выплат примите текущие условия."}</p><PartnerOnboarding auth={auth} onAccepted={onAccepted} /></>}
       <nav aria-label="Партнёрский кабинет" className="flex flex-wrap gap-5">
          <Link href="/shop">Выбрать часы</Link><Link href="/partner/orders">Заказы</Link><Link href="/partner/earnings">Доходы</Link><Link href="/partner/payouts">Выплаты</Link>

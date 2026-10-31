@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { BuyerEmpty, BuyerHeader, BuyerNav } from "./buyer-ui";
+import { ShopIcon } from "./shop-icon";
 import { useEffect, useState } from "react";
 import { orderStatuses as statuses } from "./order-status";
 import { ShopContact } from "./shop-contact";
@@ -54,6 +56,41 @@ export function OrdersScreen({ partner = false, blocked = false, publicNumber }:
     back?.show(); back?.onClick(handler);
     return () => { back?.offClick(handler); back?.hide(); };
   }, [base, publicNumber, partner]);
+
+  if (!partner) return <main className="app-shell buyer-shell buyer-shell-nav"><div className="buyer-container buyer-narrow">
+    <BuyerHeader title={publicNumber ? `Заказ ${publicNumber}` : "Мои заказы"} backHref={publicNumber ? base : "/shop"}
+      backLabel={publicNumber ? "Все заказы" : "В каталог"} subtitle={publicNumber ? undefined : "Покупки, их статус и все детали — здесь."} />
+    {!publicNumber && <div className="buyer-order-filter"><label htmlFor="buyer-order-status">Статус</label>
+      <select id="buyer-order-status" className="app-input" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
+        <option value="">Все</option>{Object.entries(statuses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
+    {loading && <><p role="status" className="text-sm text-muted">Загрузка заказов…</p><div aria-hidden="true" className="buyer-skeleton my-4 h-36" /></>}
+    {error && <section className="buyer-empty"><p role="alert" className="text-danger">{error}</p><button className="app-button" onClick={() => setRetry((n) => n + 1)}>Повторить</button></section>}
+    {list && <>{list.total === 0 ? <BuyerEmpty title="Заказов пока нет." description={status ? "По выбранному статусу заказов нет. Можно выбрать другой статус." : "После первой покупки здесь появятся её статус и детали."}>
+      <Link href="/shop" className="app-button app-button-primary">Выбрать часы</Link></BuyerEmpty> : <ul className="buyer-orders-list">{list.items.map((order) => <li key={order.id} className="buyer-order-card">
+      <div className="buyer-order-card-top"><span className="buyer-status" data-status={order.status}>{statuses[order.status] ?? order.status}</span><time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleDateString("ru-BY", { day: "numeric", month: "long", year: "numeric" })}</time></div>
+      <Link className="buyer-order-link" href={`${base}/${encodeURIComponent(order.publicNumber)}`}><h2>Заказ {order.publicNumber}</h2><span aria-hidden="true">→</span></Link>
+      {order.salesChannel && <p className="text-sm text-muted">{channelLabel(order.salesChannel, false)}</p>}
+      <div className="buyer-order-card-bottom"><p className="text-sm text-muted">Товаров в заказе: {order.itemCount}</p><strong>{money(order.totalMinor, order.currency)}</strong></div>
+    </li>)}</ul>}
+    {list.total > 0 && <nav aria-label="Страницы заказов" className="buyer-pagination"><button className="app-button" disabled={page === 1} onClick={() => setPage((n) => n - 1)}>Назад</button><span>Страница {list.page}</span><button className="app-button" disabled={page * list.limit >= list.total} onClick={() => setPage((n) => n + 1)}>Далее</button></nav>}</>}
+    {detail && <>
+      <section className="buyer-order-hero"><span className="buyer-item-icon"><ShopIcon name={detail.status === "COMPLETED" || detail.status === "DELIVERED" ? "check" : "bag"} size={28} /></span>
+        <div><h2>{statuses[detail.status] ?? detail.status}</h2>{detail.salesChannel && <p className="text-sm text-muted">{channelLabel(detail.salesChannel, false)}</p>}
+        <p className="text-sm text-muted">{date(detail.createdAt)}</p></div></section>
+      <section className="buyer-order-section"><h2>История статусов</h2><ol className="buyer-timeline">{detail.timeline.map((entry, index) => <li key={entry.status} data-current={index === detail.timeline.length - 1}>
+        <strong>{statuses[entry.status] ?? entry.status}</strong><time dateTime={entry.at}>{date(entry.at)}</time></li>)}</ol></section>
+      <section className="buyer-order-section"><h2>Товары</h2><ul className="buyer-order-items">{detail.items.map((item) => <li key={item.id}>
+        <div className="buyer-item-heading"><span className="buyer-item-icon"><ShopIcon name="watch" size={28} /></span><div className="min-w-0 flex-1"><h3>{item.title} · {item.sku}</h3>
+        <p className="text-sm text-muted">{Object.entries(item.attributes).map(([key, value]) => `${key}: ${String(value)}`).join(", ")}</p></div></div>
+        <div className="buyer-order-card-bottom"><span className="text-sm">{item.quantity} шт. × {money(item.unitPriceMinor, detail.currency)}</span><strong>{money(item.lineTotalMinor, detail.currency)}</strong></div>
+      </li>)}</ul><p className="buyer-total border-t border-hairline pt-4">Итого: <strong>{money(detail.totalMinor, detail.currency)}</strong></p></section>
+      <section className="buyer-order-section"><h2>Данные доставки</h2>
+        {detail.fulfillment && !detail.fulfillment.redactedAt ? <dl className="buyer-delivery">{Object.entries({ Получатель: detail.fulfillment.recipientName, Телефон: detail.fulfillment.phone, Адрес: detail.fulfillment.address, Комментарий: detail.fulfillment.comment }).map(([label, value]) => value && <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : <p className="text-muted">Данные доставки удалены.</p>}
+      </section>
+      <section className="buyer-support"><h2>Помочь с заказом?</h2><p>Для изменения, отмены или возврата напишите в поддержку и укажите №{detail.publicNumber}.</p>
+        <ShopContact compact contact={detail.supportContact} label="Написать по заказу" draft={`Здравствуйте! Обращаюсь по заказу №${detail.publicNumber}.`} /></section>
+    </>}
+  </div><BuyerNav active="orders" /></main>;
 
   return <main className="app-shell min-h-dvh bg-canvas text-ink"><div className="mx-auto max-w-3xl">
     <nav className="mb-5 flex gap-4"><Link className="min-h-11 underline" href={publicNumber ? base : partner ? "/partner" : "/shop"}>{publicNumber ? "Все заказы" : partner ? "Партнёрский кабинет" : "В каталог"}</Link></nav>

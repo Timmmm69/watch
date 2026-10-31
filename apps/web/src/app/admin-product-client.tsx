@@ -29,13 +29,13 @@ export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string
     }, status !== product?.status ? `Изменить статус товара на ${productStatusLabels[status] ?? "Статус уточняется"}? Сервер проверит условия публикации.` : undefined);
   };
   return <AdminCatalogLayout title={product ? product.title : "Товар"} back="/admin/catalog">
-    {api.error && <p role="alert" className="text-amber-300">{api.error}</p>}{api.notice && <p role="status">{api.notice}</p>}
+    {api.error && <p role="alert" className="text-warning">{api.error}</p>}{api.notice && <p role="status">{api.notice}</p>}
     {api.denied ? <p>Редактирование недоступно.</p> : <>
       <button className={buttonClass} disabled={api.busy} onClick={() => setRetry(n => n + 1)}>Обновить</button>
       {!product && !api.error && <p role="status">Загружаем товар…</p>}
       {product && <fieldset disabled={api.busy} className="space-y-5">
         <p>Для публикации нужны активная категория, доступный вариант товара и изображение. При сохранении система проверит требования.</p>
-        <form key={product.updatedAt} aria-label="Редактирование товара" className="space-y-3 rounded bg-slate-900 p-4" onSubmit={saveCore}>
+        <form key={product.updatedAt} aria-label="Редактирование товара" className="space-y-3 rounded-xl bg-surface-muted p-4" onSubmit={saveCore}>
           <Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} defaultValue={product.title} /></Field>
           <Field label="Адрес товара (slug)"><input className={inputClass} readOnly value={product.slug} /></Field><p>Адрес товара создаётся автоматически и после создания не меняется.</p>
           <Field label="Описание"><textarea className={inputClass} name="description" defaultValue={product.description} /></Field>
@@ -88,7 +88,7 @@ export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string
 
 type FormActions = { mutate: (action: () => Promise<void>, confirmation?: string) => Promise<void>; save: (payload: object) => Promise<void> };
 function VariantForm({ variant, mutate, save }: FormActions & { variant?: Variant }) {
-  return <form aria-label={variant ? `Вариант ${variant.sku}` : "Новый вариант"} className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
+  return <form aria-label={variant ? `Вариант ${variant.sku}` : "Новый вариант"} className="space-y-3 rounded-xl border border-hairline p-4" onSubmit={event => {
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element); const status = String(form.get("status"));
     void mutate(async () => {
       await save({ ...(variant ? { status, safetyBuffer: Number(form.get("safetyBuffer")) } : { sku: String(form.get("sku")) }),
@@ -122,7 +122,7 @@ const assetPurposeLabels: Record<string, string> = { STOREFRONT: "Для маг�
 function PurposeOptions() { return <><option value="STOREFRONT">{assetPurposeLabels.STOREFRONT}</option><option value="PARTNER_CONTENT">{assetPurposeLabels.PARTNER_CONTENT}</option></>; }
 function AssetCreateForm({ variants, mutate, save }: Omit<FormActions, "save"> & { variants: Variant[]; save: (type: string, form: FormData) => Promise<void> }) {
   const [type, setType] = useState("IMAGE");
-  return <form aria-label="Новый материал" className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
+  return <form aria-label="Новый материал" className="space-y-3 rounded-xl border border-hairline p-4" onSubmit={event => {
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element);
     void mutate(async () => { await save(type, form); element.reset(); setType("IMAGE"); });
   }}>
@@ -135,7 +135,7 @@ function AssetCreateForm({ variants, mutate, save }: Omit<FormActions, "save"> &
   </form>;
 }
 function AssetForm({ asset, mutate, save }: FormActions & { asset: Asset }) {
-  return <form aria-label={`Материал ${asset.id}`} className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
+  return <form aria-label={`Материал ${asset.id}`} className="space-y-3 rounded-xl border border-hairline p-4" onSubmit={event => {
     event.preventDefault(); const form = new FormData(event.currentTarget); const purpose = String(form.get("purpose")); const status = String(form.get("status"));
     void mutate(async () => { await save({ purpose, status, sortOrder: Number(form.get("sortOrder")), ...(asset.type === "TEXT" ? { text: String(form.get("text")) } : {}) }); },
       purpose !== asset.purpose || status !== asset.status ? "Изменить назначение или статус материала? Сервер проверит условия публикации товара." : undefined);

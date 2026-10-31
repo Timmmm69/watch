@@ -9,7 +9,7 @@ const percent = (value: number | null) => value === null ? "Нет данных"
 const number = (value: number | null) => value === null ? "Нет данных" : value.toLocaleString("ru", { maximumFractionDigits: 2 });
 const money = (value: number | null, currency: string) => value === null ? "Нет данных" :
   new Intl.NumberFormat("ru", { style: "currency", currency }).format(value / 100);
-const inputClass = "min-h-11 rounded border border-slate-600 bg-slate-900 p-2";
+const inputClass = "min-h-11 rounded border border-control bg-surface-muted p-2";
 
 export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolean }) {
   const router = useRouter();
@@ -86,12 +86,12 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
       ["Варианты товаров", number(s.variants)], ["Партнёры / активные / заблокированные", `${s.partners} / ${s.activePartners} / ${s.blockedPartners}`],
       ["Всего заказов", number(s.orders), "/admin/orders"], ["Всего возвратов", number(s.returns), "/admin/returns"], ["Всего выплат", number(s.payouts), "/admin/payouts"]);
   }
-  return <main className="min-h-screen space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
+  return <main className="min-h-screen space-y-6 bg-canvas p-5 text-ink sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5">
       <Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/orders">Заказы</Link><Link href="/admin/returns">Возвраты</Link>
       <Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Склад</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/admin/catalog">Каталог</Link><Link href="/shop">Магазин</Link>
     </nav>
-    <h1 className="text-2xl font-semibold">{dashboard ? "Обзор" : "Аналитика"}</h1>
+    <h1 className="text-2xl font-bold">{dashboard ? "Обзор" : "Аналитика"}</h1>
     {!dashboard && !blocked && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">
       <label className="grid gap-2">С даты (UTC)<input className={inputClass} type="date" required value={dates.from} onChange={e => setDates({ ...dates, from: e.target.value })} /></label>
       <label className="grid gap-2">До даты, не включая (UTC)<input className={inputClass} type="date" required value={dates.to} onChange={e => setDates({ ...dates, to: e.target.value })} /></label>
@@ -100,10 +100,10 @@ export function AdminAnalyticsScreen({ dashboard = false }: { dashboard?: boolea
     {error && <p role="alert">{error}</p>}
     {!blocked && <button className={inputClass} onClick={() => void load()} disabled={loading}>Обновить</button>}
     {loading && <div role="status" aria-label="Загрузка показателей" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-24 animate-pulse rounded bg-slate-800" />)}</div>}
+      {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-24 animate-pulse rounded-xl bg-surface" />)}</div>}
     {!loading && !blocked && <>
       {summary && summary.orders === 0 && summary.referralTouches === 0 && <p>За указанный период нет заказов и переходов по ссылкам. Выберите другие даты.</p>}
-      <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{cards.map(([label, value, href]) => <div key={label} className="rounded border border-slate-700 p-4">
+      <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{cards.map(([label, value, href]) => <div key={label} className="rounded-xl border border-hairline p-4">
         <dt>{href ? <Link className="underline" href={href}>{label}</Link> : label}</dt><dd className="mt-3 text-2xl">{value}</dd></div>)}</dl>
       {summary && <section className="space-y-3"><h2 className="text-xl">Возвращаемость партнёров по неделям</h2>
         <p>Полные соседние недели в часовом поясе {summary.timezone}. Активность учитывает право на комиссию на момент заказа.</p>

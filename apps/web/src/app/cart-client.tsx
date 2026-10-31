@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { BuyerActionBar, BuyerEmpty, BuyerHeader } from "./buyer-ui";
+import { ShopIcon } from "./shop-icon";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -151,56 +153,62 @@ export function CartScreen({ csrfToken }: { csrfToken: string }) {
       setContextPending(false);
     }
   };
-  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-36 text-ink"><div className="mx-auto max-w-4xl">
-    <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link>
-    <h1 className="my-5 text-2xl font-semibold">Корзина</h1>
-    {error && <p role="alert" className="mb-4 text-danger">{error}</p>}
-    {cart?.purchaseContext?.channel === "REFERRAL" && <section className="app-panel mb-4" aria-label="Покупка по ссылке партнёра">
+  return <main className="app-shell buyer-shell"><div className="buyer-container">
+    <BuyerHeader title="Корзина" backHref="/shop" backLabel="Продолжить покупки"
+      subtitle="Всё, что вы выбрали, — в одном месте." />
+    {error && <p role="alert" className="buyer-notice text-danger">{error}</p>}
+    {cart?.purchaseContext?.channel === "REFERRAL" && <section className="buyer-notice" aria-label="Покупка по ссылке партнёра">
       <p>{cart.purchaseContext.available === false ? "Ссылка партнёра больше недоступна. Этот заказ нельзя оформить по ней." : `Вы покупаете по ссылке партнёра${cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Цена для вас не меняется.`}</p>
-      <button disabled={contextPending || readOnly || pending.size > 0} className="mt-2 min-h-11 underline disabled:opacity-40" onClick={() => void selectContext("DIRECT")}>Покупать без ссылки партнёра</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="buyer-text-action" onClick={() => void selectContext("DIRECT")}>Покупать без ссылки партнёра</button>
     </section>}
-    {cart?.pendingReferral && <section className="app-panel mb-4" aria-label="Выбор источника покупки">
+    {cart?.pendingReferral && <section className="buyer-notice" aria-label="Выбор источника покупки">
       <p>Вы открыли ссылку партнёра{cart.pendingReferral.partnerDisplayName ? ` ${cart.pendingReferral.partnerDisplayName}` : ""}. Выберите, к какой покупке отнести этот заказ.</p>
-      <button disabled={contextPending || readOnly || pending.size > 0} className="mt-2 min-h-11 rounded-lg bg-primary text-on-primary px-4 disabled:opacity-40" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
-      <button disabled={contextPending || readOnly || pending.size > 0} className="ml-3 min-h-11 underline disabled:opacity-40" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button>
+      <div className="buyer-stack-actions"><button disabled={contextPending || readOnly || pending.size > 0} className="app-button app-button-primary" onClick={() => void selectContext("REFERRAL")}>Продолжить по ссылке партнёра</button>
+      <button disabled={contextPending || readOnly || pending.size > 0} className="buyer-text-action" onClick={() => void selectContext("DIRECT")}>Обычная покупка</button></div>
     </section>}
-    {contextError && <p role="alert" className="mb-4 text-danger">{contextError}</p>}
-    {contextPending && <p role="status" className="mb-4">Выбираем источник покупки…</p>}
-    {contextRetry && <button disabled={contextPending || readOnly || pending.size > 0} className="mb-4 min-h-11 underline disabled:opacity-40"
+    {contextError && <p role="alert" className="buyer-notice text-danger">{contextError}</p>}
+    {contextPending && <p role="status" className="buyer-notice">Выбираем источник покупки…</p>}
+    {contextRetry && <button disabled={contextPending || readOnly || pending.size > 0} className="buyer-text-action"
       onClick={() => void selectContext(contextRetry)}>Повторить выбор источника</button>}
-    <button type="button" className="mb-4 min-h-11 underline" onClick={() => void refresh()}>Обновить корзину</button>
-    {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-32 animate-pulse rounded-xl bg-surface" />)}</div>}
-    {cart?.items.length === 0 && <section className="py-10"><p className="text-xl">В корзине пока нет товаров.</p>
-      <Link href="/shop" className="mt-5 inline-flex min-h-11 items-center rounded-lg bg-primary text-on-primary px-4">Выбрать товары</Link></section>}
-    {cart && cart.items.length > 0 && <>
-      <ul className="space-y-4">{cart.items.map((item) => <li key={item.variantId} className="app-panel">
-        <h2 className="text-lg font-semibold"><Link href={`/shop?product=${encodeURIComponent(item.slug)}`}>{item.title}</Link></h2>
-        <p className="text-sm text-muted">Артикул: {item.sku}</p>
-        <p className="my-2">{money(item.priceMinor, cart.currency)} за шт. · {money(item.lineTotalMinor, cart.currency)}</p>
-        {item.issues.map((issue) => <p key={issue} className="mb-2 text-warning">{messages[issue]}</p>)}
-        {errors[item.variantId] && <p role="alert" className="mb-2 text-danger">{errors[item.variantId]}</p>}
-        <div className="flex flex-wrap items-center gap-3" aria-label={`Количество ${item.sku}`}>
+    <div className="buyer-section-heading"><h2>Ваш выбор{cart?.items.length ? ` · ${cart.items.length}` : ""}</h2>
+      <button type="button" className="buyer-text-action" onClick={() => void refresh()}>Обновить корзину</button></div>
+    {!cart && !error && <div aria-label="Загрузка корзины" className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="buyer-skeleton h-32" />)}</div>}
+    {cart?.items.length === 0 && <BuyerEmpty title="В корзине пока нет товаров." description="Найдите часы для своего ритма — и возвращайтесь к оформлению.">
+      <Link href="/shop" className="app-button app-button-primary">Выбрать товары</Link></BuyerEmpty>}
+    {cart && cart.items.length > 0 && <div className="buyer-flow-grid">
+      <section><ul className="buyer-cart-list">{cart.items.map((item) => <li key={item.variantId} className="buyer-cart-item">
+        <div className="buyer-item-heading"><span className="buyer-item-icon"><ShopIcon name="watch" size={32} /></span><div className="min-w-0 flex-1">
+          <h2><Link href={`/shop?product=${encodeURIComponent(item.slug)}`}>{item.title}</Link></h2>
+          <p className="text-sm text-muted">Артикул: {item.sku}</p>
+          <p className="mt-1 text-sm">{money(item.priceMinor, cart.currency)} за шт. · {money(item.lineTotalMinor, cart.currency)}</p>
+        </div></div>
+        {item.issues.map((issue) => <p key={issue} className="buyer-notice text-warning">{messages[issue]}</p>)}
+        {errors[item.variantId] && <p role="alert" className="buyer-notice text-danger">{errors[item.variantId]}</p>}
+        <div className="buyer-item-controls"><div className="buyer-stepper" aria-label={`Количество ${item.sku}`}>
           <button type="button" aria-label={`Уменьшить ${item.sku}`} disabled={contextPending || readOnly || pending.has(item.variantId) || item.quantity <= 1}
-            className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity - 1)}>−</button>
+            onClick={() => void mutate(item.variantId, item.quantity - 1)}>−</button>
           <span aria-live="polite">{item.quantity}</span>
           <button type="button" aria-label={`Увеличить ${item.sku}`} disabled={contextPending || readOnly || pending.has(item.variantId) || item.quantity >= 99 || item.issues.length > 0}
-            className="app-button min-h-11 min-w-11 disabled:opacity-40" onClick={() => void mutate(item.variantId, item.quantity + 1)}>+</button>
-          <button type="button" disabled={contextPending || readOnly || pending.has(item.variantId)} className="min-h-11 px-3 underline disabled:opacity-40"
-            onClick={() => void mutate(item.variantId)}>Удалить {item.sku}</button>
-          {pending.has(item.variantId) && <span role="status" className="animate-pulse">Сохранение…</span>}
-        </div>
+            onClick={() => void mutate(item.variantId, item.quantity + 1)}>+</button>
+        </div><button type="button" disabled={contextPending || readOnly || pending.has(item.variantId)} className="buyer-text-action"
+            onClick={() => void mutate(item.variantId)}>Удалить <span className="sr-only">{item.sku}</span></button></div>
+        {pending.has(item.variantId) && <p role="status" className="text-sm text-muted">Сохранение…</p>}
       </li>)}</ul>
-      <button type="button" disabled={contextPending || readOnly || pending.has("clear")} className="mt-4 min-h-11 underline disabled:opacity-40"
+      <button type="button" disabled={contextPending || readOnly || pending.has("clear")} className="buyer-text-action mt-3"
         onClick={() => void mutate("clear", undefined, true)}>{pending.has("clear") ? "Очистка…" : "Очистить корзину"}</button>
-      {errors.clear && <p role="alert" className="text-danger">{errors.clear}</p>}
-      <section className="fixed inset-x-0 bottom-0 border-t border-hairline bg-canvas px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-4xl"><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
+      {errors.clear && <p role="alert" className="buyer-notice text-danger">{errors.clear}</p>}</section>
+      <aside className="buyer-summary"><h2>Ваш заказ</h2><dl className="buyer-summary-lines">
+        <div><dt>Количество часов</dt><dd>{cart.items.reduce((sum, item) => sum + item.quantity, 0)}</dd></div>
+        <div><dt>Доставка</dt><dd>Уточняется магазином</dd></div></dl>
+        <p className="text-sm text-muted">Получателя и адрес укажете на следующем шаге.</p>
+        <BuyerActionBar inlineOnDesktop><div className="buyer-bar-content">
+          <p className="buyer-total">Итого: <strong>{money(cart.totalMinor, cart.currency)}</strong></p>
           {!cart.canCheckout && <p className="text-sm text-warning">Проверьте отмеченные товары перед оформлением заказа.</p>}
           <button type="button" disabled={contextPending || readOnly || !cart.canCheckout || pending.size > 0 || (cart.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
-            onClick={() => router.push("/checkout")} className="app-button app-button-primary mt-2 min-h-11 w-full disabled:opacity-40">Оформить заказ</button>
-        </div>
-      </section>
-    </>}
+            onClick={() => router.push("/checkout")} className="app-button app-button-primary w-full disabled:opacity-40">Оформить заказ</button>
+        </div></BuyerActionBar>
+      </aside>
+    </div>}
   </div></main>;
 }
 
@@ -212,7 +220,7 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
   const [added, setAdded] = useState(false);
   const selected = variants.find((variant) => variant.id === selectedId);
   const quantity = cart?.items.find((item) => item.variantId === selectedId)?.quantity ?? 0;
-  return <section className="app-panel mt-5 mb-[calc(6rem+env(safe-area-inset-bottom))] sm:mb-0" aria-label="Добавление товара в корзину">
+  return <section className="buyer-product-purchase mt-5" aria-label="Добавление товара в корзину">
     <label className="block">Вариант товара<select className="app-input mt-2 min-h-11 w-full px-3 sm:ml-3 sm:mt-0 sm:w-auto" value={selectedId}
       onChange={(event) => { setSelectedId(event.target.value); setAdded(false); }}>
       {variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.sku}</option>)}
@@ -220,21 +228,21 @@ export function ProductCartActions({ variants, currency, csrfToken }: {
     {selected && <p className="my-3">{money(selected.priceMinor, currency)}</p>}
     {selected && selected.availability !== "IN_STOCK" && <p className="mt-2 text-warning">Этот вариант сейчас нельзя заказать.</p>}
     {quantity >= 99 && <p className="mt-2 text-warning">Можно заказать не больше 99 единиц одного варианта.</p>}
-    {added && <p role="status" className="mt-2 text-emerald-300">Добавлено в корзину.</p>}
+    {added && <p role="status" className="mt-2 text-success">Добавлено в корзину.</p>}
     {(errors[selectedId] || error) && <p role="alert" className="mt-2 text-danger">{errors[selectedId] || error}</p>}
-    <div role="group" aria-label="Действия с товаром" className="fixed inset-x-0 bottom-0 z-10 border-t border-hairline bg-canvas px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:static sm:mt-3 sm:border-0 sm:bg-transparent sm:p-0">
-      <div className="mx-auto flex max-w-5xl items-center gap-3">
+    <BuyerActionBar label="Действия с товаром" inlineOnDesktop>
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
         <button type="button" disabled={!cart || readOnly || !selected || selected.availability !== "IN_STOCK" || quantity >= 99 || pending.has(selectedId)}
-          className="app-button app-button-primary min-h-11 min-w-0 flex-1 px-4 disabled:opacity-40 sm:flex-none" onClick={() => {
+          className="app-button app-button-primary min-h-11 min-w-0 max-w-full flex-1 px-4 disabled:opacity-40 sm:flex-none" onClick={() => {
             setAdded(false); void mutate(selectedId, quantity + 1).then((success) => setAdded(Boolean(success)));
           }}>{pending.has(selectedId) ? "Добавление…" : "Добавить в корзину"}</button>
-        <Link href="/cart" className="inline-flex min-h-11 shrink-0 items-center underline">Корзина ({cart?.items.length ?? 0})</Link>
+        <Link href="/cart" className="buyer-cart-link"><ShopIcon name="bag" size={20} /><span className="buyer-cart-label">Корзина </span><span>({cart?.items.length ?? 0})</span></Link>
       </div>
-    </div>
+    </BuyerActionBar>
   </section>;
 }
 
-export function CartIndicator({ csrfToken }: { csrfToken: string }) {
+export function CartIndicator({ csrfToken, className = "inline-flex min-h-11 items-center underline" }: { csrfToken: string; className?: string }) {
   const { cart } = useCart(csrfToken);
-  return <Link href="/cart" className="inline-flex min-h-11 items-center underline">Корзина{cart ? ` (${cart.items.length})` : ""}</Link>;
+  return <Link href="/cart" className={className}>Корзина{cart ? ` (${cart.items.length})` : ""}</Link>;
 }

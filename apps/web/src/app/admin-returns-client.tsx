@@ -179,49 +179,49 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
     } catch (cause) { setError((cause as Error).message); }
     finally { busy.current = false; setPending(""); }
   };
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
+  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 text-ink"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={returnId ? "/admin/returns" : "/shop"}>← {returnId ? "Все возвраты" : "Каталог"}</Link>
-    <h1 className="text-2xl font-semibold">{returnId ? "Возврат" : "Управление возвратами"}</h1>
+    <h1 className="text-2xl font-bold">{returnId ? "Возврат" : "Управление возвратами"}</h1>
     <nav className="flex gap-5" aria-label="Администрирование"><Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/analytics">Аналитика</Link></nav>
-    {error && <p role="alert" className="text-rose-300">{error}</p>}
+    {error && <p role="alert" className="text-danger">{error}</p>}
     <button className="min-h-11 underline" disabled={!!pending || blocked} onClick={() => void refresh()}>Обновить</button>
     {!returnId && !blocked && <form onSubmit={filter} className="grid gap-3 sm:grid-cols-2">
-      <label>Статус<select className="block min-h-11 w-full bg-slate-900" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+      <label>Статус<select className="block min-h-11 w-full bg-surface-muted" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
         <option value="">Все статусы</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>ID заказа<input className="block min-h-11 w-full bg-slate-900" pattern={uuidPattern} value={draft.orderId} onChange={(e) => setDraft({ ...draft, orderId: e.target.value })} /></label>
-      <button className="min-h-11 rounded bg-primary text-on-primary px-4">Применить фильтры</button></form>}
-    {loading && <div aria-label="Загрузка возвратов" className="h-24 animate-pulse rounded bg-slate-900" />}
+      <label>ID заказа<input className="block min-h-11 w-full bg-surface-muted" pattern={uuidPattern} value={draft.orderId} onChange={(e) => setDraft({ ...draft, orderId: e.target.value })} /></label>
+      <button className="app-button app-button-primary min-h-11 px-4">Применить фильтры</button></form>}
+    {loading && <div aria-label="Загрузка возвратов" className="h-24 animate-pulse rounded-xl bg-surface-muted" />}
     {!returnId && result && !blocked && <>
       {!result.items.length && <p>По выбранным условиям возвратов нет. Измените фильтры.</p>}
-      <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded bg-slate-900 p-4">
+      <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded-xl bg-surface-muted p-4">
         <Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns/${item.id}`}>Возврат · {date(item.createdAt)}</Link>
         <p>{labels[item.status]} · заказ {item.orderPublicNumber} · позиций: {item.itemCount}</p>
         <p className="break-words">{item.reason}</p></li>)}</ul>
       <nav aria-label="Страницы возвратов" className="flex gap-4"><button className="min-h-11" disabled={result.page <= 1 || loading} onClick={() => turnPage(result.page - 1)}>Назад</button>
         <span>Страница {result.page}</span><button className="min-h-11" disabled={result.page * result.limit >= result.total || loading} onClick={() => turnPage(result.page + 1)}>Далее</button></nav>
-      <section className="rounded bg-slate-900 p-4"><h2 className="text-xl font-semibold">Зарегистрировать возврат</h2>
+      <section className="rounded-xl bg-surface-muted p-4"><h2 className="text-xl font-bold">Зарегистрировать возврат</h2>
         <form aria-label="Выбор заказа для возврата" className="mt-3 grid gap-3 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void loadOrder(orderInput); }}>
-          <label>ID заказа<input className="block min-h-11 w-full bg-slate-800" pattern={uuidPattern} value={orderInput}
+          <label>ID заказа<input className="block min-h-11 w-full bg-surface" pattern={uuidPattern} value={orderInput}
             onChange={(e) => setOrderInput(e.target.value)} /></label>
-          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending}>Найти заказ</button></form>
+          <button className="app-button app-button-primary min-h-11 px-4" disabled={!!pending}>Найти заказ</button></form>
         {order && ["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && <form aria-label="Оформление возврата" onSubmit={submitCreate} className="mt-3 space-y-3">
           <p>Заказ {order.publicNumber} · {labels[order.status] ?? order.status}</p>
-          {order.items?.map((item) => <div key={item.id} className="rounded bg-slate-800 p-3">
+          {order.items?.map((item) => <div key={item.id} className="rounded-xl bg-surface p-3">
             <p>{item.title} · {item.sku} · в заказе {item.quantity} шт.</p>
             <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
-            <label>Количество к возврату<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={item.quantity}
+            <label>Количество к возврату<input className="block min-h-11 w-full bg-surface-muted" type="number" min={0} max={item.quantity}
               value={quantities[item.id] ?? 0} onChange={(e) => setQuantities({ ...quantities, [item.id]: Math.max(0, Math.min(item.quantity, Number(e.target.value) || 0)) })} /></label></div>)}
           <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Предполагаемое сторно наценки" : "Ожидаемое уменьшение комиссии"}: {money(preview, order.currency)} — применится при завершении возврата.</p>
-          <label className="block">Причина возврата<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || !Object.values(quantities).some((q) => q > 0)}>{pending === "create" ? "Сохранение…" : "Зарегистрировать возврат"}</button>
+          <label className="block">Причина возврата<textarea className="block w-full bg-surface" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+          <button className="app-button app-button-primary min-h-11 px-4" disabled={!!pending || !Object.values(quantities).some((q) => q > 0)}>{pending === "create" ? "Сохранение…" : "Зарегистрировать возврат"}</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setOrder(null); setQuantities({}); setReason(""); setOrderInput(""); }}>Сбросить</button>
         </form>}</section></>}
     {returnId && detail && !blocked && <>
       <h2 className="text-xl">Заказ <Link className="underline" href={`/admin/orders/${detail.orderId}`}>{detail.orderPublicNumber}</Link></h2>
       <p>{labels[detail.status]} · создан {date(detail.createdAt)} · администратор {detail.createdByAdminUserId}</p>
-      <section><h2 className="font-semibold">Причина возврата</h2><p className="break-words">{detail.reason}</p>
+      <section><h2 className="font-bold">Причина возврата</h2><p className="break-words">{detail.reason}</p>
         {detail.note && <p className="break-words">Комментарий: {detail.note}</p>}</section>
-      <section><h2 className="font-semibold">Позиции</h2>{detail.items.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">
+      <section><h2 className="font-bold">Позиции</h2>{detail.items.map((item) => <article key={item.id} className="my-3 rounded-xl bg-surface-muted p-4">
         <h3>{item.title} · {item.sku}</h3><p>{item.quantity} шт. × {money(item.unitPriceMinor, detail.currency)}</p>
         <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitSnapshotMinor, detail.currency)}</p></article>)}</section>
       <p>{detail.economicRegime === "DROPSHIP_MARKUP"
@@ -229,19 +229,19 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
         : detail.status === "COMPLETED" ? "Возвращённая комиссия" : "Ожидаемое уменьшение комиссии"}: {money(detail.reversalPreviewMinor, detail.currency)}{detail.status === "REQUESTED" && " — применится при завершении возврата."}</p>
       <p>Завершение возврата не увеличивает остаток. Получение товара и его состояние нужно подтвердить отдельно.</p>
       {detail.status === "REQUESTED" && <section className="flex flex-wrap gap-3">
-        <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
-        <button className="min-h-11 rounded bg-rose-600 px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отклонить возврат"}</button></section>}
-      {confirmComplete && detail.status === "REQUESTED" && <section aria-label="Подтверждение завершения возврата" className="rounded border border-slate-600 p-4">
+        <button className="app-button app-button-primary min-h-11 px-4" disabled={!!pending || loading} onClick={() => { setConfirm(false); setConfirmComplete(true); }}>{pending === "complete" ? "Сохранение…" : "Завершить возврат"}</button>
+        <button className="min-h-11 rounded-xl bg-danger-soft text-danger px-4" disabled={!!pending || loading} onClick={() => { setConfirmComplete(false); setConfirm(true); }}>{pending === "cancel" ? "Сохранение…" : "Отклонить возврат"}</button></section>}
+      {confirmComplete && detail.status === "REQUESTED" && <section aria-label="Подтверждение завершения возврата" className="rounded-xl border border-control p-4">
         <p>{detail.economicRegime === "DROPSHIP_MARKUP" ? "Завершить возврат и сторнировать наценку" : "Завершить возврат и уменьшить комиссию на"} {money(detail.reversalPreviewMinor, detail.currency)}? Уже выплаченное вознаграждение образует задолженность {detail.economicRegime === "DROPSHIP_MARKUP" ? "дропшиппера" : "партнёра"}.</p>
-        <label>Комментарий (необязательно)<textarea className="block w-full bg-slate-900" maxLength={1000} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} /></label>
+        <label>Комментарий (необязательно)<textarea className="block w-full bg-surface-muted" maxLength={1000} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} /></label>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void completeReturn()}>Завершить возврат</button>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => setConfirmComplete(false)}>Не завершать</button></section>}
-      {confirm && <section aria-label="Отклонение возврата" className="rounded border border-slate-600 p-4">
+      {confirm && <section aria-label="Отклонение возврата" className="rounded-xl border border-control p-4">
         <p>Отклонить возврат? Блокировка затронутых позиций снимется; первоначальный срок удержания не меняется.</p>
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void cancelReturn()}>Отклонить возврат</button>
         <button className="min-h-11 px-4 underline" onClick={() => setConfirm(false)}>Не отклонять</button></section>}
       {detail.status === "COMPLETED" && detail.items.some(item => item.physicalAcceptanceAllowed) &&
-        <section className="rounded border border-slate-600 p-4"><h2 className="text-xl font-semibold">Физический приём возврата</h2>
+        <section className="rounded-xl border border-control p-4"><h2 className="text-xl font-bold">Физический приём возврата</h2>
           <p>В продажу поступят только полученные, проверенные и пригодные часы. Непригодное количество учитывается как потеря.</p>
           <form aria-label="Физический приём возврата" onSubmit={acceptPhysical} className="mt-3 space-y-4">
             {detail.items.filter(item => item.physicalAcceptanceAllowed).map(item => {
@@ -251,17 +251,17 @@ export function AdminReturnsScreen({ csrfToken, returnId }: { csrfToken: string;
                 <legend>{item.title} · {item.sku}</legend>
                 <p>Проверено: {item.inspectedQuantity ?? 0} из {item.quantity}; в продажу: {item.saleableQuantity ?? 0}. Осталось принять: {remaining}.</p>
                 {remaining > 0 && <>
-                  <label className="block">Фактически получено, {item.sku}<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={remaining} step={1}
+                  <label className="block">Фактически получено, {item.sku}<input className="block min-h-11 w-full bg-surface-muted" type="number" min={0} max={remaining} step={1}
                     value={value.quantity} onChange={event => setInspection({ ...inspection, [item.id]: { ...value, quantity: Number(event.target.value) } })} /></label>
-                  <label className="block">Из них пригодно, {item.sku}<input className="block min-h-11 w-full bg-slate-900" type="number" min={0} max={value.quantity} step={1}
+                  <label className="block">Из них пригодно, {item.sku}<input className="block min-h-11 w-full bg-surface-muted" type="number" min={0} max={value.quantity} step={1}
                     value={value.saleableQuantity} onChange={event => setInspection({ ...inspection, [item.id]: { ...value, saleableQuantity: Number(event.target.value) } })} /></label>
                 </>}
               </fieldset>;
             })}
             {detail.items.some(item => item.physicalAcceptanceAllowed && item.quantity > (item.inspectedQuantity ?? 0)) && <>
-              <label className="block">Основание приёмки<textarea className="block w-full bg-slate-900" required maxLength={500} value={inspectionReason} onChange={event => setInspectionReason(event.target.value)} /></label>
+              <label className="block">Основание приёмки<textarea className="block w-full bg-surface-muted" required maxLength={500} value={inspectionReason} onChange={event => setInspectionReason(event.target.value)} /></label>
               <label className="flex gap-2"><input type="checkbox" checked={inspected} onChange={event => setInspected(event.target.checked)} />Подтверждаю, что товар получен и проверен на пригодность к продаже</label>
-              <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!inspected || !!pending || loading}>{pending === "inspect" ? "Сохранение…" : "Сохранить приём товара"}</button>
+              <button className="app-button app-button-primary min-h-11 px-4" disabled={!inspected || !!pending || loading}>{pending === "inspect" ? "Сохранение…" : "Сохранить приём товара"}</button>
             </>}
           </form>
         </section>}

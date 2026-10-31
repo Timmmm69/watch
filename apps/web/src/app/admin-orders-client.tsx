@@ -145,30 +145,30 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
     } finally { busy.current = false; setPending(""); }
   };
   const turnPage = (page: number) => { const next = new URLSearchParams(query); next.set("page", String(page)); setQuery(next.toString()); };
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-4xl space-y-5">
+  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 text-ink"><div className="mx-auto max-w-4xl space-y-5">
     <Link className="inline-flex min-h-11 items-center underline" href={orderId ? "/admin/orders" : "/shop"}>← {orderId ? "Все заказы" : "Каталог"}</Link>
-    <h1 className="text-2xl font-semibold">{orderId ? "Заказ" : "Управление заказами"}</h1>
+    <h1 className="text-2xl font-bold">{orderId ? "Заказ" : "Управление заказами"}</h1>
     <nav className="flex gap-5" aria-label="Администрирование"><Link href="/admin">Обзор</Link><Link href="/admin/partners">Партнёры</Link><Link href="/admin/analytics">Аналитика</Link></nav>
-    {error && <p role="alert" className="text-rose-300">{error}</p>}
+    {error && <p role="alert" className="text-danger">{error}</p>}
     <button className="min-h-11 underline" disabled={!!pending || blocked} onClick={() => void refresh()}>Обновить</button>
     {!orderId && !blocked && <form onSubmit={filter} className="grid gap-3 sm:grid-cols-2">
-      <label>Статус<select className="block min-h-11 w-full bg-slate-900" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+      <label>Статус<select className="block min-h-11 w-full bg-surface-muted" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
         <option value="">Все статусы</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>Способ продажи<select className="block min-h-11 w-full bg-slate-900" value={draft.salesChannel} onChange={(e) => setDraft({ ...draft, salesChannel: e.target.value })}>
+      <label>Способ продажи<select className="block min-h-11 w-full bg-surface-muted" value={draft.salesChannel} onChange={(e) => setDraft({ ...draft, salesChannel: e.target.value })}>
         <option value="">Все способы</option><option value="DIRECT">Покупка в магазине</option><option value="REFERRAL">Покупка по ссылке партнёра</option><option value="PARTNER">Оформлено продавцом</option></select></label>
-      <label>Номер заказа<input className="block min-h-11 w-full bg-slate-900" maxLength={32} value={draft.number} onChange={(e) => setDraft({ ...draft, number: e.target.value })} /></label>
-      <label>ID партнёра<input className="block min-h-11 w-full bg-slate-900" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" value={draft.partnerId} onChange={(e) => setDraft({ ...draft, partnerId: e.target.value })} /></label>
+      <label>Номер заказа<input className="block min-h-11 w-full bg-surface-muted" maxLength={32} value={draft.number} onChange={(e) => setDraft({ ...draft, number: e.target.value })} /></label>
+      <label>ID партнёра<input className="block min-h-11 w-full bg-surface-muted" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" value={draft.partnerId} onChange={(e) => setDraft({ ...draft, partnerId: e.target.value })} /></label>
       {(["dateFrom", "dateTo"] as const).map((key) => <label key={key}>{key === "dateFrom" ? "Начало периода" : "Конец периода"}
-        <input className="block min-h-11 w-full bg-slate-900" type="datetime-local" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
+        <input className="block min-h-11 w-full bg-surface-muted" type="datetime-local" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
       <label><input type="checkbox" checked={draft.overdue} onChange={(e) => setDraft({ ...draft, overdue: e.target.checked })} /> Просроченные</label>
       <label><input type="checkbox" checked={draft.reconciliationPending} onChange={(e) => setDraft({ ...draft, reconciliationPending: e.target.checked })} /> Требуют сверки остатков</label>
-      <button className="min-h-11 rounded bg-primary text-on-primary px-4">Применить фильтры</button></form>}
-    {loading && <div aria-label="Загрузка заказов" className="h-24 animate-pulse rounded bg-slate-900" />}
+      <button className="app-button app-button-primary min-h-11 px-4">Применить фильтры</button></form>}
+    {loading && <div aria-label="Загрузка заказов" className="h-24 animate-pulse rounded-xl bg-surface-muted" />}
     {!orderId && result && !blocked && <>
       {!result.items.length && <p>По выбранным условиям заказов нет. Измените фильтры.</p>}
-      <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded bg-slate-900 p-4">
+      <ul className="space-y-3">{result.items.map((item) => <li key={item.id} className="rounded-xl bg-surface-muted p-4">
         <Link className="inline-flex min-h-11 items-center underline" href={`/admin/orders/${item.id}`}>{item.publicNumber}</Link>
-        <p>{labels[item.status]} · {money(item.totalMinor, item.currency)}{item.overdue ? " · Просрочен" : ""}</p><p className="text-sm text-slate-400">{item.salesChannel === "DIRECT" ? "Покупка в магазине" : item.salesChannel === "REFERRAL" ? "Покупка по ссылке партнёра" : item.salesChannel === "PARTNER" ? "Оформлено продавцом" : "Исторический заказ"}</p></li>)}</ul>
+        <p>{labels[item.status]} · {money(item.totalMinor, item.currency)}{item.overdue ? " · Просрочен" : ""}</p><p className="text-sm text-muted">{item.salesChannel === "DIRECT" ? "Покупка в магазине" : item.salesChannel === "REFERRAL" ? "Покупка по ссылке партнёра" : item.salesChannel === "PARTNER" ? "Оформлено продавцом" : "Исторический заказ"}</p></li>)}</ul>
       <nav aria-label="Страницы заказов" className="flex gap-4"><button className="min-h-11" disabled={result.page <= 1 || loading} onClick={() => turnPage(result.page - 1)}>Назад</button>
         <span>Страница {result.page}</span><button className="min-h-11" disabled={result.page * result.limit >= result.total || loading} onClick={() => turnPage(result.page + 1)}>Далее</button></nav></>}
     {order && !blocked && <>
@@ -176,38 +176,38 @@ export function AdminOrdersScreen({ csrfToken, orderId }: { csrfToken: string; o
       {["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && orderId &&
         <p><Link className="inline-flex min-h-11 items-center underline" href={`/admin/returns?order=${orderId}`}>Оформить возврат</Link>
           {order.status === "SHIPPED" && " · В том числе отказ от получения или недоставка"}</p>}
-      <section><h2 className="font-semibold">Получатель</h2>{order.fulfillment && !order.fulfillment.redactedAt ? <>
+      <section><h2 className="font-bold">Получатель</h2>{order.fulfillment && !order.fulfillment.redactedAt ? <>
         <p>{order.fulfillment.recipientName}</p><p>{order.fulfillment.phone}</p><p>{order.fulfillment.address}</p><p>{order.fulfillment.comment}</p></> : <p>Контактные данные не сохранены или удалены.</p>}</section>
-      <section><h2 className="font-semibold">Товары</h2>{order.items?.map((item) => <article key={item.id} className="my-3 rounded bg-slate-900 p-4">
+      <section><h2 className="font-bold">Товары</h2>{order.items?.map((item) => <article key={item.id} className="my-3 rounded-xl bg-surface-muted p-4">
         <h3>{item.title} · {item.sku}</h3><p>{item.quantity} шт. × {money(item.unitPriceMinor, order.currency)} = {money(item.lineTotalMinor, order.currency)}</p>
         <p>{JSON.stringify(item.attributes)}</p><p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Наценка за единицу" : "Комиссия за единицу"}: {money(item.partnerCommissionUnitMinor, order.currency)}</p>
         {item.supplierSettlementUnitMinor !== null && <p>Расчёт с поставщиком за единицу: {money(item.supplierSettlementUnitMinor, order.currency)}</p>}</article>)}</section>
-      <section><h2 className="font-semibold">Атрибуция</h2><p>Партнёр: {order.partnerIdSnapshot ?? "Органический заказ"}</p>
+      <section><h2 className="font-bold">Атрибуция</h2><p>Партнёр: {order.partnerIdSnapshot ?? "Органический заказ"}</p>
         <p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Касание:" : "Реферальный переход:"} {order.attributionTouchId ?? (order.economicRegime === "DROPSHIP_MARKUP" ? "Нет" : "Нет реферального перехода")}</p><p>{order.economicRegime === "DROPSHIP_MARKUP" ? "Право на комиссию при создании:" : "Комиссия предусмотрена при оформлении:"} {order.commissionEligibleSnapshot ? "Да" : "Нет"}</p></section>
-      <section><h2 className="font-semibold">Резервы</h2>{order.reservations?.map((r) => <div key={r.id} className="my-3 break-all rounded bg-slate-900 p-4">
+      <section><h2 className="font-bold">Резервы</h2>{order.reservations?.map((r) => <div key={r.id} className="my-3 break-all rounded-xl bg-surface-muted p-4">
         <p>{r.id} · {reservationLabels[r.status] ?? "Неизвестен"} · {r.quantity} шт.</p><p>Способ сверки: {r.reconciliationMethod === "MANUAL" ? "Ручная" : r.reconciliationMethod === "SOURCE_PROOF" ? "Подтверждение источника" : "Не выполнена"} {r.reconciliationReference}</p>
         <p>Источник: {sourceLabels[r.sourceStatus ?? ""] ?? "Нет данных"} · версия {r.sourceVersion ?? "Нет"}</p><p>Данные синхронизации: {r.lastSuccessfulSyncRunId ?? "Нет"}</p>
         {r.lastSuccessfulSyncAt && <p>Обновлён: {date(r.lastSuccessfulSyncAt)}</p>}
         {r.reconciledAt && <p>Сверен: {date(r.reconciledAt)} · администратор {r.reconciledByAdminUserId}
           · снимок {r.reconciliationInventorySyncRunId} · версия {r.reconciliationSourceVersion ?? "Нет"}</p>}
-        {r.allowedManualTargets?.map((target) => <button key={target} className="min-h-11 rounded bg-primary text-on-primary px-4"
+        {r.allowedManualTargets?.map((target) => <button key={target} className="app-button app-button-primary min-h-11 px-4"
           disabled={!!pending || loading || r.sourceStatus !== "OK" || !r.lastSuccessfulSyncRunId}
           onClick={() => { setReconcile({ id: r.id, target, snapshot: r.lastSuccessfulSyncRunId! }); setReason(""); setEvidence(""); setAttested(false); setConfirm(""); }}>
           {target === "CONSUMED" ? "Подтвердить списание резерва" : "Подтвердить возврат резерва"}</button>)}
         {reconcile?.id === r.id && <form aria-label="Сверка складского резерва" onSubmit={reconcileReservation} className="mt-3 space-y-3">
           <p>{reconcile.target === "CONSUMED" ? "Товар отгружен, и текущие остатки источника уже отражают списание." : "Товар возвращён, и текущие остатки источника уже отражают возврат."}</p>
-          <label className="block">Причина корректировки<textarea className="block w-full bg-slate-800" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-          <label className="block">Ссылка на подтверждение (необязательно)<input className="block min-h-11 w-full bg-slate-800" maxLength={500} value={evidence} onChange={(e) => setEvidence(e.target.value)} /></label>
+          <label className="block">Причина корректировки<textarea className="block w-full bg-surface" required maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+          <label className="block">Ссылка на подтверждение (необязательно)<input className="block min-h-11 w-full bg-surface" maxLength={500} value={evidence} onChange={(e) => setEvidence(e.target.value)} /></label>
           <label className="block"><input type="checkbox" checked={attested} onChange={(e) => setAttested(e.target.checked)} /> Подтверждаю, что показанный снимок остатков уже отражает физический результат.</label>
-          <button className="min-h-11 rounded bg-primary text-on-primary px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
+          <button className="app-button app-button-primary min-h-11 px-4" disabled={!!pending || loading || !attested || !reason.trim()}>Сохранить сверку</button>
           <button type="button" className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => { setReconcile(null); setAttested(false); }}>Закрыть форму сверки</button>
         </form>}</div>)}</section>
       {(order.nativeInventory || order.economicRegime === "DROPSHIP_MARKUP") && <OrderFinance orderId={order.id} request={request} />}
-      <section><h2 className="font-semibold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
+      <section><h2 className="font-bold">История статусов</h2><ol>{order.timeline.map((item) => <li key={item.status}>{labels[item.status]} · {date(item.at)}</li>)}</ol>
         {order.completionEligibleAt && <p>Автоматическое завершение возможно не раньше {date(order.completionEligibleAt)}.</p>}</section>
-      <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="min-h-11 rounded bg-primary text-on-primary px-4"
+      <section className="flex flex-wrap gap-3">{order.allowedTransitions.map((target) => <button key={target} className="app-button app-button-primary min-h-11 px-4"
         disabled={!!pending || loading} onClick={() => { setConfirm(target); setReconcile(null); setAttested(false); }}>{pending === target ? "Сохранение…" : actions[target]}</button>)}</section>
-      {confirm && <section aria-label="Подтверждение действия" className="rounded border border-slate-600 p-4">
+      {confirm && <section aria-label="Подтверждение действия" className="rounded-xl border border-control p-4">
         <p>{actions[confirm]}?</p>{confirm === "DELIVERED" && <p>Подтвердите, что покупатель получил заказ.</p>}
         {confirm === "CANCELLED" && <p>Заказ будет отменён, его резервы освобождены.</p>}
         <button className="min-h-11 px-4 underline" disabled={!!pending} onClick={() => void transition(confirm)}>Подтвердить действие</button>

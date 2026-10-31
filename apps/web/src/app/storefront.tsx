@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CartIndicator, ProductCartActions } from "./cart-client";
 import { ShopContact } from "./shop-contact";
+import { ShopIcon } from "./shop-icon";
+import { BuyerNav } from "./buyer-ui";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { partnerReacceptUrl } from "./partner-client";
@@ -107,6 +109,19 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   const open = (slug: string) => setSelectedSlug(slug);
 
   useEffect(() => {
+    if (!selectedSlug) return;
+    const button = window.Telegram?.WebApp?.BackButton;
+    const back = () => {
+      setSelectedSlug(null); setDetail(null); setLink(""); setLinkError("");
+      const params = new URLSearchParams(searchParams);
+      params.delete("product");
+      router.replace(`/shop${params.size ? `?${params}` : ""}`);
+    };
+    button?.show(); button?.onClick(back);
+    return () => { button?.offClick(back); button?.hide(); };
+  }, [selectedSlug, router, searchParams]);
+
+  useEffect(() => {
     if (productSlug) setSelectedSlug(productSlug);
   }, [productSlug]);
 
@@ -140,18 +155,18 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     finally { setLinkLoading(false); }
   };
 
-  return <main className="app-shell min-h-dvh bg-canvas text-ink"><div className="mx-auto max-w-5xl">
-    <header className="shop-header mb-4 flex flex-wrap items-center justify-between gap-3"><h1>Watch</h1>
-      <span className="min-w-0 break-words text-sm text-muted">Здравствуйте, {name}</span></header>
-    <nav className="mb-5 flex flex-wrap gap-4">
-      {!partnerMode && <Link className="min-h-11 underline" href="/orders">Мои заказы</Link>}
-      {partner ? <Link className="min-h-11 underline" href="/partner">Партнёрский кабинет</Link>
-        : <Link className="min-h-11 underline" href="/partner/onboarding">Продавать с нами</Link>}
-      {partnerTermsReacceptRequired && <Link className="min-h-11 underline" href="/partner/onboarding">Принять новые условия</Link>}
+  return <main className={`app-shell min-h-dvh bg-canvas text-ink${!partnerMode ? ` buyer-shell${!selectedSlug ? " buyer-shell-nav" : ""}` : ""}`}><div className="shop-container">
+    <header className="shop-header"><div className="shop-wordmark"><ShopIcon name="watch" size={32} /><h1>Watch</h1></div>
+      <div className="shop-account"><span className="min-w-0 break-words text-sm text-muted">Здравствуйте, {name}</span>
+        {!partnerMode && !detail && <CartIndicator csrfToken={csrfToken} className="inline-flex min-h-11 items-center" />}</div></header>
+    <nav aria-label="Магазин" className="mb-5 flex flex-wrap gap-4">
+      {!partnerMode && <Link className="shop-orders-link min-h-11" href="/orders">Мои заказы</Link>}
+      {partner ? <Link className="min-h-11" href="/partner">Партнёрский кабинет</Link>
+        : <Link className="min-h-11" href="/partner/onboarding">Продавать с нами</Link>}
+      {partnerTermsReacceptRequired && <Link className="min-h-11" href="/partner/onboarding">Принять новые условия</Link>}
     </nav>
-    {!partnerMode && !detail && <CartIndicator csrfToken={csrfToken} />}
     {partner && <Link className="min-h-11 underline" href={partnerMode ? "/shop" : "/shop?mode=partner"}>{partnerMode ? "Покупать для себя" : "Рабочий режим продавца"}</Link>}
-    {!partnerMode && !detail && <p className="mb-5 text-ink-secondary">Выберите часы и оформите покупку в корзине. Вопросы по товару и доставке можно задать магазину.</p>}
+    {!partnerMode && !detail && <p className="shop-intro">Выберите часы и оформите покупку в корзине. Вопросы по товару и доставке можно задать магазину.</p>}
     {!partnerMode && new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("referral") === "unavailable" && <p role="status" className="mb-5 text-warning">Ссылка недоступна. Можно купить напрямую.</p>}
     {partner?.status === "BLOCKED" && <p role="status" className="mb-5 text-warning">Новые заказы и заявки на выплату недоступны. Каталог и история доступны для просмотра.</p>}
     {partnerMode && partner && !detail && <section className="app-panel mb-6" aria-label="Партнёрская ссылка">
@@ -175,11 +190,11 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
       <h2 className="mb-2 text-3xl font-bold">{detail.title}</h2>
       {detail.brand && <p className="text-ink-secondary">{detail.brand}</p>}
       <p className="mb-5 text-ink-secondary">{detail.description}</p>
-      <div className="grid gap-4 sm:grid-cols-2">{detail.gallery.map((asset) => asset.type === "IMAGE" && asset.mediaUrl
+      <div className="shop-detail-layout"><div className="shop-gallery">{detail.gallery.length === 0 && <div className="shop-product-media shop-product-placeholder"><ShopIcon name="watch" size={48} /><span>Фото недоступно</span></div>}{detail.gallery.map((asset) => asset.type === "IMAGE" && asset.mediaUrl
         ? <img key={asset.id} src={asset.mediaUrl} alt={detail.title} className="w-full rounded-xl bg-surface object-contain" />
         : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-surface" />
           : asset.text ? <p key={asset.id} className="rounded-xl bg-surface p-4">{asset.text}</p> : null)}</div>
-      {partnerMode && detail.partnerView && <div className="app-panel mt-6">
+      <div className="shop-detail-purchase">{partnerMode && detail.partnerView && <div className="app-panel mt-6">
         <h3 className="mb-3 text-lg font-bold">Материалы и условия для продажи</h3>
         {detail.partnerView.referralEligible
           ? <button type="button" disabled={linkLoading} className="app-button app-button-primary mb-3 min-h-11 px-4 disabled:opacity-50"
@@ -198,7 +213,7 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
           : asset.type === "VIDEO" && asset.mediaUrl ? <video key={asset.id} src={asset.mediaUrl} controls className="w-full rounded-xl bg-canvas" />
             : asset.text ? <p key={asset.id} className="rounded-xl bg-canvas p-4">{asset.text}</p> : null)}</div>}
       </div>}
-      <p className="mt-6 text-lg font-medium">{partnerMode ? "Розничная цена — от " : "От "}{price(detail.priceFromMinor, detail.currency)}</p>
+      <p className="mt-6 text-lg font-bold">{partnerMode ? "Розничная цена — от " : "От "}{price(detail.priceFromMinor, detail.currency)}</p>
       <p className="mt-2">{labels[detail.availability]}</p>
       {!partnerMode ? <section className="mt-5 space-y-3" aria-label="Варианты товара">
         <p>Показана цена магазина. Оформите заказ самостоятельно или задайте вопрос магазину.</p>
@@ -215,17 +230,16 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         {variant.dropshipPriceMinor != null && variant.availability === "IN_STOCK" && partner?.status === "ACTIVE" && !partnerTermsReacceptRequired && !detail.partnerView?.readOnlyReason
           ? <Link className="inline-flex min-h-11 items-center underline" href={`/checkout?mode=partner&product=${encodeURIComponent(detail.slug)}&variant=${variant.id}`}>Оформить заказ клиенту</Link>
           : <p>{detail.partnerView?.readOnlyReason === "PARTNER_BLOCKED" ? "Новые заказы недоступны. Обратитесь в поддержку." : partnerTermsReacceptRequired || detail.partnerView?.readOnlyReason === "TERMS_REACCEPT_REQUIRED" ? "Примите текущие условия в кабинете." : "Оформление недоступно."}</p>}
-      </div>)}</section>}
+      </div>)}</section>}</div></div>
     </section> : <>
-      <h2 className="mb-4 text-2xl font-bold tracking-tight">Каталог часов</h2>
-      <form onSubmit={apply} className="shop-search mb-5 flex gap-2"><label className="sr-only" htmlFor="shop-search">Поиск товаров</label>
+      <form onSubmit={apply} className="shop-search"><div className="shop-search-field"><label htmlFor="shop-search">Поиск товаров</label>
         <input id="shop-search" value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })}
-          placeholder="Поиск товаров" maxLength={100} className="app-input min-h-11 min-w-0 flex-1" />
-        <button className="app-button app-button-primary min-h-11 px-4">Найти товары</button>
-        <button type="button" className="app-button min-h-11 px-4" onClick={() => setDrawer(true)}>Фильтры</button></form>
+          placeholder="Название или бренд часов" maxLength={100} /></div>
+        <button type="button" className="shop-filter-button" onClick={() => setDrawer(true)}><ShopIcon name="filters" size={20} /><span>Фильтры</span></button>
+        <button className="app-button app-button-primary shop-search-submit"><ShopIcon name="search" size={20} /><span className="sr-only">Найти товары</span></button></form>
       {categories.length > 0 && <nav aria-label="Категории" className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {[{ id: "", slug: "", name: "Все" }, ...categories].map((category) => <button key={category.id} type="button"
-          aria-pressed={filters.category === category.slug} className="shop-category min-h-11 shrink-0 rounded-full px-4"
+          aria-pressed={filters.category === category.slug} className="shop-category"
           onClick={() => { setFilters({ ...filters, category: category.slug }); setDraft({ ...draft, category: category.slug }); setPage(1); }}>{category.name}</button>)}
       </nav>}
       <dialog ref={filterDialog} aria-labelledby="catalog-filters-title" onCancel={() => setDrawer(false)}
@@ -249,21 +263,23 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
           <div className="flex gap-3"><button type="button" className="app-button min-h-11 flex-1" onClick={reset}>Сбросить</button>
             <button className="app-button app-button-primary min-h-11 flex-1">Показать товары</button></div>
         </form></dialog>
-      {!loaded || catalogMode !== partnerMode ? <div aria-label="Загрузка товаров" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((n) =>
-        <div key={n} className="h-64 animate-pulse rounded-xl bg-surface" />)}</div>
+      <div className="shop-section-heading"><h2>Каталог часов</h2>
+        {loaded && catalogMode === partnerMode && !error && <p role="status" className="text-sm text-muted">Найдено: {total}</p>}</div>
+      {!loaded || catalogMode !== partnerMode ? <div aria-label="Загрузка товаров" className="shop-grid">{[0, 1, 2, 3, 4, 5].map((n) =>
+        <div key={n} className="aspect-square animate-pulse rounded-xl bg-surface-muted" />)}</div>
       : items.length === 0 && !error ? <div className="py-12 text-center text-ink-secondary">
         <p>{Object.values(filters).some(Boolean) ? "По выбранным условиям ничего не найдено." : "Пока нет опубликованных товаров."}</p>
         {Object.values(filters).some(Boolean) && <button type="button" className="mt-4 min-h-11 underline" onClick={reset}>Сбросить фильтры</button>}
-      </div> : <><section aria-label="Товары" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{items.map((product) => {
+      </div> : <><section aria-label="Товары" className="shop-grid">{items.map((product) => {
         const cover = product.gallery.find((asset) => asset.type === "IMAGE" && asset.mediaUrl);
         return <button key={product.id} type="button" onClick={() => void open(product.slug)}
-          className="shop-product min-h-11 overflow-hidden text-left">
-          {cover?.mediaUrl ? <img src={cover.mediaUrl} alt={product.title} className="shop-product-media aspect-square w-full object-cover" />
-            : <div className="shop-product-media flex aspect-square items-center justify-center text-muted">Watch</div>}
-          <div className="p-5"><h2 className="text-lg font-bold">{product.title}</h2>
+          className="shop-product">
+          {cover?.mediaUrl ? <img src={cover.mediaUrl} alt={product.title} loading="lazy" className="shop-product-media" />
+            : <div className="shop-product-media shop-product-placeholder"><ShopIcon name="watch" size={40} /><span>Фото недоступно</span></div>}
+          <div className="shop-product-info"><h3>{product.title}</h3>
             {product.brand && <p className="mt-1 text-sm text-muted">{product.brand}</p>}
-            <p className="shop-product-price mt-4">{partnerMode ? "Розничная цена — от " : "От "}{price(product.priceFromMinor, product.currency)}</p>
-            <p className="mt-2 text-sm text-muted">{labels[product.availability]}</p>
+            <p className="mt-1 text-sm text-muted">{labels[product.availability]}</p>
+            <p className="shop-product-price mt-2">{partnerMode ? "Розничная цена — от " : "От "}{price(product.priceFromMinor, product.currency)}</p>
             {partnerMode && product.partnerView && <div className="mt-3 border-t border-hairline pt-2 text-sm">
               <p className="text-success">Комиссия: {price(product.partnerView.commissionFromMinor, product.currency)} – {price(product.partnerView.commissionToMinor, product.currency)}</p>
               {product.partnerView.referralEligible
@@ -271,11 +287,12 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
                 : <p className="text-warning">{reasonLabel(product.partnerView.readOnlyReason) ?? "Реферальная ссылка недоступна"}</p>}
             </div>}</div></button>;
       })}</section>
-        <nav aria-label="Страницы каталога" className="mt-7 flex items-center justify-center gap-5">
+        <nav aria-label="Страницы каталога" className="shop-pagination mt-7 flex items-center justify-center gap-5">
           <button type="button" disabled={page === 1} className="min-h-11 px-3 disabled:opacity-40" onClick={() => setPage(page - 1)}>Назад</button>
           <span>{page} / {Math.max(1, Math.ceil(total / limit))}</span>
           <button type="button" disabled={page * limit >= total} className="min-h-11 px-3 disabled:opacity-40" onClick={() => setPage(page + 1)}>Далее</button>
         </nav></>}
     </>}
-  </div></main>;
+    <footer className="shop-footer"><p className="font-bold text-ink">Watch · Часы для вашего ритма</p><p className="mt-1">Вопросы по выбору и доставке? Свяжитесь с магазином из карточки товара.</p></footer>
+  </div>{!partnerMode && !selectedSlug && <BuyerNav active="shop" />}</main>;
 }

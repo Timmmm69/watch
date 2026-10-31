@@ -17,7 +17,7 @@ export function contactUrl(contact: string, draft?: string): string | undefined 
   return undefined;
 }
 
-export function ShopContact({ contact = "", draft, label = "Связаться с магазином", primary = false }: { contact?: string; draft?: string; label?: string; primary?: boolean }) {
+export function ShopContact({ contact = "", draft, label = "Связаться с магазином", primary = false, compact = false }: { contact?: string; draft?: string; label?: string; primary?: boolean; compact?: boolean }) {
   const [copyState, setCopyState] = useState("");
   const url = contactUrl(contact, draft);
   const copy = async () => {
@@ -25,7 +25,8 @@ export function ShopContact({ contact = "", draft, label = "Связаться �
     catch { setCopyState("Не удалось скопировать. Выделите и скопируйте текст запроса вручную."); }
   };
   return <section aria-label="Связь с магазином" className="space-y-3 break-words">
-    {draft && <><p className="whitespace-pre-wrap select-text">{draft}</p>
+    {draft && compact && <details className="buyer-contact-draft"><summary>Текст обращения</summary><p className="whitespace-pre-wrap select-text">{draft}</p><button type="button" className="buyer-text-action" onClick={() => void copy()}>Скопировать запрос</button></details>}
+    {draft && !compact && <><p className="whitespace-pre-wrap select-text">{draft}</p>
       <button type="button" className="app-button" onClick={() => void copy()}>Скопировать запрос</button>
       <p className="text-sm text-muted">Запрос отправляете вы. При обращении согласуйте итоговую стоимость и доставку.</p></>}
     {url ? <a className={`app-button${primary ? " app-button-primary" : ""}`} href={url} target="_blank" rel="noopener noreferrer">{label}</a>

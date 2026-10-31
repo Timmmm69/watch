@@ -1,97 +1,125 @@
 # Watch design system
 
-The product uses a Notion-inspired visual language, adapted from the supplied
-`DESIGN-notion.md`. This is a Watch theme, not an official Notion component kit.
-The existing Next.js, Tailwind 4 and React stack remains the foundation.
+Watch uses the supplied [Airbnb reference](DESIGN-airbnb.md), adapted to a
+Telegram watch store. Product names, prices, purchase channels, permissions,
+legal copy and API contracts retain their existing meaning.
 
-## Direction
+## Visual direction
 
-Warm paper canvas, white surfaces, near-black type and one blue action color.
-Information architecture, navigation labels, legal content and workflows remain
-the product's own. Marketing illustrations and an inverted hero are not required
-for commerce forms, financial screens or administrative tools.
+White canvas, near-black text, restrained coral actions, rounded controls and
+photography as the main source of colour. Cards have no enclosing border or
+resting shadow: their square photographs have 16px corners, with short text
+below. Categories use neutral text and a black underline for selection. Links,
+checkboxes and focus outlines are neutral; status colours convey real feedback.
+No invented ratings, favourites, inventory badges or nonfunctional controls.
 
-Taste settings: DESIGN_VARIANCE 4, MOTION_INTENSITY 2, VISUAL_DENSITY 5.
-The taste skill's marketing-only rules do not govern product tables or forms.
+The source of truth for tokens and primitives is
+`apps/web/src/app/globals.css`. Use semantic utilities in every screen,
+including partner and administrative screens, instead of hardcoded dark colours.
 
-## Tokens
-
-The single source of truth is `apps/web/src/app/globals.css`. Use semantic
-utilities rather than hardcoded slate shades or individual hex colors.
-
-| Role | Utility | Light value |
+| Role | Utility | Value |
 | --- | --- | --- |
-| Page background | `bg-canvas` | `#f6f5f4` |
-| Panels and fields | `bg-surface` | `#ffffff` |
-| Media and secondary surfaces | `bg-surface-muted` | `#efeeec` |
-| Primary text | `text-ink` | `#20201e` |
-| Secondary text | `text-ink-secondary` | `#31302e` |
-| Supporting text and placeholders | `text-muted` | `#615d59` |
-| Dividers | `border-hairline` | `#e6e6e6` |
-| Form and utility-button borders | `border-control` | `#918b84` |
-| Primary action | `bg-primary` | `#0075de` |
-| Pressed primary | `bg-primary-active` | `#005bab` |
-| Text on a primary action | `text-on-primary` | `#ffffff` |
-| Inline links | `text-link` | `#005bab` |
-| Success, warning, error | `text-success`, `text-warning`, `text-danger` | Dedicated accessible colors |
+| Canvas / panels | `bg-canvas` / `bg-surface` | `#ffffff` |
+| Secondary surface | `bg-surface-muted` | `#f7f7f7` |
+| Primary text / links | `text-ink` / `text-link` | `#222222` |
+| Supporting text | `text-muted` | `#717171` |
+| Decorative dividers | `border-hairline` | `#dddddd` |
+| Form borders | `border-control` | `#858585` |
+| Primary action / Watch mark | `bg-primary` | `#ff385c` |
+| Primary hover | `bg-primary-active` | `#e31c5f` |
+| Errors | `text-danger` | `#c13515` |
+| Success / warning | `text-success` / `text-warning` | `#217347` / `#855400` |
 
-Blue is reserved for actions, links, selection and focus. Link blue is darker
-than the reference's primary blue to maintain contrast on paper backgrounds.
-The reference's faint ash is darkened for control borders (3.37:1 on white)
-and is not used for small text. White text on primary blue has 4.57:1 contrast.
-Semantic status colors supplement the reference because operational screens
-need readable success, warning and error states. Destructive actions use a pale
-red surface and red text instead of competing with the primary blue fill.
+## Typography and accessibility adaptations
 
-Dark mode follows `prefers-color-scheme`, swapping the same semantic variables
-to warm charcoal surfaces and lighter text. No page mixes light and dark panels.
+Self-hosted **Nunito Variable**, the open-source rounded alternative listed in
+the reference, includes Cyrillic. Use weights **400 and 700** and normal tracking.
+The TTF is served locally, without a runtime font request to Google.
+[Source](https://github.com/google/fonts/tree/main/ofl/nunito) and the SIL Open
+Font License are retained at `public/fonts/Nunito-OFL.txt`.
+Airbnb's proprietary Cereal font and logo are not bundled.
 
-## Typography and shape
+- Page headings: 28px / 700; section headings: 22px / 700.
+- Body: 16px / 400; card titles and prices: 14px / 700; metadata: 14px / 400.
+- Input text: 16px to avoid mobile zoom. Search labels: 12px / 700.
+- Primary text buttons: **19px / 700**. White on exact `#ff385c` has about
+  3.22:1 contrast, sufficient for large bold text (at least 18.67px), not normal
+  small text. The search action uses a white icon and an accessible hidden label.
+- Secondary text `#717171` is for white backgrounds. Do not lower opacity on it.
+- Control borders use a darker neutral than decorative hairlines.
+- Fields: 12px corners; panels and photographs: 16px; modal sheets: 24px;
+  buttons and search: 50px. Touch targets are at least 44px.
+- Keyboard focus stays visible; dialogs use native focus containment and Escape.
+  Reduced motion disables transitions and pulsing skeletons.
 
-Self-hosted Inter Variable supports Cyrillic, weights 100-900 and optical sizing.
-The font and its SIL Open Font License live in `apps/web/public/fonts/`.
-Source: [Inter](https://rsms.me/inter/).
+This reference is explicitly a light visual system. Watch stays white even when
+the host prefers dark mode, so dark Telegram settings do not reintroduce the
+previous charcoal theme. Future dark mode requires a separate designed palette.
 
-- Page titles: responsive 28-40px, weight 700, tight tracking and 1.15 line height.
-- Watch wordmark and authentication title: 28px.
-- Body: 15px with 1.5 line height. Form controls: 16px to avoid mobile input zoom.
-- Financial numbers: tabular numerals. Balance figures: responsive 24-32px.
-- Panels and product cards: 12px corners. Utility buttons: 8px. Fields: 4px.
-- Category selectors: pills. Pill shapes do not extend to form fields.
-- Spacing: 4px increments, generally 16-24px within groups and 24-40px between groups.
+## Components and layout
 
-## Shared primitives
-
-| Class | Purpose |
+| Class | Use |
 | --- | --- |
-| `app-shell` | Responsive page gutters, 100dvh height and bottom safe-area inset |
-| `app-panel` | White/charcoal panel, hairline border, 24px desktop / 20px mobile padding |
-| `app-button` | Neutral 44px utility action with hover, press, focus and disabled states |
-| `app-button app-button-primary` | Blue action with explicit white text |
-| `app-input` | Bordered field with consistent typography and padding |
-| `app-table-wrap` | Bordered table container with local horizontal scrolling |
-| `shop-product` | Product card with a quiet border and restrained elevation |
-| `shop-category` | Category pill with an `aria-pressed` selection state |
-| `earnings-balances` | Readable financial balance group with tabular numbers |
+| `app-shell` | Safe-area-aware gutters and full viewport height |
+| `app-panel` | White panel, subtle border, 24px padding (20px on phones) |
+| `app-button` | Neutral outlined pill; `app-button-primary` for the main action |
+| `app-input` | Rounded, readable field with visible border |
+| `app-table-wrap` | Table with scrolling confined to its own container |
+| `shop-search` | Floating search pill with field, filters and coral search circle |
+| `shop-grid` / `shop-product` | Borderless image-led product catalog |
+| `shop-category` | Underlined category selected through `aria-pressed` |
+| `shop-modal` | Bottom sheet on phones, centered dialog on larger screens |
+| `shop-detail-layout` | Gallery and purchase area side by side, stacked on phones |
+| `earnings-balances` | Neutral balance group with tabular figures |
 
-Keep labels above fields and errors alongside the relevant input. All focus
-targets receive a visible outline. Only feedback transitions are added; reduced
-motion disables transitions and existing pulsing loaders. Product photography
-comes from catalog media; missing images retain an honest neutral placeholder.
+Storefront width is at most 1280px; desktop gutters are at least 24px and mobile
+gutters 16px. The grid has four columns from 1200px, three from 768px, two from
+360px and one below 360px. Gaps use the 4px scale. Header links wrap; categories
+scroll horizontally. Photo-free products show an honest watch placeholder.
+Existing mobile purchase bars retain their bottom safe-area padding.
 
-## Responsive behavior
+## Verification
 
-- Below 640px: 16px page gutters, one-column product grid, full-width search
-  field followed by two equal action buttons, and a scrollable filter sheet.
-- From 640px: two-column products; filters open in a centered panel.
-- From 1024px: three-column products within the existing content container.
-- Navigation wraps when needed. Wide tables scroll within their own containers.
-- Forms, tables and financial values keep their content and existing semantics.
+Run web typecheck/build, the existing storefront and checkout feedback suites,
+and `airbnb-design.spec.ts` for responsive layout, dialog keyboard behavior,
+light appearance under both host colour preferences and local font loading.
+Review catalog, product, filter sheet, cart, checkout, partner and admin screens.
+Backend/database suites require their documented disposable PostgreSQL setup.
 
-## Review checklist
+## Complete buyer journeys in Telegram
 
-Check light and dark themes at desktop and mobile widths, primary-button and
-form contrast, visible keyboard focus, disabled controls, selected categories,
-loading/empty/error states, table scrolling and the filter sheet. Confirm local
-Inter loads and pages do not gain horizontal overflow. Use existing Playwright
-workflow tests to check that visual changes preserve product behavior.
+The buyer flow has its own shared `buyer-ui.tsx` primitives. Cart, checkout,
+confirmation, order history, order detail and entry/recovery screens use the same
+mobile hierarchy as the storefront. Partner financial workflows keep their own
+information architecture.
+
+- Cart rows use a watch icon because the cart API supplies no photograph. Do not
+  invent images or add a catalog fetch per row. Quantity controls have 44px
+  targets, errors remain beside the item, and the summary separates delivery
+  clarification from the known goods total.
+- Checkout groups the existing fields into recipient, delivery and purchase
+  terms. Keep explicit acceptance, legal version refresh, price reconfirmation,
+  retained field values and idempotent retry behavior. The submit area stays in
+  document flow so the keyboard does not compete with a fixed purchase bar.
+- Order history uses status/date/amount cards. Detail shows only the actual
+  returned timeline, purchased items, retained delivery data and order support.
+  No predicted delivery milestones or payment promises are added.
+- A three-item buyer dock appears on phone catalog/history/detail pages. Product
+  and cart replace it with the purchase action. The dock hides while a field is
+  focused for text entry; native status pickers keep the dock available. Desktop
+  navigation remains available through the existing links.
+- Fixed purchase bars measure their rendered height with ResizeObserver. The
+  containing buyer shell reserves that space, and scroll margins prevent a
+  focused or programmatically scrolled target from sitting beneath the bar.
+- CSS consumes Telegram's device and content safe-area inset variables along
+  with browser `env(safe-area-inset-*)`. `viewport-fit=cover` is declared without
+  disabling zoom. Background/header/bottom bar colours use version-gated SDK
+  methods. Product detail also integrates Telegram's BackButton.
+
+SDK reference: [Telegram Mini Apps](https://core.telegram.org/bots/webapps).
+
+The buyer mobile suite exercises 320×640, 390×844, 430×932 and 844×390 viewports,
+nonzero Telegram insets, long content, stock errors, quantity updates, a reduced
+viewport during data entry, creation confirmation, order detail and history.
+Browser emulation is not a replacement for a final check inside Telegram on a
+physical iOS/Android device, including the real software keyboard.

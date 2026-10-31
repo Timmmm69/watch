@@ -32,13 +32,13 @@ export function AdminCatalogScreen({ csrfToken }: { csrfToken: string }) {
     });
   };
   return <AdminCatalogLayout title="Каталог товаров">
-    {api.error && <p role="alert" className="text-amber-300">{api.error}</p>}
+    {api.error && <p role="alert" className="text-warning">{api.error}</p>}
     {api.denied ? <p>Вы не можете редактировать каталог.</p> : <>
       <button className={buttonClass} disabled={api.busy} onClick={refresh}>Обновить</button>
       {(!products || !categories) && !api.error && <p role="status">Загрузка каталога…</p>}
       <fieldset disabled={api.busy} className="space-y-5">
-        <form aria-label="Создать товар" className="space-y-3 rounded bg-slate-900 p-4" onSubmit={createProduct}>
-          <h2 className="text-lg font-semibold">Новый товар</h2><Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} /></Field>
+        <form aria-label="Создать товар" className="space-y-3 rounded-xl bg-surface-muted p-4" onSubmit={createProduct}>
+          <h2 className="text-lg font-bold">Новый товар</h2><Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} /></Field>
           <button className={buttonClass}>Создать черновик</button>
         </form>
         <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
@@ -49,15 +49,15 @@ export function AdminCatalogScreen({ csrfToken }: { csrfToken: string }) {
           <Field label="Статус товаров"><select name="status" className={inputClass}><option value="">Все статусы</option><option value="DRAFT">{productStatusLabels.DRAFT}</option><option value="ACTIVE">{productStatusLabels.ACTIVE}</option><option value="ARCHIVED">{productStatusLabels.ARCHIVED}</option></select></Field>
           <button className={buttonClass}>Применить</button></form>
         {products && <section aria-label="Товары">
-          <h2 className="text-lg font-semibold">Товары</h2>{products.items.length === 0 && <p>Товаров пока нет.</p>}
-          <ul className="space-y-3">{products.items.map(product => <li key={product.id} className="rounded bg-slate-900 p-4">
+          <h2 className="text-lg font-bold">Товары</h2>{products.items.length === 0 && <p>Товаров пока нет.</p>}
+          <ul className="space-y-3">{products.items.map(product => <li key={product.id} className="rounded-xl bg-surface-muted p-4">
             <Link className="underline" href={`/admin/products/${product.id}`}>{product.title}</Link>
             <p>{productStatusLabels[product.status] ?? "Статус уточняется"} · {product.brand ?? "Бренд не указан"} · {availabilityLabels[product.availability] ?? product.availability}</p>
             <p>Категории: {product.categories.map(c => `${c.name} (${categoryStatusLabels[c.status] ?? "Статус уточняется"})`).join(", ") || "Нет категорий"}</p>
             <p>Варианты: {product.variants.map(v => `${v.sku} (${variantStatusLabels[v.status] ?? "Статус уточняется"}) — ${v.priceMinor / 100} ${v.currency}`).join(", ") || "Нет вариантов"}</p>
           </li>)}</ul><Pagination data={products} onPage={page => { const next = new URLSearchParams(query); next.set("page", String(page)); setQuery(next.toString()); }} />
         </section>}
-        <section aria-label="Категории" className="space-y-4"><h2 className="text-lg font-semibold">Категории</h2>
+        <section aria-label="Категории" className="space-y-4"><h2 className="text-lg font-bold">Категории</h2>
           <CategoryForm save={async (payload) => { await api.request("/api/v1/admin/categories", "POST", payload); refresh(); }} mutate={api.mutate} />
           {categories?.items.length === 0 && <p>Категорий пока нет.</p>}
           {categories?.items.map(category => <CategoryForm key={`${category.id}:${category.updatedAt}`} category={category}
@@ -70,7 +70,7 @@ export function AdminCatalogScreen({ csrfToken }: { csrfToken: string }) {
 }
 
 function CategoryForm({ category, save, mutate }: { category?: Category; save: (payload: object) => Promise<void>; mutate: (action: () => Promise<void>, confirmation?: string) => Promise<void> }) {
-  return <form aria-label={category ? `Категория ${category.name}` : "Новая категория"} className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
+  return <form aria-label={category ? `Категория ${category.name}` : "Новая категория"} className="space-y-3 rounded-xl border border-hairline p-4" onSubmit={event => {
     event.preventDefault(); const element = event.currentTarget; const form = new FormData(element);
     const payload = { name: String(form.get("name")), ...(form.get("slug") ? { slug: String(form.get("slug")) } : {}),
       sortOrder: Number(form.get("sortOrder")), ...(category ? { status: String(form.get("status")) } : {}) };

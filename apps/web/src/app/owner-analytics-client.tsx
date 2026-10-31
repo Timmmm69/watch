@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { useRouter, useSearchParams } from "next/navigation";
 import type { OwnerReport, OwnerWork, OwnerQueue } from "../../../../packages/contracts/src/index";
 
-const inputClass = "min-h-11 rounded border border-slate-600 bg-slate-900 p-2";
+const inputClass = "min-h-11 rounded border border-control bg-surface-muted p-2";
 const queueLabels: Record<OwnerQueue,string> = { new:"Новые заказы",overdue:"Заказы с задержкой",unpaid:"Оплата не подтверждена после доставки",
   returns:"Возвраты: обработка, приёмка или возмещение",payouts:"Выплаты к обработке",inventory:"Ошибки склада" };
 const minskDate = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone:"Europe/Minsk",year:"numeric",month:"2-digit",day:"2-digit" }).format(date);
@@ -18,10 +18,10 @@ const percent = (n: number|null) => n===null ? "Нет данных" : `${(n*100
 function ReportTable({ label, headers, children }: {label:string;headers:string[];children:ReactNode}) {
   return <div className="max-w-full overflow-x-auto" role="region" aria-label={label} tabIndex={0}>
     <table style={{minWidth:headers.length>5 ? 1100 : 760}} className="w-full border-collapse text-left text-sm"><caption className="py-3 text-left text-xl">{label}</caption>
-      <thead><tr>{headers.map(h=><th className="border-b border-slate-600 p-3" scope="col" key={h}>{h}</th>)}</tr></thead>
+      <thead><tr>{headers.map(h=><th className="border-b border-control p-3" scope="col" key={h}>{h}</th>)}</tr></thead>
       <tbody>{children}</tbody></table></div>;
 }
-const cell = "border-b border-slate-800 p-3 align-top";
+const cell = "border-b border-hairline p-3 align-top";
 
 export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) {
   const router=useRouter(), search=useSearchParams();
@@ -55,16 +55,16 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
     const next=params(dates); if(next===query) void load();else setQuery(next);
   }
   const c=report?.cohort, fmt=(n:number|null)=>money(n,report?.currency??"BYN");
-  const coverage=(v:OwnerReport["cohort"]["contribution"])=> <>{fmt(v.fullMinor)}<br/><span className="text-xs text-slate-300">
+  const coverage=(v:OwnerReport["cohort"]["contribution"])=> <>{fmt(v.fullMinor)}<br/><span className="text-xs text-muted">
     Покрытая часть: {fmt(v.coveredMinor)} · {v.coveredOrders}/{v.closedOrders} закрытых заказов</span></>;
   const settlement=(v:OwnerReport["obligations"])=> <>Ожидается {fmt(v.pendingMinor)}<br/>Доступно по журналу {fmt(v.availableMinor)}<br/>
     Заблокировано в заявках {fmt(v.lockedMinor)}<br/>Выплачено {fmt(v.paidMinor)}<br/>Долг {fmt(v.debtMinor)}
-    {v.payoutBlocked && <p className="text-amber-300">Текущие факты блокируют новую выплату. Проверьте оплату и возвраты.</p>}</>;
-  return <main className="min-h-screen min-w-0 space-y-6 bg-slate-950 p-5 text-slate-100 sm:p-8">
+    {v.payoutBlocked && <p className="text-warning">Текущие факты блокируют новую выплату. Проверьте оплату и возвраты.</p>}</>;
+  return <main className="min-h-screen min-w-0 space-y-6 bg-canvas p-5 text-ink sm:p-8">
     <nav aria-label="Администрирование" className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/orders">Заказы</Link>
       <Link href="/admin/returns">Возвраты</Link><Link href="/admin/payouts">Выплаты</Link><Link href="/admin/inventory">Склад</Link>
       <Link href="/admin/partners">Партнёры</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/shop">Магазин</Link></nav>
-    <h1 className="text-2xl font-semibold">{queue ? "Рабочая очередь" : dashboard ? "Рабочий обзор владельца" : "Аналитика владельца"}</h1>
+    <h1 className="text-2xl font-bold">{queue ? "Рабочая очередь" : dashboard ? "Рабочий обзор владельца" : "Аналитика владельца"}</h1>
     {!blocked && !queue && <form onSubmit={apply} className="flex flex-wrap items-end gap-4">
       <label className="grid gap-2">С даты (Минск)<input type="date" className={inputClass} required value={dates.from} onChange={e=>setDates({...dates,from:e.target.value})}/></label>
       <label className="grid gap-2">До даты, не включая (Минск)<input type="date" className={inputClass} required value={dates.to} onChange={e=>setDates({...dates,to:e.target.value})}/></label>
@@ -77,13 +77,13 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
     {!blocked && work && <section className="space-y-4" aria-label="Список рабочей очереди"><h2 className="text-xl">{queueLabels[work.queue]} · {work.total}</h2>
       <p>Показаны все текущие задачи независимо от даты создания.</p>
       {work.total===0 && <p>Задач, требующих действия, сейчас нет.</p>}
-      <ul className="space-y-3">{work.items.map(i=><li key={i.id} className="rounded border border-slate-700 p-4"><Link className="underline" href={i.href}>{i.label}</Link><p className="break-words">{i.detail}</p></li>)}</ul>
+      <ul className="space-y-3">{work.items.map(i=><li key={i.id} className="rounded-xl border border-hairline p-4"><Link className="underline" href={i.href}>{i.label}</Link><p className="break-words">{i.detail}</p></li>)}</ul>
       <div className="flex flex-wrap gap-5">{work.page>1 && <Link href={`/admin/analytics?queue=${work.queue}&page=${work.page-1}`}>Назад</Link>}
         <span>Страница {work.page}</span>{work.page*work.limit<work.total && <Link href={`/admin/analytics?queue=${work.queue}&page=${work.page+1}`}>Далее</Link>}</div>
     </section>}
     {!blocked && report && c && <>
       <section aria-label="Рабочие очереди" className="space-y-3"><h2 className="text-xl">Что требует действия сейчас</h2><p>Все даты; по состоянию на {new Date(report.asOf).toLocaleString("ru-BY",{timeZone:"Europe/Minsk"})} (Минск).</p>
-        <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{(Object.keys(queueLabels) as OwnerQueue[]).map(key=><div className="rounded border border-slate-700 p-4" key={key}>
+        <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{(Object.keys(queueLabels) as OwnerQueue[]).map(key=><div className="rounded-xl border border-hairline p-4" key={key}>
           <dt><Link className="underline" href={`/admin/analytics?queue=${key}`}>{queueLabels[key]}</Link></dt>
           <dd className="mt-2 text-2xl">{key==='overdue' && !report.overdueConfigured ? "Срок обработки не настроен" : report.queues[key]}</dd></div>)}</dl>
       </section>
@@ -97,7 +97,7 @@ export function OwnerAnalyticsScreen({ dashboard=false }: {dashboard?:boolean}) 
           ["Комиссии удержанных продаж",fmt(c.markupMinor)], ["Отмены / невыкупы",`${c.cancelledOrders} / ${c.failedOrders}`],
           ["Заказы с возвратами / единицы",`${c.returnedOrders} / ${c.returnedUnits}`], ["Доля отмен среди созданных",percent(c.cancellationRate)],
           ["Возвраты среди доставленных",percent(c.returnRate)]
-        ].map(([label,value])=><div className="rounded border border-slate-700 p-4" key={label}><dt>{label}</dt><dd className="mt-2 text-xl">{value}</dd></div>)}</dl>
+        ].map(([label,value])=><div className="rounded-xl border border-hairline p-4" key={label}><dt>{label}</dt><dd className="mt-2 text-xl">{value}</dd></div>)}</dl>
         <h3 className="text-lg">Вклад владельца по закрытым заказам</h3><p>{coverage(c.contribution)}</p>
         <p>Продажи за вычетом комиссии − закупка отправленных товаров + стоимость принятых пригодных возвратов − фактические прямые расходы.
           Сюда входят потери и расходы отмен/невыкупов этой когорты. Потери не вычитаются повторно. Это вклад до налогов и постоянных расходов.</p>

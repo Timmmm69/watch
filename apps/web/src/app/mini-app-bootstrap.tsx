@@ -18,6 +18,7 @@ import { AdminInventoryScreen } from "./admin-inventory-client";
 import { AdminPartnersScreen } from "./admin-partners-client";
 import { AdminCatalogScreen } from "./admin-catalog-client";
 import { AdminProductScreen } from "./admin-product-client";
+import { ShopIcon } from "./shop-icon";
 
 interface AuthResponse {
   nativeCommerce?: boolean;
@@ -36,6 +37,8 @@ let launchNavigationHandled = false;
 declare global {
   interface Window {
     Telegram?: { WebApp?: { initData: string; ready: () => void; expand: () => void;
+      isVersionAtLeast?: (version: string) => boolean;
+      setHeaderColor?: (color: string) => void; setBackgroundColor?: (color: string) => void; setBottomBarColor?: (color: string) => void;
       BackButton?: { show: () => void; hide: () => void; onClick: (handler: () => void) => void; offClick: (handler: () => void) => void } } };
   }
 }
@@ -51,6 +54,9 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
     const webApp = window.Telegram?.WebApp;
     webApp?.ready();
     webApp?.expand();
+    if (webApp?.isVersionAtLeast?.("6.1")) webApp.setBackgroundColor?.("#ffffff");
+    if (webApp?.isVersionAtLeast?.("6.9")) webApp.setHeaderColor?.("#ffffff");
+    if (webApp?.isVersionAtLeast?.("7.10")) webApp.setBottomBarColor?.("#ffffff");
     const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
     const initData = !launchNavigationHandled && navigation?.type !== "reload" ? webApp?.initData : undefined;
     const endpoint = initData ? "/api/v1/auth/telegram" : "/api/v1/auth/session";
@@ -131,8 +137,8 @@ export function MiniAppBootstrap({ screen = "shop", orderId, returnId, payoutId,
   if (state.auth && screen === "checkout") return <CheckoutScreen csrfToken={state.auth.csrfToken} />;
   if (state.auth) return <Storefront name={state.auth.user.firstName} csrfToken={state.auth.csrfToken}
     supportContact={state.auth.supportContact} nativeCommerce={state.auth.nativeCommerce ?? false} partner={state.auth.partner ?? null} partnerTermsReacceptRequired={state.auth.partnerTermsReacceptRequired ?? false} />;
-  return <main className="app-shell flex min-h-dvh items-center justify-center bg-canvas text-ink">
-    <div className="app-auth text-center"><h1>Watch</h1>
+  return <main className="app-shell buyer-shell flex min-h-dvh items-center justify-center bg-canvas text-ink">
+    <div className="app-auth text-center"><span className="buyer-auth-icon"><ShopIcon name="watch" size={40} /></span><h1>Watch</h1>
       <p className="mt-4 text-muted" role={state.error ? "alert" : "status"}>{state.error ?? "Вход через Telegram…"}</p>
       {state.error && <button className="app-button mt-4" onClick={() => window.location.reload()}>Повторить вход</button>}</div>
   </main>;
