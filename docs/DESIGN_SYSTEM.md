@@ -85,3 +85,41 @@ and `airbnb-design.spec.ts` for responsive layout, dialog keyboard behavior,
 light appearance under both host colour preferences and local font loading.
 Review catalog, product, filter sheet, cart, checkout, partner and admin screens.
 Backend/database suites require their documented disposable PostgreSQL setup.
+
+## Complete buyer journeys in Telegram
+
+The buyer flow has its own shared `buyer-ui.tsx` primitives. Cart, checkout,
+confirmation, order history, order detail and entry/recovery screens use the same
+mobile hierarchy as the storefront. Partner financial workflows keep their own
+information architecture.
+
+- Cart rows use a watch icon because the cart API supplies no photograph. Do not
+  invent images or add a catalog fetch per row. Quantity controls have 44px
+  targets, errors remain beside the item, and the summary separates delivery
+  clarification from the known goods total.
+- Checkout groups the existing fields into recipient, delivery and purchase
+  terms. Keep explicit acceptance, legal version refresh, price reconfirmation,
+  retained field values and idempotent retry behavior. The submit area stays in
+  document flow so the keyboard does not compete with a fixed purchase bar.
+- Order history uses status/date/amount cards. Detail shows only the actual
+  returned timeline, purchased items, retained delivery data and order support.
+  No predicted delivery milestones or payment promises are added.
+- A three-item buyer dock appears on phone catalog/history/detail pages. Product
+  and cart replace it with the purchase action. The dock hides while a field is
+  focused for text entry; native status pickers keep the dock available. Desktop
+  navigation remains available through the existing links.
+- Fixed purchase bars measure their rendered height with ResizeObserver. The
+  containing buyer shell reserves that space, and scroll margins prevent a
+  focused or programmatically scrolled target from sitting beneath the bar.
+- CSS consumes Telegram's device and content safe-area inset variables along
+  with browser `env(safe-area-inset-*)`. `viewport-fit=cover` is declared without
+  disabling zoom. Background/header/bottom bar colours use version-gated SDK
+  methods. Product detail also integrates Telegram's BackButton.
+
+SDK reference: [Telegram Mini Apps](https://core.telegram.org/bots/webapps).
+
+The buyer mobile suite exercises 320×640, 390×844, 430×932 and 844×390 viewports,
+nonzero Telegram insets, long content, stock errors, quantity updates, a reduced
+viewport during data entry, creation confirmation, order detail and history.
+Browser emulation is not a replacement for a final check inside Telegram on a
+physical iOS/Android device, including the real software keyboard.

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CartIndicator, ProductCartActions } from "./cart-client";
 import { ShopContact } from "./shop-contact";
 import { ShopIcon } from "./shop-icon";
+import { BuyerNav } from "./buyer-ui";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { partnerReacceptUrl } from "./partner-client";
@@ -108,6 +109,19 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
   const open = (slug: string) => setSelectedSlug(slug);
 
   useEffect(() => {
+    if (!selectedSlug) return;
+    const button = window.Telegram?.WebApp?.BackButton;
+    const back = () => {
+      setSelectedSlug(null); setDetail(null); setLink(""); setLinkError("");
+      const params = new URLSearchParams(searchParams);
+      params.delete("product");
+      router.replace(`/shop${params.size ? `?${params}` : ""}`);
+    };
+    button?.show(); button?.onClick(back);
+    return () => { button?.offClick(back); button?.hide(); };
+  }, [selectedSlug, router, searchParams]);
+
+  useEffect(() => {
     if (productSlug) setSelectedSlug(productSlug);
   }, [productSlug]);
 
@@ -141,12 +155,12 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
     finally { setLinkLoading(false); }
   };
 
-  return <main className="app-shell min-h-dvh bg-canvas text-ink"><div className="shop-container">
+  return <main className={`app-shell min-h-dvh bg-canvas text-ink${!partnerMode ? ` buyer-shell${!selectedSlug ? " buyer-shell-nav" : ""}` : ""}`}><div className="shop-container">
     <header className="shop-header"><div className="shop-wordmark"><ShopIcon name="watch" size={32} /><h1>Watch</h1></div>
       <div className="shop-account"><span className="min-w-0 break-words text-sm text-muted">Здравствуйте, {name}</span>
         {!partnerMode && !detail && <CartIndicator csrfToken={csrfToken} className="inline-flex min-h-11 items-center" />}</div></header>
     <nav aria-label="Магазин" className="mb-5 flex flex-wrap gap-4">
-      {!partnerMode && <Link className="min-h-11" href="/orders">Мои заказы</Link>}
+      {!partnerMode && <Link className="shop-orders-link min-h-11" href="/orders">Мои заказы</Link>}
       {partner ? <Link className="min-h-11" href="/partner">Партнёрский кабинет</Link>
         : <Link className="min-h-11" href="/partner/onboarding">Продавать с нами</Link>}
       {partnerTermsReacceptRequired && <Link className="min-h-11" href="/partner/onboarding">Принять новые условия</Link>}
@@ -280,5 +294,5 @@ export function Storefront({ name, csrfToken, partner, partnerTermsReacceptRequi
         </nav></>}
     </>}
     <footer className="shop-footer"><p className="font-bold text-ink">Watch · Часы для вашего ритма</p><p className="mt-1">Вопросы по выбору и доставке? Свяжитесь с магазином из карточки товара.</p></footer>
-  </div></main>;
+  </div>{!partnerMode && !selectedSlug && <BuyerNav active="shop" />}</main>;
 }

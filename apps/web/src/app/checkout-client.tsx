@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { BuyerHeader } from "./buyer-ui";
+import { ShopIcon } from "./shop-icon";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ContextualCart } from "./cart-client";
@@ -167,53 +169,70 @@ export function CheckoutScreen({ csrfToken }: { csrfToken: string }) {
     } finally { busy.current = false; setPending(false); }
   };
 
-  return <main className="app-shell min-h-dvh bg-canvas px-5 py-8 pb-12 text-ink"><div className="mx-auto max-w-2xl">
-    <Link href="/cart" className="inline-flex min-h-11 items-center underline">← Корзина</Link>
-    <h1 className="my-5 text-2xl font-bold">{order ? "Заказ создан" : "Оформление заказа"}</h1>
-    {order ? <section aria-live="polite"><p className="text-xl">Заказ {order.publicNumber}</p><p>Статус: {orderStatuses[order.status] ?? order.status}</p>
-      <p>Итого: {money(order.totalMinor, order.currency)}</p><p className="my-4">Заказ создан. Ожидайте подтверждения оператора.</p>
-      <Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="mr-4 inline-flex min-h-11 items-center underline">Посмотреть заказ</Link>
-      <Link href="/shop" className="inline-flex min-h-11 items-center underline">Продолжить покупки</Link></section> : <>
-      {error && <p role="alert" className="my-4 text-danger">{error}</p>}
-      <button type="button" disabled={pending} onClick={() => void refresh()} className="min-h-11 underline disabled:opacity-40">Обновить данные заказа</button>
-      {!cart && <div aria-label="Загрузка заказа" className="my-5 h-36 animate-pulse rounded-xl bg-surface" />}
-      {cart?.purchaseContext?.channel === "REFERRAL" && <p className="app-panel my-4">{cart.purchaseContext.available === false ? <>Ссылка партнёра больше недоступна. Вернитесь в корзину и выберите обычную покупку.</> : <>Покупка по ссылке партнёра{cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Розничная цена для вас не меняется.</>}</p>}
-      {cart?.pendingReferral && <p className="app-panel my-4">Сейчас выбрана обычная покупка. Открытая ссылка партнёра не применяется к этому заказу.</p>}
-      {cart && <section aria-label="Состав заказа" className="app-panel my-5"><ul>{cart.items.map((item) => <li key={item.variantId} className="mb-3">
-        <p>{item.title} · {item.sku} · {item.quantity} шт. × {money(item.priceMinor, cart.currency)}</p>
-        <p>{money(item.lineTotalMinor, cart.currency)}</p>
+  const renderField = (name: keyof Fields) => <div key={name} className="buyer-field">
+    <label htmlFor={name}>{labels[name]}</label>
+    {name === "address" || name === "comment" ? <textarea id={name} name={name} rows={3} maxLength={500}
+      autoComplete={name === "address" ? "street-address" : "off"} value={fields[name]} disabled={pending || readOnly}
+      aria-invalid={Boolean(fieldErrors[name])} aria-describedby={fieldErrors[name] ? `${name}-error` : undefined} className="app-input w-full"
+      onChange={(event) => setFields({ ...fields, [name]: event.target.value })} onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })}
+      onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />
+      : <input id={name} name={name} type={name === "phone" ? "tel" : "text"} inputMode={name === "phone" ? "tel" : "text"}
+        autoComplete={name === "phone" ? "tel" : "name"} maxLength={name === "phone" ? 40 : 100}
+        placeholder={name === "phone" ? "С кодом страны" : "Как к вам обращаться"}
+        value={fields[name]} disabled={pending || readOnly} aria-invalid={Boolean(fieldErrors[name])}
+        aria-describedby={fieldErrors[name] ? `${name}-error` : undefined} className="app-input w-full"
+        onChange={(event) => setFields({ ...fields, [name]: event.target.value })}
+        onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />}
+    {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="text-sm text-danger">{fieldErrors[name]}</p>}
+  </div>;
+
+  return <main className="app-shell buyer-shell"><div className="buyer-container buyer-narrow">
+    <BuyerHeader title={order ? "Заказ создан" : "Оформление заказа"} backHref={order ? "/shop" : "/cart"} backLabel={order ? "В каталог" : "Корзина"}
+      subtitle={order ? undefined : "Ещё несколько деталей — и часы станут ближе."} />
+    {order ? <section className="buyer-success" aria-live="polite">
+      <span className="buyer-success-icon"><ShopIcon name="check" size={44} /></span><h2>Заказ {order.publicNumber}</h2>
+      <p>Статус: {orderStatuses[order.status] ?? order.status}</p><p className="buyer-success-total">Итого: {money(order.totalMinor, order.currency)}</p>
+      <div className="buyer-notice"><h3>Что дальше</h3><p>Заказ создан. Ожидайте подтверждения оператора.</p></div>
+      <div className="buyer-stack-actions"><Link href={`/orders/${encodeURIComponent(order.publicNumber)}`} className="app-button app-button-primary">Посмотреть заказ</Link>
+      <Link href="/shop" className="app-button">Продолжить покупки</Link></div>
+    </section> : <>
+      {error && <p role="alert" className="buyer-notice text-danger">{error}</p>}
+      <div className="buyer-section-heading"><h2>Состав заказа</h2><button type="button" disabled={pending} onClick={() => void refresh()} className="buyer-text-action">Обновить данные заказа</button></div>
+      {!cart && <div aria-label="Загрузка заказа" className="buyer-skeleton h-36" />}
+      {cart?.purchaseContext?.channel === "REFERRAL" && <p className="buyer-notice">{cart.purchaseContext.available === false ? <>Ссылка партнёра больше недоступна. Вернитесь в корзину и выберите обычную покупку.</> : <>Покупка по ссылке партнёра{cart.purchaseContext.partnerDisplayName ? ` ${cart.purchaseContext.partnerDisplayName}` : ""}. Розничная цена для вас не меняется.</>}</p>}
+      {cart?.pendingReferral && <p className="buyer-notice">Сейчас выбрана обычная покупка. Открытая ссылка партнёра не применяется к этому заказу.</p>}
+      {cart && <section aria-label="Состав заказа" className="buyer-checkout-summary"><ul>{cart.items.map((item) => <li key={item.variantId}>
+        <div className="buyer-item-heading"><span className="buyer-item-icon"><ShopIcon name="watch" size={28} /></span><div className="min-w-0 flex-1">
+          <h3>{item.title}</h3><p className="text-sm text-muted">{item.sku} · {item.quantity} шт. × {money(item.priceMinor, cart.currency)}</p></div></div>
+        <p className="mt-2 text-right font-bold">{money(item.lineTotalMinor, cart.currency)}</p>
         {item.issues.map((issue) => <p key={issue} className="text-warning">{issue === "ITEM_UNAVAILABLE" ? "Товар больше недоступен." : messages[issue]}</p>)}
         {lineErrors[item.variantId] && <p className="text-danger">{lineErrors[item.variantId]}</p>}
-      </li>)}</ul><p className="text-lg">Итого: {money(cart.totalMinor, cart.currency)}</p>
-        {!cart.canCheckout && <p className="text-warning">Проверьте отмеченные товары в корзине.</p>}
-        {priceConfirmation && <label className="mt-3 flex min-h-11 items-center gap-3"><input type="checkbox" checked={priceConfirmed}
+      </li>)}</ul>
+        {!cart.canCheckout && <p className="buyer-notice text-warning">Проверьте отмеченные товары в корзине.</p>}
+        {priceConfirmation && <label className="buyer-consent"><input type="checkbox" checked={priceConfirmed}
           onChange={(event) => setPriceConfirmed(event.target.checked)} />Я проверил и принимаю новую сумму заказа</label>}
       </section>}
-      <form ref={form} noValidate onSubmit={(event) => { event.preventDefault(); void submit(); }} className="space-y-5">
-        {(Object.keys(labels) as (keyof Fields)[]).map((name) => <div key={name}>
-          <label htmlFor={name} className="mb-2 block">{labels[name]}</label>
-          {name === "address" || name === "comment" ? <textarea id={name} name={name} value={fields[name]} disabled={pending || readOnly}
-            aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`} className="app-input min-h-24 w-full p-3"
-            onChange={(event) => setFields({ ...fields, [name]: event.target.value })} onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })}
-            onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />
-            : <input id={name} name={name} type={name === "phone" ? "tel" : "text"} autoComplete={name === "phone" ? "tel" : "name"}
-              value={fields[name]} disabled={pending || readOnly} aria-invalid={Boolean(fieldErrors[name])} aria-describedby={`${name}-error`}
-              className="app-input min-h-11 w-full p-3" onChange={(event) => setFields({ ...fields, [name]: event.target.value })}
-              onBlur={() => setFieldErrors({ ...fieldErrors, [name]: validate(name) })} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "center" })} />}
-          {fieldErrors[name] && <p id={`${name}-error`} role="alert" className="mt-1 text-danger">{fieldErrors[name]}</p>}
-        </div>)}
-        {!documents && <div aria-label="Загрузка документов" className="h-24 animate-pulse rounded-lg bg-surface-muted" />}
-        {documents && (["SALES_TERMS", "PRIVACY"] as const).map((type) => <section key={type}>
-          <details className="app-panel"><summary className="cursor-pointer">{type === "SALES_TERMS" ? "Условия продажи" : "Политика конфиденциальности"} · {documents[type].version}</summary>
-            <pre className="mt-3 whitespace-pre-wrap font-sans text-sm">{documents[type].contentMarkdown}</pre></details>
-          <label className="flex min-h-11 items-center gap-3 py-3"><input type="checkbox" checked={accepted[type]} disabled={!legalReady || pending || readOnly}
+      <form ref={form} noValidate onSubmit={(event) => { event.preventDefault(); void submit(); }} className="buyer-checkout-form">
+        <section className="buyer-form-section" aria-labelledby="recipient-title"><h2 id="recipient-title"><span>1</span>Получатель</h2>
+          <div className="buyer-fields">{renderField("recipientName")}{renderField("phone")}</div></section>
+        <section className="buyer-form-section" aria-labelledby="delivery-title"><h2 id="delivery-title"><span>2</span>Доставка</h2>
+          <p className="buyer-subtitle">Укажите город и полный адрес. Детали доставки подтвердит магазин.</p>
+          <div className="buyer-fields">{renderField("address")}{renderField("comment")}</div></section>
+        <section className="buyer-form-section" aria-labelledby="terms-title"><h2 id="terms-title"><span>3</span>Условия покупки</h2>
+        {!documents && <div aria-label="Загрузка документов" className="buyer-skeleton h-24" />}
+        {documents && (["SALES_TERMS", "PRIVACY"] as const).map((type) => <div key={type} className="buyer-legal-item">
+          <details><summary>{type === "SALES_TERMS" ? "Условия продажи" : "Политика конфиденциальности"} · {documents[type].version}</summary>
+            <pre className="whitespace-pre-wrap break-words font-sans text-sm">{documents[type].contentMarkdown}</pre></details>
+          <label className="buyer-consent"><input type="checkbox" checked={accepted[type]} disabled={!legalReady || pending || readOnly}
             onChange={(event) => setAccepted({ ...accepted, [type]: event.target.checked })} />
-            {type === "SALES_TERMS" ? "Принимаю текущие условия продажи" : "Ознакомлен(а) с текущей политикой конфиденциальности"}</label>
-        </section>)}
-        <div className="sticky bottom-0 border-t border-hairline bg-canvas py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <span>{type === "SALES_TERMS" ? "Принимаю текущие условия продажи" : "Ознакомлен(а) с текущей политикой конфиденциальности"}</span></label>
+        </div>)}</section>
+        <div className="buyer-submit">
+          {cart && <p className="buyer-total">Итого: <strong>{money(cart.totalMinor, cart.currency)}</strong></p>}
           <button type="submit" disabled={pending || readOnly || !cart?.canCheckout || !legalReady || !accepted.SALES_TERMS || !accepted.PRIVACY || (priceConfirmation && !priceConfirmed) || (cart?.purchaseContext?.channel === "REFERRAL" && cart.purchaseContext.available === false)}
-            className="app-button app-button-primary min-h-11 w-full px-4 disabled:opacity-40">{pending ? "Отправка…" : "Создать заказ"}</button>
-          {pending && <span role="status" className="animate-pulse">Создаём заказ…</span>}
+            className="app-button app-button-primary w-full disabled:opacity-40">{pending ? "Отправка…" : "Создать заказ"}</button>
+          {pending && <p role="status" className="mt-2 text-sm">Создаём заказ…</p>}
+          <p className="mt-3 text-center text-sm text-muted">После оформления ожидайте подтверждения оператора.</p>
         </div>
       </form>
     </>}
