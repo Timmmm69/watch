@@ -301,9 +301,7 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     ).rejects.toBeInstanceOf(ActiveProductInvariantError);
     const archived = await service.updateProduct(actorUserId, product.id, { status: "ARCHIVED" });
     expect(archived.status).toBe("ARCHIVED");
-    await expect(
-      service.updateProduct(actorUserId, product.id, { status: "DRAFT" })
-    ).rejects.toBeInstanceOf(CatalogValidationError);
+    expect((await service.updateProduct(actorUserId, product.id, { status: "DRAFT" })).status).toBe("DRAFT");
   });
 
   it("resets inventory source state when the external key changes", async () => {

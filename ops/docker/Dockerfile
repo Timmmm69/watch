@@ -26,6 +26,7 @@ RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 FROM production-deps AS api
 COPY --from=build /app/apps/api/dist apps/api/dist
+COPY --from=build /app/apps/api/fixtures apps/api/fixtures
 COPY --from=build /app/packages/config/dist packages/config/dist
 COPY --from=build /app/packages/contracts/dist packages/contracts/dist
 COPY --from=build /app/packages/db/dist packages/db/dist

@@ -8,6 +8,7 @@ datasource db {
 }
 
 model User {
+  adminCatalogOperations AdminCatalogOperation[]
   id               String    @id @default(uuid()) @db.Uuid
   telegramUserId   BigInt    @unique @map("telegram_user_id")
   firstName        String    @map("first_name") @db.VarChar(128)
@@ -992,4 +993,16 @@ model OrderExpenseReview {
 
   @@index([orderId, createdAt])
   @@map("order_expense_reviews")
+}
+
+model AdminCatalogOperation {
+  operationKey String @id @map("operation_key")
+  actorUserId String @map("actor_user_id") @db.Uuid
+  kind String
+  request Json
+  result Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor User @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@map("admin_catalog_operations")
 }

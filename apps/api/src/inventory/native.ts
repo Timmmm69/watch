@@ -121,7 +121,7 @@ export class NativeInventoryService {
   }
 
   async change(op: InventoryOperation, variantId: string, kind: "RECEIPT" | "CORRECTION" | "VALUATION",
-    quantity: number, cost: number | null): Promise<{replayed: boolean}> {
+    quantity: number, cost: number | null, expectedOnHand?: number): Promise<{replayed: boolean}> {
     validateOperation(op);
     if (!Number.isInteger(quantity) || Math.abs(quantity)>2147483647 || (kind==="VALUATION" ? quantity!==0 || cost===null : quantity===0)
       || kind==="RECEIPT" && quantity<0) throw new NativeInventoryError("INVALID_QUANTITY");
@@ -142,6 +142,7 @@ export class NativeInventoryService {
           || old.reason!==op.reason || old.occurred_at.getTime()!==op.occurredAt.getTime()) throw new NativeInventoryError("IDEMPOTENCY_CONFLICT");
         return {replayed:true};
       }
+      if (expectedOnHand !== undefined && stock.native_on_hand !== expectedOnHand) throw new NativeInventoryError("STOCK_CHANGED");
       const free = stock.native_on_hand-stock.native_reserved_quantity;
       let allocated = cost;
       if (kind==="VALUATION") {

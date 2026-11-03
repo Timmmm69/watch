@@ -1,3 +1,5 @@
+import { ownerCreateSchema, ownerEditSchema, ownerStockSchema, ownerStatusSchema } from "@watch/contracts";
+import type { OwnerCatalogService } from "./catalog/owner.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { installSecurityRateLimits } from "./security/rate-limits.js";
 import multipart from "@fastify/multipart";
@@ -71,6 +73,7 @@ export type CatalogApi = Pick<CatalogService,
 export type InventoryApi = Pick<InventoryService, "listItems" | "listSyncRuns">;
 
 export interface AppDependencies {
+  ownerCatalog?: OwnerCatalogService;
   money?: Pick<OrderMoneyService, "detail" | "record">;
   adminPartners?: Pick<AdminPartnerService, "list" | "detail" | "setStatus">;
   analytics?: Pick<AnalyticsService, "summary" | "dashboard"> & Partial<Pick<AnalyticsService, "owner">>;
@@ -108,7 +111,7 @@ export interface AppDependencies {
   webhook?: { secret: string; inbox: Pick<TelegramInbox, "insert"> };
 }
 
-export function createApp({ checkReadiness, logger = true, nativeCommerce = false, supportContact = "", trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, buyerCheckout, partnerCheckout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners, money }: AppDependencies) {
+export function createApp({ ownerCatalog, checkReadiness, logger = true, nativeCommerce = false, supportContact = "", trustedProxyIp, auth, legal, partner, referral, catalog, inventory, assets, cart, checkout, buyerCheckout, partnerCheckout, orders, returns, orderViews, earnings, payouts, webhook, analytics, adminPartners, money }: AppDependencies) {
   const app = Fastify({
     logger: logger ? { redact: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "req.headers['x-telegram-bot-api-secret-token']", "res.headers['set-cookie']"] } : false,
     trustProxy: trustedProxyIp ? [trustedProxyIp] : false,
@@ -845,7 +848,7 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
           });
         }
         try {
-          return await service.createVariant(request.auth!.user.id, id, parsed.data);
+          return ownerCatalog ? await ownerCatalog.addVariant(request.auth!.user.id, id, parsed.data) : await service.createVariant(request.auth!.user.id, id, parsed.data);
         } catch (error) {
           catalogError(request, reply, error);
           return reply;
@@ -922,7 +925,10 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
                 Object.keys(fields).some((key) => !["purpose", "variantId"].includes(key))) {
               throw new CatalogValidationError("Invalid media asset request");
             }
+            const operationKey = request.headers["x-idempotency-key"];
+            if (operationKey !== undefined && (typeof operationKey !== "string" || !validUuid(operationKey))) throw new CatalogValidationError("Invalid retry key");
             return await assetService.createMedia(request.auth!.user.id, id, {
+              operationKey: operationKey as string | undefined,
               type: staged.type, path: staged.path, sizeBytes: staged.sizeBytes,
               mimeType: mimeType!, purpose: fields.purpose as "STOREFRONT" | "PARTNER_CONTENT",
               variantId: fields.variantId === undefined ? null : String(fields.variantId)
@@ -952,6 +958,42 @@ export function createApp({ checkReadiness, logger = true, nativeCommerce = fals
           } catch (error) { catalogError(request, reply, error); return reply; }
         });
       }
+    }
+
+    if (ownerCatalog) {
+      const requireAdmin = createRequireAdmin(auth.adminIds);
+      const handleOwner = async (request: FastifyRequest, reply: FastifyReply, action: () => Promise<unknown>) => {
+        try { return await action(); } catch (error) { catalogError(request, reply, error); return reply; }
+      };
+      app.post("/api/v1/admin/shop/test-catalog", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        if ((request.body as { confirmed?: unknown } | null)?.confirmed !== true) return reply.code(400).send({ error: { code: "VALIDATION_ERROR" } });
+        return handleOwner(request, reply, () => ownerCatalog.demo(request.auth!.user.id));
+      });
+      app.post("/api/v1/admin/shop/products", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const parsed = ownerCreateSchema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Проверьте название, цену и целое количество.", details: {} } });
+        return handleOwner(request, reply, () => ownerCatalog.create(request.auth!.user.id, parsed.data));
+      });
+      app.patch("/api/v1/admin/shop/products/:id", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id: string }).id, parsed = ownerEditSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Проверьте поля карточки и денежные значения.", details: {} } });
+        return handleOwner(request, reply, () => ownerCatalog.save(request.auth!.user.id, id, parsed.data));
+      });
+      app.post("/api/v1/admin/shop/products/:id/status", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id: string }).id, parsed = ownerStatusSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Проверьте статус товара.", details: {} } });
+        return handleOwner(request, reply, () => ownerCatalog.status(request.auth!.user.id, id, parsed.data.status));
+      });
+      app.get("/api/v1/admin/shop/variants/:id/stock", { preHandler: [requireSession, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id: string }).id;
+        if (!validUuid(id)) return reply.code(404).send({ error: { code: "NOT_FOUND" } });
+        return handleOwner(request, reply, () => ownerCatalog.stockDetail(id));
+      });
+      app.post("/api/v1/admin/shop/variants/:id/stock", { preHandler: [requireSession, requireCsrf, requireAdmin] }, async (request, reply) => {
+        const id = (request.params as { id: string }).id, parsed = ownerStockSchema.safeParse(request.body);
+        if (!validUuid(id) || !parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Укажите целое количество и причину изменения.", details: {} } });
+        return handleOwner(request, reply, () => ownerCatalog.stock(request.auth!.user.id, id, parsed.data));
+      });
     }
 
     if (inventory) {
