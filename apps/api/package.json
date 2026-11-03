@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:payout-browser": "tsx src/finance/payouts.browser.ts",
-    "test:financial": "tsx src/finance/acceptance.ts"
+    "test:financial": "tsx src/finance/acceptance.ts",
+    "catalog:demo": "tsx src/catalog/demo-cli.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1142.0",
