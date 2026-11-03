@@ -28,3 +28,9 @@ pnpm --filter @watch/api legal:publish -- \
 
 The script reads a reviewed local markdown file, stores it with its SHA-256 and prints the resulting `id` and `sha256` as JSON. Copy the printed `id` and `version` into `.env` as `LEGAL_PARTNER_TERMS_ID` and `LEGAL_PARTNER_TERMS_VERSION`; `/ready` fails until the configured current document exists with the matching type, version and effective time. `--requires-reacceptance` marks a new artifact as forcing Partner reacceptance, and `--effective-at` accepts an ISO timestamp (defaults to now). Re-running with the same type/version is idempotent.
 
+
+## Demo watch catalog
+
+To preview a populated shop, use `pnpm demo:catalog` on a separate empty local
+catalog with configured private object storage. See [demo-catalog.md](demo-catalog.md)
+for sample products, environment requirements and replay behavior.
