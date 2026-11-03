@@ -91,14 +91,16 @@ test.describe("T48 native checkout with real PostgreSQL Session/API", () => {
   test("Admin form edits D independently and reloads the persisted value", async ({ page }) => {
     await page.context().addCookies([{ name: "watch_session", value: fixture.owners[2]!.token, domain: "127.0.0.1", path: "/" }]);
     await page.goto(`/admin/products/${fixture.product}`);
-    const variant = page.getByRole("form", { name: "Вариант TEST-T48", exact: true });
-    await expect(variant.getByLabel("Цена магазина для продавца D (копейки)")).toHaveValue("10000");
-    await variant.getByLabel("Цена магазина для продавца D (копейки)").fill("12000");
-    await variant.getByRole("button", { name: "Сохранить вариант" }).click();
-    await expect(page.getByRole("status")).toContainText("Вариант сохранён");
+    const variant = page.getByRole("form", { name: "Редактирование товара", exact: true });
+    await variant.getByText("Цена для продавца и комиссии", { exact: true }).click();
+    await expect(variant.getByLabel("Цена для продавца, руб.", { exact: true })).toHaveValue("100,00");
+    await variant.getByLabel("Цена для продавца, руб.", { exact: true }).fill("120,00");
+    await variant.getByRole("button", { name: "Сохранить сейчас" }).click();
+    await expect(page.getByRole("status").filter({ hasText: /^Сохранено$/ })).toBeVisible();
     await page.reload();
-    await expect(variant.getByLabel("Цена магазина для продавца D (копейки)")).toHaveValue("12000");
-    await expect(variant.getByLabel("Розничная цена P (копейки)")).toHaveValue("10000");
+    await variant.getByText("Цена для продавца и комиссии", { exact: true }).click();
+    await expect(variant.getByLabel("Цена для продавца, руб.", { exact: true })).toHaveValue("120,00");
+    await expect(variant.getByLabel("Цена, BYN", { exact: true })).toHaveValue("100,00");
     expect((await fixture.pool.query("SELECT price_minor,dropship_price_minor FROM product_variants")).rows[0]).toEqual({ price_minor: 10000, dropship_price_minor: 12000 });
   });
 

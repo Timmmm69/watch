@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -16,6 +19,8 @@ let assetId = "";
 let catalog: CatalogService;
 let assets: AssetService;
 const deletedKeys: string[] = [];
+let mediaDirectory = "";
+let mediaPath = "";
 
 const storage: ObjectStorage = {
   async put() {}, async get() { return Readable.from([Buffer.from("media")]); },
@@ -24,6 +29,9 @@ const storage: ObjectStorage = {
 
 beforeAll(async () => {
   if (!pool) return;
+  mediaDirectory = await mkdtemp(join(tmpdir(), "watch-assets-test-"));
+  mediaPath = join(mediaDirectory, "media");
+  await writeFile(mediaPath, "media");
   const currency = (await initializePlatformCurrency(pool, process.env.TEST_PLATFORM_CURRENCY ?? "BYN")).platformCurrency;
   await seedSupplier(pool, "Integration supplier");
   catalog = new CatalogService(pool, currency);
@@ -41,6 +49,7 @@ afterAll(async () => {
   if (categoryId) await pool.query("DELETE FROM categories WHERE id = $1", [categoryId]);
   await pool.query("DELETE FROM users WHERE id = $1", [actorId]);
   await pool.end();
+  await rm(mediaDirectory, { recursive: true, force: true });
 });
 
 describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
@@ -60,8 +69,8 @@ describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
     await expect(catalog.updateProduct(actorId, productId, { status: "ACTIVE" }))
       .rejects.toBeInstanceOf(ActiveProductInvariantError);
     const image = await assets.createMedia(actorId, productId, {
-      type: "IMAGE", purpose: "STOREFRONT", variantId: null, path: "unused",
-      mimeType: "image/jpeg", sizeBytes: 4
+      type: "IMAGE", purpose: "STOREFRONT", variantId: null, path: mediaPath,
+      mimeType: "image/jpeg", sizeBytes: 5
     });
     assetId = image.id;
     await expect(assets.media(image.id, true)).rejects.toThrow();
@@ -72,8 +81,8 @@ describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
     });
     expect(partnerText.text).toBe("Partner briefing");
     const partnerVideo = await assets.createMedia(actorId, productId, {
-      type: "VIDEO", purpose: "PARTNER_CONTENT", variantId: null, path: "unused",
-      mimeType: "video/mp4", sizeBytes: 4
+      type: "VIDEO", purpose: "PARTNER_CONTENT", variantId: null, path: mediaPath,
+      mimeType: "video/mp4", sizeBytes: 5
     });
     const detail = await catalog.getStorefrontProduct(product.slug);
     expect(detail.gallery).toMatchObject([{ id: assetId, mediaUrl: `/api/v1/catalog/assets/${assetId}/media` }]);
@@ -88,8 +97,8 @@ describe.skipIf(!pool)("Product assets and continuous ACTIVE invariant", () => {
       text: "Wrong variant", purpose: "STOREFRONT", variantId: randomUUID()
     })).rejects.toThrow(/Variant/);
     await expect(assets.createMedia(actorId, productId, {
-      type: "IMAGE", purpose: "STOREFRONT", variantId: randomUUID(), path: "unused",
-      mimeType: "image/jpeg", sizeBytes: 4
+      type: "IMAGE", purpose: "STOREFRONT", variantId: randomUUID(), path: mediaPath,
+      mimeType: "image/jpeg", sizeBytes: 5
     })).rejects.toThrow(/Variant/);
     expect(deletedKeys).toHaveLength(1);
     await expect(assets.update(actorId, assetId, { status: "ARCHIVED" }))

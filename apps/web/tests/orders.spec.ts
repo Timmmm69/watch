@@ -84,12 +84,20 @@ test("notification Admin order identity is UUID and inventory route loads both p
   await page.goto(`/admin/orders/${orderId}`);
   await expect(page.getByRole("heading", { name: publicNumber, exact: true })).toBeVisible();
   expect(requested).toContain(`/api/v1/admin/orders/${orderId}`);
-  await page.route("**/api/v1/admin/inventory?*", (route) => route.fulfill({ json: { items: [{ variantId: "v", productTitle: "Часы", sku: "SKU-40", sourceStatus: "INVALID", availability: "UNKNOWN", sourceQuantity: null, sellable: 0, deficit: true, activeReservations: 1, reconciliationPending: 1, lastSuccessfulSyncAt: null }], total: 1, limit: 20 } }));
-  await page.route("**/api/v1/admin/inventory/sync-runs?*", (route) => route.fulfill({ json: { items: [{ id: "run", status: "FAILED", startedAt: summary.createdAt, finishedAt: summary.createdAt, errorSummary: "Provider unavailable" }] } }));
+  await page.route("**/api/v1/admin/inventory?*", (route) => route.fulfill({ json: { items: [{ variantId: "v", productId: "p", productTitle: "Часы", sku: "SKU-40" }], total: 1, limit: 20 } }));
+  let stockUnavailable = true;
+  await page.route("**/api/v1/admin/shop/variants/v/stock", (route) => stockUnavailable
+    ? route.fulfill({ status: 503, json: { error: { code: "SERVICE_UNAVAILABLE" } } })
+    : route.fulfill({ json: { onHand: 3, reserved: 1, buffer: 0, available: 2, initialized: true, history: [] } }));
   await page.goto("/admin/inventory");
   await expect(page.getByRole("heading", { name: "Склад", exact: true })).toBeVisible();
-  await expect(page.getByText("Provider unavailable")).toBeVisible();
-  await expect(page.getByText("Дефицит", { exact: true })).toBeVisible();
+  const stock = page.getByRole("region", { name: "Остаток", exact: true });
+  await expect(stock.getByRole("alert")).toContainText("Не удалось загрузить данные. Попробуйте ещё раз.");
+  stockUnavailable = false;
+  await stock.getByRole("button", { name: "Повторить загрузку" }).click();
+  await expect(stock.getByText("На складе", { exact: true })).toBeVisible();
+  await expect(stock.getByText("Доступно", { exact: true })).toBeVisible();
+  await expect(stock.getByRole("alert")).toHaveCount(0);
 });
 
 for (const partner of [false, true]) {

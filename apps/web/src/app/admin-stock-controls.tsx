@@ -66,7 +66,12 @@ export function StockControls({
         undefined,
         abort.signal,
       )
-      .then(setStock)
+      .then((value) => {
+        if (!abort.signal.aborted) {
+          setStock(value);
+          api.setError("");
+        }
+      })
       .catch((e) => {
         if (!abort.signal.aborted) api.setError(e.message);
       });
