@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { replayOperation, rememberOperation } from "./operations.js";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Readable } from "node:stream";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -134,17 +135,23 @@ export class AssetService {
 
   async createMedia(actorUserId: string, productId: string, input: {
     type: "IMAGE" | "VIDEO"; purpose: AssetPurpose; variantId: string | null;
-    path: string; mimeType: string; sizeBytes: number;
+    path: string; mimeType: string; sizeBytes: number; operationKey?: string | undefined;
   }): Promise<AssetProjection> {
     const key = `products/${productId}/${randomUUID()}`;
-    try {
-      await this.storage.put(key, input.path, input.mimeType, input.sizeBytes);
-    } catch {
-      await this.storage.delete(key).catch(() => undefined);
-      throw new StorageUnavailableError();
-    }
+    let uploaded = false;
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(input.path)) hash.update(chunk);
+    const identity = { productId, type: input.type, purpose: input.purpose, variantId: input.variantId, mimeType: input.mimeType, sizeBytes: input.sizeBytes, sha256: hash.digest("hex") };
     try {
       return await this.transaction(async (client) => {
+        if (input.operationKey) {
+          const replay = await replayOperation<AssetProjection>(client, input.operationKey, actorUserId, "MEDIA", identity);
+          if (replay) return replay;
+        }
+        try {
+          uploaded = true;
+          await this.storage.put(key, input.path, input.mimeType, input.sizeBytes);
+        } catch { throw new StorageUnavailableError(); }
         await this.lockProduct(client, productId);
         await this.checkVariant(client, productId, input.variantId);
         const result = await client.query<AssetRow>(
@@ -154,10 +161,12 @@ export class AssetService {
         );
         await assertActiveProductInvariant(client, productId, databaseAssetChecks);
         await this.audit(client, actorUserId, "PRODUCT_ASSET_CREATED", result.rows[0]!.id);
-        return project(result.rows[0]!);
+        const asset = project(result.rows[0]!);
+        if (input.operationKey) await rememberOperation(client, input.operationKey, actorUserId, "MEDIA", identity, asset);
+        return asset;
       });
     } catch (error) {
-      await this.storage.delete(key).catch(() => undefined);
+      if (uploaded) await this.storage.delete(key).catch(() => undefined);
       throw error;
     }
   }

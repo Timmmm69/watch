@@ -1,3 +1,5 @@
+import { OwnerCatalogService } from "../src/catalog/owner.js";
+import { InventoryService } from "../src/inventory/service.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -64,7 +66,8 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   [doc.id, type, doc.version, randomBytes(32).toString("hex"), `TEST ONLY ${type}`]);
   for (const owner of owners.filter((owner) => owner.partner)) await pool.query("INSERT INTO partner_terms_acceptances(partner_id,legal_document_id) VALUES($1,$2)", [owner.partner, docs.PARTNER_TERMS.id]);
   const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDXsAAAAASUVORK5CYII=", "base64");
-  const storage: ObjectStorage = { put: async () => undefined, get: async () => Readable.from(image), delete: async () => undefined };
+  const media = new Map<string, Buffer>();
+  const storage: ObjectStorage = { put: async (key,path) => { media.set(key,await readFile(path)); }, get: async key => Readable.from(media.get(key) ?? image), delete: async key => { media.delete(key); } };
   const importer = new InitialInventoryImport(pool, storage);
   const source = [INVENTORY_HEADERS, ["TEST-T48", "Тестовые часы T48", "", String(quantity), cost, "100.00", "", "TEST ONLY description", ""]];
   const preview = await importer.preview(source);
@@ -86,7 +89,7 @@ export async function dropshipFixture(quantity = 10, cost = "800.02", adminAcces
   const views = new OrderViewService(pool, "@test_support");
   const adminIds = adminAccess ? new Set(["3"]) : new Set<string>();
   const orders = new AdminOrderService(pool), returns = new AdminReturnService(pool);
-  const app = createApp({ nativeCommerce: !historicalBuyerFlow, supportContact: "@test_support", logger: false, checkReadiness: async () => undefined,
+  const app = createApp({ ownerCatalog: new OwnerCatalogService(pool, "BYN", storage, resolve(process.cwd(), "../../apps/api/fixtures/demo-catalog")), inventory: { service: new InventoryService(pool) }, nativeCommerce: !historicalBuyerFlow, supportContact: "@test_support", logger: false, checkReadiness: async () => undefined,
     earnings: new PartnerEarningsService(pool),
     auth: { store: new SessionStore(pool, adminIds), csrfSecret, appBaseUrl, adminIds: () => adminIds,
       botToken: "123456:TEST_ONLY_referral" },

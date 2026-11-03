@@ -10,7 +10,8 @@ import { NativeInventoryService, inventoryTransaction } from "../inventory/nativ
 
 let f: Awaited<ReturnType<typeof dropshipFixture>>;
 afterEach(async()=>{await f?.close();});
-const period={from:"2026-10-01T00:00:00+03:00",to:"2026-11-01T00:00:00+03:00"};
+// Fixtures contain historical cash facts and orders created by PostgreSQL now().
+const period={from:"2026-10-01T00:00:00+03:00",to:new Date(Date.now()+86_400_000).toISOString()};
 const service=()=>new OwnerAnalyticsService(f.pool,"BYN",86400);
 const actor=()=>f.owners[2]!.user;
 const money=()=>new OrderMoneyService(f.pool);

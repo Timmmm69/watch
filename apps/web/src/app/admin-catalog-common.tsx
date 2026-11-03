@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cloneElement, useCallback, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-export const inputClass = "w-full rounded border border-slate-600 bg-slate-900 p-2";
-export const buttonClass = "min-h-11 rounded border border-slate-600 px-3 py-2 disabled:opacity-40";
+export const inputClass = "app-input w-full";
+export const buttonClass = "app-button";
 export type PageData<T> = { items: T[]; page: number; limit: number; total: number };
 export type Category = { id: string; name: string; slug: string; sortOrder: number; status: string; updatedAt: string };
 export type Variant = { id: string; sku: string; status: string; attributes: Record<string, unknown>; priceMinor: number; dropshipPriceMinor: number | null;
@@ -17,7 +17,7 @@ export type Product = { id: string; title: string; slug: string; description: st
   status: string; specifications: Record<string, unknown>; updatedAt: string; categories: Category[]; variants: Variant[]; assets: Asset[] };
 export type ProductCard = Omit<Product, "categories" | "variants" | "assets"> & {
   categories: Pick<Category, "id" | "name" | "status">[]; variants: Pick<Variant, "id" | "sku" | "status" | "priceMinor" | "currency">[];
-  availability: string };
+  availability: string; coverUrl?: string | null; sellable?: number };
 export const availabilityLabels: Record<string, string> = { IN_STOCK: "В наличии", OUT_OF_STOCK: "Нет в наличии", STALE: "Устаревшие остатки", UNKNOWN: "Остатки неизвестны" };
 
 export function Field({ label, children }: { label: string; children: ReactElement<{ id?: string }> }) {
@@ -41,17 +41,17 @@ export function Pagination({ data, onPage }: { data: { page: number; limit: numb
   return <nav className="my-4 flex items-center gap-4" aria-label="Страницы"><button className={buttonClass} disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>Назад</button>
     <span>Страница {data.page}</span><button className={buttonClass} disabled={data.page * data.limit >= data.total} onClick={() => onPage(data.page + 1)}>Далее</button></nav>;
 }
-export function AdminCatalogLayout({ title, back = "/admin", children }: { title: string; back?: string; children: ReactNode }) {
+export function AdminCatalogLayout({ title, back = "/admin", children, beforeNavigate }: { title: string; back?: string; children: ReactNode; beforeNavigate?: () => boolean }) {
   const router = useRouter();
   useEffect(() => {
     const button = window.Telegram?.WebApp?.BackButton;
-    const goBack = () => router.push(back);
+    const goBack = () => { if (!beforeNavigate || beforeNavigate()) router.push(back); };
     button?.show(); button?.onClick(goBack);
     return () => { button?.offClick(goBack); button?.hide(); };
-  }, [router, back]);
-  return <main className="min-h-screen bg-slate-950 px-5 py-8 text-slate-100"><div className="mx-auto max-w-5xl space-y-5">
+  }, [router, back, beforeNavigate]);
+  return <main className="app-shell min-h-dvh bg-canvas text-ink" onClickCapture={event => { if ((event.target as HTMLElement).closest("a[href]") && beforeNavigate && !beforeNavigate()) { event.preventDefault(); event.stopPropagation(); } }}><div className="mx-auto max-w-5xl space-y-5">
     <nav className="flex flex-wrap gap-5"><Link href="/admin">Обзор</Link><Link href="/admin/catalog">Каталог</Link>
-      <Link href="/admin/inventory">Склад</Link><Link href="/admin/orders?reconciliationPending=true">Заказы на сверку</Link></nav>
+      <Link href="/admin/inventory">Склад</Link><Link href="/admin/orders">Заказы</Link></nav>
     <h1 className="text-2xl font-semibold">{title}</h1>{children}
   </div></main>;
 }
@@ -64,10 +64,10 @@ export function useAdminCatalogApi(csrfToken: string) {
   const [denied, setDenied] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const request = useCallback(async <T,>(url: string, method = "GET", payload?: object | FormData, signal?: AbortSignal): Promise<T> => {
+  const request = useCallback(async <T,>(url: string, method = "GET", payload?: object | FormData, signal?: AbortSignal, operationKey?: string): Promise<T> => {
     const multipart = payload instanceof FormData;
     const send = () => fetch(url, { method, credentials: "same-origin", cache: "no-store", signal,
-      headers: method === "GET" ? undefined : { "x-csrf-token": token.current, ...(multipart ? {} : { "content-type": "application/json" }) },
+      headers: method === "GET" ? undefined : { "x-csrf-token": token.current, ...(operationKey ? { "x-idempotency-key": operationKey } : {}), ...(multipart ? {} : { "content-type": "application/json" }) },
       body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload) });
     let response = await send();
     if (response.status === 401) {
@@ -84,7 +84,9 @@ export function useAdminCatalogApi(csrfToken: string) {
         : response.status === 403 ? "У вас нет доступа к этому действию."
         : response.status === 404 ? "Запись не найдена."
         : method === "GET" ? "Не удалось загрузить данные. Попробуйте ещё раз." : "Не удалось сохранить изменения. Обновите данные и попробуйте ещё раз.";
-      throw new Error(message);
+      const unmet: Record<string,string> = { ACTIVE_CATEGORY_REQUIRED: "Выберите активную категорию", ACTIVE_VARIANT_REQUIRED: "Добавьте активный вариант", ACTIVE_STOREFRONT_IMAGE_REQUIRED: "Добавьте фото для магазина", NATIVE_CARD_INCOMPLETE: "Заполните описание, цену для продавца и общее фото" };
+      const actionable = body.error?.details?.unmet?.map((v: string) => unmet[v] ?? "Проверьте обязательные поля").join(". ");
+      throw new Error(actionable || (body.error?.message && ["EDIT_CONFLICT", "IDEMPOTENCY_CONFLICT", "STOCK_CHANGED", "INSUFFICIENT_STOCK", "NOT_INITIALIZED"].includes(code) ? body.error.message : code === "VALIDATION_ERROR" && body.error?.details?.issues ? body.error.details.issues.join(". ") : message));
     }
     return body as T;
   }, []);

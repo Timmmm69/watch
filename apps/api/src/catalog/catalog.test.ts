@@ -33,8 +33,8 @@ describe("catalog status transitions", () => {
     expect(canTransitionProductStatus("DRAFT", "ARCHIVED")).toBe(true);
     expect(canTransitionProductStatus("ACTIVE", "ARCHIVED")).toBe(true);
     expect(canTransitionProductStatus("ARCHIVED", "ACTIVE")).toBe(true);
-    expect(canTransitionProductStatus("ACTIVE", "DRAFT")).toBe(false);
-    expect(canTransitionProductStatus("ARCHIVED", "DRAFT")).toBe(false);
+    expect(canTransitionProductStatus("ACTIVE", "DRAFT")).toBe(true);
+    expect(canTransitionProductStatus("ARCHIVED", "DRAFT")).toBe(true);
   });
 
   it("allows only the specified Variant transitions", () => {

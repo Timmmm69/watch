@@ -10,6 +10,7 @@ export default defineConfig({
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
     ...devices["Desktop Chrome"],
     channel: process.env.PLAYWRIGHT_CHANNEL,
+    ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } } : {}),
     trace: "retain-on-failure",
     screenshot: "only-on-failure"
   },

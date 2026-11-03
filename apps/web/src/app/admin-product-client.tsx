@@ -1,151 +1,708 @@
 "use client";
-
-import { useEffect, useState, type FormEvent } from "react";
-import { MAX_IMAGE_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES } from "@watch/contracts";
-import { AdminCatalogLayout, Field, StatusOptions, productStatusLabels, categoryStatusLabels, variantStatusLabels, buttonClass, inputClass, jsonObject, readCategories,
-  useAdminCatalogApi, type Asset, type Category, type Product, type Variant } from "./admin-catalog-common";
-
-export function AdminProductScreen({ csrfToken, productId }: { csrfToken: string; productId: string }) {
-  const api = useAdminCatalogApi(csrfToken);
-  const [product, setProduct] = useState<Product>();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [retry, setRetry] = useState(0);
+import { useCallback, useEffect, useRef, useState } from "react";
+import { rublesToMinor, minorToRubles } from "@watch/contracts";
+import {
+  AdminCatalogLayout,
+  Field,
+  productStatusLabels,
+  buttonClass,
+  inputClass,
+  readCategories,
+  useAdminCatalogApi,
+  type Category,
+  type Product,
+} from "./admin-catalog-common";
+import { StockControls } from "./admin-stock-controls";
+import { ProductPhotos } from "./admin-product-photos";
+import {
+  VariantForm,
+  AssetCreateForm,
+  AssetForm,
+} from "./admin-product-advanced";
+type Draft = {
+  title: string;
+  brand: string;
+  description: string;
+  categoryIds: string[];
+  variants: {
+    id: string;
+    price: string;
+    seller: string;
+    commission: string;
+    settlement: string;
+  }[];
+};
+const draftFrom = (p: Product): Draft => ({
+  title: p.title,
+  brand: p.brand ?? "",
+  description: p.description,
+  categoryIds: p.categories.map((c) => c.id),
+  variants: p.variants.map((v) => ({
+    id: v.id,
+    price: minorToRubles(v.priceMinor),
+    seller:
+      v.dropshipPriceMinor == null ? "" : minorToRubles(v.dropshipPriceMinor),
+    commission: minorToRubles(v.partnerCommissionUnitMinor),
+    settlement:
+      v.supplierSettlementUnitMinor == null
+        ? ""
+        : minorToRubles(v.supplierSettlementUnitMinor),
+  })),
+});
+export function AdminProductScreen({
+  csrfToken,
+  productId,
+}: {
+  csrfToken: string;
+  productId: string;
+}) {
+  const api = useAdminCatalogApi(csrfToken),
+    [product, setProduct] = useState<Product>(),
+    [categories, setCategories] = useState<Category[]>([]);
+  const [draft, setDraft] = useState<Draft>(),
+    [recovery, setRecovery] = useState<Draft>(),
+    [saveState, setSaveState] = useState("Сохранено"),
+    [preview, setPreview] = useState(false),
+    [retry, setRetry] = useState(0);
+  const pendingSave = useRef<{ signature: string; key: string } | null>(null);
+  const photoPending = useRef(false);
+  const onPhotoPending = useCallback((value: boolean) => {
+    photoPending.current = value;
+  }, []);
+  const previewDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const controller = new AbortController(); setProduct(undefined); api.setError("");
-    void Promise.all([api.request<Product>(`/api/v1/admin/products/${encodeURIComponent(productId)}`, "GET", undefined, controller.signal), readCategories(api.request, controller.signal)])
-      .then(([p, c]) => { if (!controller.signal.aborted) { setProduct(p); setCategories(c); } })
-      .catch(cause => { if (!controller.signal.aborted) api.setError(cause.message); });
-    return () => controller.abort();
-  }, [productId, retry, api.request]);
-  const refresh = async () => { setProduct(await api.request<Product>(`/api/v1/admin/products/${encodeURIComponent(productId)}`)); };
-  const saveCore = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); const form = new FormData(event.currentTarget);
-    const status = String(form.get("status"));
-    void api.mutate(async () => {
-      await api.request(`/api/v1/admin/products/${encodeURIComponent(productId)}`, "PATCH", {
-        title: String(form.get("title")), description: String(form.get("description")), brand: String(form.get("brand")) || null,
-        specifications: jsonObject(form.get("specifications")), categoryIds: form.getAll("categoryIds").map(String), status
-      }); await refresh(); api.setNotice("Товар сохранён.");
-    }, status !== product?.status ? `Изменить статус товара на ${productStatusLabels[status] ?? "Статус уточняется"}? Сервер проверит условия публикации.` : undefined);
+    if (preview) previewDialog.current?.showModal();
+  }, [preview]);
+  const base = useRef<Product | undefined>(undefined),
+    current = useRef<Draft | undefined>(undefined),
+    saved = useRef(""),
+    saving = useRef<Promise<Product | undefined> | null>(null);
+  current.current = draft;
+  const storageKey = `watch-product-draft:${productId}`;
+  const dirty = () =>
+    !!current.current && JSON.stringify(current.current) !== saved.current;
+  const navigate = useCallback(() => {
+    if (photoPending.current)
+      return window.confirm(
+        "Есть незагруженные фотографии. При выходе их придётся выбрать заново. Выйти?",
+      );
+    return (
+      !dirty() ||
+      window.confirm(
+        "Есть несохранённые изменения. Они останутся на этом устройстве. Выйти?",
+      )
+    );
+  }, []);
+  const load = async () => {
+    const p = await api.request<Product>(`/api/v1/admin/products/${productId}`);
+    base.current = p;
+    setProduct(p);
+    return p;
   };
-  return <AdminCatalogLayout title={product ? product.title : "Товар"} back="/admin/catalog">
-    {api.error && <p role="alert" className="text-amber-300">{api.error}</p>}{api.notice && <p role="status">{api.notice}</p>}
-    {api.denied ? <p>Редактирование недоступно.</p> : <>
-      <button className={buttonClass} disabled={api.busy} onClick={() => setRetry(n => n + 1)}>Обновить</button>
-      {!product && !api.error && <p role="status">Загружаем товар…</p>}
-      {product && <fieldset disabled={api.busy} className="space-y-5">
-        <p>Для публикации нужны активная категория, доступный вариант товара и изображение. При сохранении система проверит требования.</p>
-        <form key={product.updatedAt} aria-label="Редактирование товара" className="space-y-3 rounded bg-slate-900 p-4" onSubmit={saveCore}>
-          <Field label="Название товара"><input className={inputClass} name="title" required maxLength={200} defaultValue={product.title} /></Field>
-          <Field label="Адрес товара (slug)"><input className={inputClass} readOnly value={product.slug} /></Field><p>Адрес товара создаётся автоматически и после создания не меняется.</p>
-          <Field label="Описание"><textarea className={inputClass} name="description" defaultValue={product.description} /></Field>
-          <Field label="Бренд"><input className={inputClass} name="brand" maxLength={120} defaultValue={product.brand ?? ""} /></Field>
-          <Field label="Характеристики товара (JSON)"><textarea className={inputClass} name="specifications" defaultValue={JSON.stringify(product.specifications, null, 2)} /></Field>
-          <fieldset className="space-y-2"><legend>Категории товара</legend>{categories.length === 0 && <p>Сначала создайте категорию в каталоге.</p>}
-            {categories.map(category => <label key={category.id} className="block"><input type="checkbox" name="categoryIds" value={category.id}
-              defaultChecked={product.categories.some(c => c.id === category.id)} /> {category.name} · {categoryStatusLabels[category.status] ?? "Статус уточняется"}</label>)}
-          </fieldset>
-          <Field label="Статус товара"><select className={inputClass} name="status" defaultValue={product.status}><StatusOptions current={product.status} labels={productStatusLabels} /></select></Field>
-          <button className={buttonClass}>Сохранить товар</button>
-        </form>
-        <section className="space-y-4" aria-label="Варианты"><h2 className="text-xl">Варианты</h2>
-          <p>Денежные значения — целые числа в минимальных единицах валюты (100 = 1). SKU после создания не изменяется.</p>
-          {product.variants.length === 0 && <p>Вариантов товара пока нет.</p>}
-          {product.variants.map(variant => <VariantForm key={`${variant.id}:${variant.updatedAt}:${variant.inventory?.safetyBuffer}`} variant={variant} mutate={api.mutate}
-            save={async payload => { await api.request(`/api/v1/admin/variants/${variant.id}`, "PATCH", payload); await refresh(); api.setNotice("Вариант сохранён."); }} />)}
-          <VariantForm mutate={api.mutate} save={async payload => {
-            await api.request(`/api/v1/admin/products/${product.id}/variants`, "POST", payload); await refresh(); api.setNotice("Черновик варианта создан. Проверьте его настройки перед публикацией.");
-          }} />
-        </section>
-        <section aria-label="Материалы" className="space-y-4"><h2 className="text-xl">Материалы</h2>
-          <p>Фото: JPEG, PNG или WebP до 10 МиБ. Видео: MP4 или WebM до 50 МиБ.</p>
-          <AssetCreateForm variants={product.variants} mutate={api.mutate} save={async (type, form) => {
-            if (type === "TEXT") {
-              await api.request(`/api/v1/admin/products/${product.id}/assets/text`, "POST", {
-                text: String(form.get("text")), purpose: String(form.get("purpose")), variantId: String(form.get("variantId")) || null
-              });
-            } else {
-              const file = form.get("file");
-              if (!(file instanceof File) || !file.size) throw new Error("Выберите файл.");
-              const allowed = type === "IMAGE" ? ["image/jpeg", "image/png", "image/webp"] : ["video/mp4", "video/webm"];
-              const limit = type === "IMAGE" ? MAX_IMAGE_UPLOAD_BYTES : MAX_VIDEO_UPLOAD_BYTES;
-              if (!allowed.includes(file.type) || file.size > limit) throw new Error(`Файл не подходит по типу или размеру. ${assetTypeLabels[type] ?? "Файл"}: максимум ${limit / 1024 / 1024} MiB.`);
-              const upload = new FormData(); upload.set("purpose", String(form.get("purpose")));
-              if (form.get("variantId")) upload.set("variantId", String(form.get("variantId")));
-              upload.set("file", file);
-              await api.request(`/api/v1/admin/products/${product.id}/assets/media`, "POST", upload);
+  const refresh = async () => {
+    await load();
+  };
+  useEffect(() => {
+    const abort = new AbortController();
+    void Promise.all([
+      api.request<Product>(
+        `/api/v1/admin/products/${productId}`,
+        "GET",
+        undefined,
+        abort.signal,
+      ),
+      readCategories(api.request, abort.signal),
+    ])
+      .then(([p, c]) => {
+        if (abort.signal.aborted) return;
+        base.current = p;
+        saved.current = JSON.stringify(draftFrom(p));
+        setProduct(p);
+        setSaveState("Сохранено");
+        setDraft(draftFrom(p));
+        setCategories(c);
+        try {
+          const local = localStorage.getItem(storageKey);
+          if (local && local !== saved.current) setRecovery(JSON.parse(local));
+        } catch {
+          /* Device storage can be unavailable. */
+        }
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) api.setError(e.message);
+      });
+    return () => abort.abort();
+  }, [productId, retry, api.request, storageKey]);
+  const save = useCallback(
+    async function saveLatest(): Promise<Product | undefined> {
+      if (saving.current) {
+        await saving.current;
+        if (dirty()) return saveLatest();
+        return base.current;
+      }
+      if (!base.current || !current.current || !dirty()) return base.current;
+      const snapshot = current.current,
+        signature = JSON.stringify(snapshot),
+        p = base.current;
+      if (!pendingSave.current || pendingSave.current.signature !== signature)
+        pendingSave.current = { signature, key: crypto.randomUUID() };
+      const operationKey = pendingSave.current.key;
+      setSaveState("Сохраняем");
+      api.setError("");
+      const task = (async () => {
+        try {
+          const updated = await api.request<Product>(
+            `/api/v1/admin/shop/products/${productId}`,
+            "PATCH",
+            {
+              operationKey,
+              title: snapshot.title,
+              brand: snapshot.brand,
+              description: snapshot.description,
+              categoryIds: snapshot.categoryIds,
+              expectedUpdatedAt: p.updatedAt,
+              variants: snapshot.variants.map((v) => ({
+                id: v.id,
+                expectedUpdatedAt: p.variants.find((x) => x.id === v.id)!
+                  .updatedAt,
+                priceMinor: rublesToMinor(v.price),
+                dropshipPriceMinor:
+                  v.seller === "" ? null : rublesToMinor(v.seller),
+                partnerCommissionUnitMinor: rublesToMinor(v.commission),
+                supplierSettlementUnitMinor:
+                  v.settlement === "" ? null : rublesToMinor(v.settlement),
+              })),
+            },
+          );
+          base.current = updated;
+          setProduct(updated);
+          saved.current = signature;
+          pendingSave.current = null;
+          setSaveState(
+            JSON.stringify(current.current) === signature
+              ? "Сохранено"
+              : "Есть изменения",
+          );
+          if (JSON.stringify(current.current) === signature)
+            try {
+              localStorage.removeItem(storageKey);
+            } catch {
+              /* Retain in memory. */
             }
-            await refresh(); api.setNotice("Материал добавлен.");
-          }} />
-          {product.assets.length === 0 && <p>Материалов нет</p>}
-          {product.assets.map(asset => <AssetForm key={`${asset.id}:${asset.sortOrder}:${asset.purpose}:${asset.status}:${asset.text}`} asset={asset} mutate={api.mutate}
-            save={async payload => { await api.request(`/api/v1/admin/assets/${asset.id}`, "PATCH", payload); await refresh(); api.setNotice("Материал сохранён."); }} />)}
-        </section>
-      </fieldset>}{api.busy && <p role="status">Сохранение…</p>}
-    </>}
-  </AdminCatalogLayout>;
-}
-
-type FormActions = { mutate: (action: () => Promise<void>, confirmation?: string) => Promise<void>; save: (payload: object) => Promise<void> };
-function VariantForm({ variant, mutate, save }: FormActions & { variant?: Variant }) {
-  return <form aria-label={variant ? `Вариант ${variant.sku}` : "Новый вариант"} className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
-    event.preventDefault(); const element = event.currentTarget; const form = new FormData(element); const status = String(form.get("status"));
-    void mutate(async () => {
-      await save({ ...(variant ? { status, safetyBuffer: Number(form.get("safetyBuffer")) } : { sku: String(form.get("sku")) }),
-        attributes: jsonObject(form.get("attributes")), priceMinor: Number(form.get("priceMinor")),
-        ...(form.get("dropshipPriceMinor") === "" ? {} : { dropshipPriceMinor: Number(form.get("dropshipPriceMinor")) }),
-        partnerCommissionUnitMinor: Number(form.get("commission")), supplierSettlementUnitMinor: form.get("settlement") === "" ? null : Number(form.get("settlement")),
-        inventoryExternalKey: String(form.get("externalKey")) });
-      if (!variant) element.reset();
-    }, variant && (status !== variant.status || String(form.get("externalKey")) !== variant.inventoryExternalKey)
-      ? "Изменить статус или внешний ключ варианта? Изменение ключа сбрасывает снимок остатков и проверяется сервером." : undefined);
-  }}>
-    <h3>{variant ? `${variant.sku} · ${variantStatusLabels[variant.status] ?? "Статус уточняется"} · ${variant.currency}` : "Новый вариант (черновик)"}</h3>
-    <Field label="SKU"><input className={inputClass} name="sku" required maxLength={100} readOnly={!!variant} defaultValue={variant?.sku} /></Field>
-    <Field label="Свойства варианта (JSON)"><textarea className={inputClass} name="attributes" defaultValue={JSON.stringify(variant?.attributes ?? {}, null, 2)} /></Field>
-    <Field label="Розничная цена P (копейки)"><input className={inputClass} name="priceMinor" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.priceMinor ?? 0} /></Field>
-    <p>Её видят все покупатели: пришедшие сами и по ссылке партнёра.</p>
-    <Field label="Цена магазина для продавца D (копейки)"><input className={inputClass} name="dropshipPriceMinor" type="number" required={variant?.dropshipPriceMinor != null} min={0} max={2000000000} step={1} defaultValue={variant?.dropshipPriceMinor ?? ""} /></Field>
-    <p>Продавец видит D только в рабочем режиме и может оформить заказ клиенту по согласованной цене не ниже D. Уже созданные заказы не пересчитываются.</p>
-    <Field label="Комиссия по реферальной ссылке C (копейки)"><input className={inputClass} name="commission" type="number" min={0} max={2147483647} step={1} required defaultValue={variant?.partnerCommissionUnitMinor ?? 0} /></Field>
-    <p>Это отдельная выплата продавцу, когда покупатель сам оформляет заказ по его ссылке по розничной цене P.</p>
-    <Field label="Расчёт с поставщиком (в копейках, необязательно)"><input className={inputClass} name="settlement" type="number" min={0} max={2147483647} step={1} defaultValue={variant?.supplierSettlementUnitMinor ?? ""} /></Field>
-    <Field label="Ключ товара во внешнем источнике"><input className={inputClass} name="externalKey" required maxLength={200} defaultValue={variant?.inventoryExternalKey} /></Field>
-    {variant && <><Field label="Страховой резерв"><input className={inputClass} name="safetyBuffer" type="number" required min={0} step={1} defaultValue={variant.inventory?.safetyBuffer ?? 0} /></Field>
-      <Field label="Статус варианта"><select className={inputClass} name="status" defaultValue={variant.status}><StatusOptions current={variant.status} /></select></Field></>}
-    <button className={buttonClass}>{variant ? "Сохранить вариант" : "Создать вариант"}</button>
-  </form>;
-}
-const assetTypeLabels: Record<string, string> = { IMAGE: "Фото", VIDEO: "Видео", TEXT: "Текст" };
-const assetPurposeLabels: Record<string, string> = { STOREFRONT: "Для магазина", PARTNER_CONTENT: "Для партнёров" };
-
-function PurposeOptions() { return <><option value="STOREFRONT">{assetPurposeLabels.STOREFRONT}</option><option value="PARTNER_CONTENT">{assetPurposeLabels.PARTNER_CONTENT}</option></>; }
-function AssetCreateForm({ variants, mutate, save }: Omit<FormActions, "save"> & { variants: Variant[]; save: (type: string, form: FormData) => Promise<void> }) {
-  const [type, setType] = useState("IMAGE");
-  return <form aria-label="Новый материал" className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
-    event.preventDefault(); const element = event.currentTarget; const form = new FormData(element);
-    void mutate(async () => { await save(type, form); element.reset(); setType("IMAGE"); });
-  }}>
-    <Field label="Тип материала"><select className={inputClass} value={type} onChange={event => setType(event.target.value)}><option value="IMAGE">Фото</option><option value="VIDEO">Видео</option><option value="TEXT">Текст</option></select></Field>
-    <Field label="Назначение материала"><select className={inputClass} name="purpose"><PurposeOptions /></select></Field>
-    <Field label="Вариант материала"><select className={inputClass} name="variantId"><option value="">Для всех вариантов</option>{variants.map(v => <option key={v.id} value={v.id}>{v.sku}</option>)}</select></Field>
-    {type === "TEXT" ? <Field label="Текст материала"><textarea className={inputClass} name="text" required maxLength={10000} /></Field>
-      : <Field label="Файл материала"><input key={type} className={inputClass} name="file" type="file" required accept={type === "IMAGE" ? "image/jpeg,image/png,image/webp" : "video/mp4,video/webm"} /></Field>}
-    <button className={buttonClass}>Добавить материал</button>
-  </form>;
-}
-function AssetForm({ asset, mutate, save }: FormActions & { asset: Asset }) {
-  return <form aria-label={`Материал ${asset.id}`} className="space-y-3 rounded border border-slate-700 p-4" onSubmit={event => {
-    event.preventDefault(); const form = new FormData(event.currentTarget); const purpose = String(form.get("purpose")); const status = String(form.get("status"));
-    void mutate(async () => { await save({ purpose, status, sortOrder: Number(form.get("sortOrder")), ...(asset.type === "TEXT" ? { text: String(form.get("text")) } : {}) }); },
-      purpose !== asset.purpose || status !== asset.status ? "Изменить назначение или статус материала? Сервер проверит условия публикации товара." : undefined);
-  }}>
-    <h3>{assetTypeLabels[asset.type] ?? "Тип уточняется"} · {assetPurposeLabels[asset.purpose] ?? "Назначение уточняется"} · {variantStatusLabels[asset.status] ?? "Статус уточняется"}</h3><p>ID: {asset.id} · Вариант: {asset.variantId ?? "все варианты"} · Размер: {asset.sizeBytes ?? "—"}</p>
-    {asset.mediaUrl && <a className="underline" href={asset.mediaUrl} target="_blank" rel="noreferrer">Открыть файл</a>}
-    {asset.type === "TEXT" && <Field label="Текст материала"><textarea className={inputClass} name="text" required maxLength={10000} defaultValue={asset.text ?? ""} /></Field>}
-    <Field label="Назначение материала"><select className={inputClass} name="purpose" defaultValue={asset.purpose}><PurposeOptions /></select></Field>
-    <Field label="Порядок материала"><input className={inputClass} name="sortOrder" type="number" required step={1} defaultValue={asset.sortOrder} /></Field>
-    <Field label="Статус материала"><select className={inputClass} name="status" defaultValue={asset.status}><StatusOptions current={asset.status} /></select></Field>
-    <button className={buttonClass}>Сохранить материал</button>
-  </form>;
+          return updated;
+        } catch (error) {
+          setSaveState("Не удалось сохранить");
+          api.setError(
+            error instanceof Error
+              ? error.message
+              : "Не удалось сохранить. Введённые данные остались в форме.",
+          );
+          return undefined;
+        }
+      })();
+      saving.current = task;
+      try {
+        return await task;
+      } finally {
+        saving.current = null;
+      }
+    },
+    [api.request, productId, storageKey],
+  );
+  useEffect(() => {
+    if (!draft || !dirty()) return;
+    setSaveState("Есть изменения");
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(draft));
+    } catch {
+      /* Leave form intact. */
+    }
+    const timer = setTimeout(() => void save(), 900);
+    return () => clearTimeout(timer);
+  }, [draft, save, storageKey]);
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirty() || photoPending.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+  const status = (value: string) =>
+    void api.mutate(
+      async () => {
+        if (!(await save()) || dirty()) return;
+        const p = await api.request<Product>(
+          `/api/v1/admin/shop/products/${productId}/status`,
+          "POST",
+          { status: value },
+        );
+        base.current = p;
+        setProduct(p);
+        api.setNotice(
+          value === "ACTIVE"
+            ? "Товар опубликован."
+            : value === "DRAFT"
+              ? "Товар скрыт от покупателей."
+              : "Товар перенесён в архив.",
+        );
+      },
+      value === "ARCHIVED"
+        ? "Перенести товар в архив? История заказов и склада сохранится."
+        : undefined,
+    );
+  const setVariant = (id: string, field: string, value: string) =>
+    setDraft(
+      (d) =>
+        d && {
+          ...d,
+          variants: d.variants.map((v) =>
+            v.id === id ? { ...v, [field]: value } : v,
+          ),
+        },
+    );
+  return (
+    <AdminCatalogLayout
+      title={product?.title || "Товар"}
+      back="/admin/catalog"
+      beforeNavigate={navigate}
+    >
+      {api.error && (
+        <p role="alert" className="rounded-lg bg-danger-soft p-4 text-danger">
+          {api.error}
+          <button
+            type="button"
+            className={`${buttonClass} mt-3`}
+            onClick={() => {
+              if (navigate()) {
+                api.setError("");
+                setRetry((n) => n + 1);
+              }
+            }}
+          >
+            Обновить сохранённые данные
+          </button>
+        </p>
+      )}
+      {api.notice && (
+        <p role="status" className="text-success">
+          {api.notice}
+        </p>
+      )}
+      {!product || !draft ? (
+        <>
+          <p role="status">Загружаем карточку…</p>
+          {api.error && (
+            <button
+              className={buttonClass}
+              onClick={() => setRetry((n) => n + 1)}
+            >
+              Повторить загрузку
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="rounded-full bg-surface-muted px-3 py-1 text-sm">
+              {productStatusLabels[product.status]}
+            </p>
+            <p role="status" aria-live="polite" className="text-sm text-muted">
+              {saveState}
+            </p>
+          </div>
+          {recovery && (
+            <section className="app-panel space-y-3">
+              <p>На этом устройстве есть несохранённые изменения.</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className={buttonClass}
+                  onClick={() => {
+                    setDraft(recovery);
+                    setRecovery(undefined);
+                  }}
+                >
+                  Восстановить введённое
+                </button>
+                <button
+                  className={buttonClass}
+                  onClick={() => {
+                    setRecovery(undefined);
+                    try {
+                      localStorage.removeItem(storageKey);
+                    } catch {}
+                  }}
+                >
+                  Оставить сохранённую версию
+                </button>
+              </div>
+            </section>
+          )}
+          <form
+            aria-label="Редактирование товара"
+            className="app-panel space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
+          >
+            <h2 className="text-xl">О товаре</h2>
+            <Field label="Название">
+              <input
+                className={inputClass}
+                maxLength={200}
+                value={draft.title}
+                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              />
+            </Field>
+            <Field label="Бренд">
+              <input
+                className={inputClass}
+                maxLength={120}
+                value={draft.brand}
+                placeholder="Например, Casio"
+                onChange={(e) => setDraft({ ...draft, brand: e.target.value })}
+              />
+            </Field>
+            <Field label="Описание">
+              <textarea
+                className={`${inputClass} min-h-32`}
+                maxLength={20000}
+                value={draft.description}
+                placeholder="Модель, механизм, размер, особенности и комплектация"
+                onChange={(e) =>
+                  setDraft({ ...draft, description: e.target.value })
+                }
+              />
+            </Field>
+            <fieldset className="space-y-2">
+              <legend className="mb-2">Категория</legend>
+              {categories.map((c) => (
+                <label key={c.id} className="flex min-h-11 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    disabled={
+                      c.status !== "ACTIVE" && !draft.categoryIds.includes(c.id)
+                    }
+                    checked={draft.categoryIds.includes(c.id)}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        categoryIds: e.target.checked
+                          ? [...draft.categoryIds, c.id]
+                          : draft.categoryIds.filter((id) => id !== c.id),
+                      })
+                    }
+                  />
+                  {c.name}
+                  {c.status !== "ACTIVE" ? " · В архиве" : ""}
+                </label>
+              ))}
+              {!categories.length && (
+                <p>Добавьте категорию в каталоге перед публикацией.</p>
+              )}
+            </fieldset>
+            {draft.variants.map((v) => {
+              const variant = product.variants.find((x) => x.id === v.id)!;
+              return (
+                <div
+                  key={v.id}
+                  className="space-y-3 border-t border-hairline pt-4"
+                >
+                  <p className="text-sm text-muted">
+                    {draft.variants.length > 1
+                      ? `Вариант: ${Object.values(variant.attributes).join(" · ") || variant.sku}`
+                      : `Артикул: ${variant.sku}`}
+                  </p>
+                  <Field
+                    label={`Цена, ${variant.currency}${draft.variants.length > 1 ? ` · ${variant.sku}` : ""}`}
+                  >
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={v.price}
+                      onChange={(e) =>
+                        setVariant(v.id, "price", e.target.value)
+                      }
+                    />
+                  </Field>
+                  <details>
+                    <summary>Цена для продавца и комиссии</summary>
+                    <div className="space-y-3 pt-2">
+                      <Field label="Цена для продавца, руб.">
+                        <input
+                          className={inputClass}
+                          inputMode="decimal"
+                          value={v.seller}
+                          onChange={(e) =>
+                            setVariant(v.id, "seller", e.target.value)
+                          }
+                        />
+                      </Field>
+                      <p className="text-sm text-muted">
+                        Согласованная цена для заказа продавцом. Нужна для
+                        публикации. Розничную цену система сюда не подставляет.
+                      </p>
+                      <Field label="Реферальная комиссия, руб.">
+                        <input
+                          className={inputClass}
+                          inputMode="decimal"
+                          value={v.commission}
+                          onChange={(e) =>
+                            setVariant(v.id, "commission", e.target.value)
+                          }
+                        />
+                      </Field>
+                      <Field label="Расчёт с поставщиком, руб. (необязательно)">
+                        <input
+                          className={inputClass}
+                          inputMode="decimal"
+                          value={v.settlement}
+                          onChange={(e) =>
+                            setVariant(v.id, "settlement", e.target.value)
+                          }
+                        />
+                      </Field>
+                    </div>
+                  </details>
+                </div>
+              );
+            })}
+            <button className={buttonClass} type="submit">
+              Сохранить сейчас
+            </button>
+          </form>
+          <ProductPhotos
+            product={product}
+            csrfToken={csrfToken}
+            refresh={refresh}
+            onPendingChange={onPhotoPending}
+          />
+          <section className="app-panel space-y-3">
+            <h2 className="text-xl">Публикация</h2>
+            <p className="text-muted">
+              Черновик виден только вам. Опубликованный товар с нулевым остатком
+              останется в магазине с отметкой «Нет в наличии».
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button className={buttonClass} onClick={() => setPreview(true)}>
+                Предпросмотр
+              </button>
+              <button
+                className={`${buttonClass} app-button-primary`}
+                disabled={api.busy}
+                onClick={() =>
+                  status(product.status === "ACTIVE" ? "DRAFT" : "ACTIVE")
+                }
+              >
+                {product.status === "ACTIVE" ? "Скрыть" : "Опубликовать"}
+              </button>
+              {product.status !== "ARCHIVED" && (
+                <button
+                  className={buttonClass}
+                  disabled={api.busy}
+                  onClick={() => status("ARCHIVED")}
+                >
+                  В архив
+                </button>
+              )}
+            </div>
+          </section>
+          {product.variants.map((v) => (
+            <StockControls
+              key={v.id}
+              variantId={v.id}
+              csrfToken={csrfToken}
+              title={product.variants.length > 1 ? v.sku : undefined}
+            />
+          ))}
+          <details className="app-panel">
+            <summary>Дополнительные варианты и материалы</summary>
+            <p className="my-3 text-muted">
+              Сначала сохраните основные поля. Эти настройки нужны для
+              нескольких вариантов и материалов партнёрам.
+            </p>
+            <fieldset disabled={dirty() || api.busy} className="space-y-4">
+              {product.variants.map((v) => (
+                <form
+                  key={`${v.id}:${v.updatedAt}`}
+                  className="app-panel space-y-3"
+                  aria-label={`Настройки ${v.sku}`}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const form = new FormData(event.currentTarget);
+                    void api.mutate(async () => {
+                      await api.request(
+                        `/api/v1/admin/variants/${v.id}`,
+                        "PATCH",
+                        {
+                          status: String(form.get("status")),
+                          safetyBuffer: Number(form.get("buffer")),
+                        },
+                      );
+                      const p = await load(),
+                        d = draftFrom(p);
+                      saved.current = JSON.stringify(d);
+                      setDraft(d);
+                    }, "Изменить статус или дополнительный резерв варианта?");
+                  }}
+                >
+                  <h3>{Object.values(v.attributes).join(" · ") || v.sku}</h3>
+                  <p className="text-sm text-muted">Артикул: {v.sku}</p>
+                  <Field label="Дополнительно отложить, шт.">
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min={0}
+                      step={1}
+                      name="buffer"
+                      defaultValue={v.inventory?.safetyBuffer ?? 0}
+                    />
+                  </Field>
+                  <Field label="Статус варианта">
+                    <select
+                      className={inputClass}
+                      name="status"
+                      defaultValue={v.status}
+                    >
+                      {v.status === "DRAFT" && (
+                        <option value="DRAFT">Черновик</option>
+                      )}
+                      <option value="ACTIVE">Активен</option>
+                      <option value="ARCHIVED">В архиве</option>
+                    </select>
+                  </Field>
+                  <button className={buttonClass}>
+                    Сохранить настройки варианта
+                  </button>
+                </form>
+              ))}
+              <VariantForm
+                mutate={api.mutate}
+                save={async (payload) => {
+                  await api.request(
+                    `/api/v1/admin/products/${product.id}/variants`,
+                    "POST",
+                    payload,
+                  );
+                  const p = await load();
+                  const d = draftFrom(p);
+                  saved.current = JSON.stringify(d);
+                  setDraft(d);
+                }}
+              />
+              <AssetCreateForm
+                variants={product.variants}
+                mutate={api.mutate}
+                save={async (type, form) => {
+                  if (type === "TEXT")
+                    await api.request(
+                      `/api/v1/admin/products/${product.id}/assets/text`,
+                      "POST",
+                      {
+                        text: String(form.get("text")),
+                        purpose: String(form.get("purpose")),
+                        variantId: String(form.get("variantId")) || null,
+                      },
+                    );
+                  else {
+                    const file = form.get("file");
+                    if (!(file instanceof File))
+                      throw new Error("Выберите файл");
+                    const data = new FormData();
+                    data.set("purpose", String(form.get("purpose")));
+                    if (form.get("variantId"))
+                      data.set("variantId", String(form.get("variantId")));
+                    data.set("file", file);
+                    await api.request(
+                      `/api/v1/admin/products/${product.id}/assets/media`,
+                      "POST",
+                      data,
+                    );
+                  }
+                  await refresh();
+                }}
+              />
+              {product.assets
+                .filter(
+                  (a) =>
+                    a.type !== "IMAGE" ||
+                    a.purpose !== "STOREFRONT" ||
+                    a.status !== "ACTIVE",
+                )
+                .map((a) => (
+                  <AssetForm
+                    key={`${a.id}:${a.sortOrder}:${a.status}`}
+                    asset={a}
+                    mutate={api.mutate}
+                    save={async (payload) => {
+                      await api.request(
+                        `/api/v1/admin/assets/${a.id}`,
+                        "PATCH",
+                        payload,
+                      );
+                      await refresh();
+                    }}
+                  />
+                ))}
+            </fieldset>
+          </details>
+          {preview && (
+            <dialog
+              ref={previewDialog}
+              onCancel={() => setPreview(false)}
+              aria-label="Предпросмотр товара"
+              className="fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none overflow-y-auto border-0 bg-canvas p-4 text-ink"
+            >
+              <div className="mx-auto max-w-lg space-y-4">
+                <button
+                  autoFocus
+                  className={buttonClass}
+                  onClick={() => setPreview(false)}
+                >
+                  Закрыть предпросмотр
+                </button>
+                <p className="text-muted">
+                  Предпросмотр · товар не публикуется
+                </p>
+                <article className="shop-product overflow-hidden">
+                  {product.assets.find(
+                    (a) =>
+                      a.type === "IMAGE" &&
+                      a.purpose === "STOREFRONT" &&
+                      a.status === "ACTIVE",
+                  )?.mediaUrl && (
+                    <img
+                      className="aspect-square w-full object-cover"
+                      alt={draft.title}
+                      src={
+                        product.assets.find(
+                          (a) =>
+                            a.type === "IMAGE" &&
+                            a.purpose === "STOREFRONT" &&
+                            a.status === "ACTIVE",
+                        )!.mediaUrl!
+                      }
+                    />
+                  )}
+                  <div className="space-y-3 p-5">
+                    <p className="text-muted">{draft.brand}</p>
+                    <h2 className="text-2xl">
+                      {draft.title || "Без названия"}
+                    </h2>
+                    <p className="shop-product-price">
+                      {draft.variants[0]?.price} {product.variants[0]?.currency}
+                    </p>
+                    <p className="whitespace-pre-wrap">{draft.description}</p>
+                  </div>
+                </article>
+              </div>
+            </dialog>
+          )}
+        </>
+      )}
+    </AdminCatalogLayout>
+  );
 }

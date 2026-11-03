@@ -1,3 +1,4 @@
+import { OwnerCatalogService } from "./catalog/owner.js";
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { currentLegalDocuments, loadApiRuntimeConfig, telegramAccessAllowlist } from "@watch/config";
@@ -41,15 +42,17 @@ const storageFields = ["OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_REGION", "OBJE
 for (const field of storageFields) {
   if (!process.env[field]) throw new Error(`${field} is required for Product media storage`);
 }
-const assetService = new AssetService(pool, new S3ObjectStorage(
+const objectStorage = new S3ObjectStorage(
   process.env.OBJECT_STORAGE_BUCKET!, process.env.OBJECT_STORAGE_ENDPOINT!,
   process.env.OBJECT_STORAGE_REGION!, process.env.OBJECT_STORAGE_ACCESS_KEY_ID!,
   process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY!
-));
+);
+const assetService = new AssetService(pool, objectStorage);
 const checkReadiness = async () => {
   await verifyInstalledRelease(pool, runtimeConfig);
 };
 const app = createApp({
+  ownerCatalog: new OwnerCatalogService(pool, runtimeConfig.PLATFORM_CURRENCY, objectStorage, fileURLToPath(new URL("../fixtures/demo-catalog/", import.meta.url))),
   nativeCommerce: true,
   supportContact: runtimeConfig.SUPPORT_CONTACT,
   ...(runtimeConfig.API_TRUSTED_PROXY_IP ? { trustedProxyIp: runtimeConfig.API_TRUSTED_PROXY_IP } : {}),

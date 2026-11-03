@@ -121,6 +121,8 @@ export interface AdminProductListItem extends ProductSummary {
   categories: Pick<Category, "id" | "name" | "status">[];
   variants: Pick<Variant, "id" | "sku" | "status" | "priceMinor" | "currency">[];
   availability: StorefrontAvailability;
+  coverUrl: string | null;
+  sellable: number;
 }
 
 export interface VariantCreateInput {
@@ -364,8 +366,8 @@ export function generateSlug(source: string, prefix: string, maxLength: number):
 export function canTransitionProductStatus(from: ProductStatus, to: ProductStatus): boolean {
   if (from === to) return true;
   if (from === "DRAFT") return to === "ACTIVE" || to === "ARCHIVED";
-  if (from === "ACTIVE") return to === "ARCHIVED";
-  return to === "ACTIVE";
+  if (from === "ACTIVE") return to === "ARCHIVED" || to === "DRAFT";
+  return to === "ACTIVE" || to === "DRAFT";
 }
 
 export function canTransitionVariantStatus(from: VariantStatus, to: VariantStatus): boolean {
@@ -728,27 +730,31 @@ export class CatalogService {
     });
   }
 
-  async listProducts(query: Page & { q?: string | undefined; status?: ProductStatus | undefined }): Promise<Paginated<AdminProductListItem>> {
+  async listProducts(query: Page & { q?: string | undefined; status?: ProductStatus | undefined; availability?: "IN_STOCK" | "OUT_OF_STOCK" | undefined }): Promise<Paginated<AdminProductListItem>> {
     const values: unknown[] = [];
     const conditions: string[] = [];
     if (query.status) {
       values.push(query.status);
-      conditions.push(`status = $${values.length}::"ProductStatus"`);
+      conditions.push(`p.status = $${values.length}::"ProductStatus"`);
     }
     if (query.q) {
       values.push(sanitizeSearch(query.q));
       const position = values.length;
       conditions.push(
-        `(title ILIKE $${position} ESCAPE '\\' OR slug ILIKE $${position} ESCAPE '\\' OR brand ILIKE $${position} ESCAPE '\\')`
+        `(p.title ILIKE $${position} ESCAPE '\\' OR p.slug ILIKE $${position} ESCAPE '\\' OR p.brand ILIKE $${position} ESCAPE '\\' OR EXISTS (SELECT 1 FROM product_variants sv WHERE sv.product_id=p.id AND sv.sku ILIKE $${position} ESCAPE '\\'))`
       );
+    }
+    if (query.availability) {
+      const exists = `EXISTS (SELECT 1 FROM product_variants v JOIN inventory_items i ON i.variant_id=v.id WHERE v.product_id=p.id AND v.status<>'ARCHIVED' AND ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)}='IN_STOCK')`;
+      conditions.push(query.availability === "IN_STOCK" ? exists : `NOT ${exists}`);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = await this.pool.query<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM products ${where}`,
+      `SELECT COUNT(*)::int AS count FROM products p ${where}`,
       values
     );
     const items = await this.pool.query<ProductRow>(
-      `SELECT * FROM products ${where} ORDER BY updated_at DESC, id LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      `SELECT * FROM products p ${where} ORDER BY updated_at DESC, id LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, query.limit, (query.page - 1) * query.limit]
     );
     const ids = items.rows.map((row) => row.id);
@@ -758,17 +764,21 @@ export class CatalogService {
          JOIN categories c ON c.id = pc.category_id WHERE pc.product_id = ANY($1::uuid[])
          ORDER BY c.sort_order, c.id`, [ids]),
       this.pool.query<{ product_id: string; id: string; sku: string; status: VariantStatus;
-        price_minor: number; currency: string; availability: StorefrontAvailability }>(
+        price_minor: number; currency: string; sellable: number; availability: StorefrontAvailability }>(
         `SELECT v.product_id, v.id, v.sku, v.status, v.price_minor, v.currency,
+         GREATEST(0, COALESCE(i.native_on_hand-i.native_reserved_quantity-i.safety_buffer,0)) AS sellable,
          ${variantAvailabilitySql(this.inventoryMaxAgeSeconds)} AS availability
          FROM product_variants v LEFT JOIN inventory_items i ON i.variant_id = v.id
          WHERE v.product_id = ANY($1::uuid[]) ORDER BY v.created_at, v.id`, [ids])
     ]);
+    const covers = await this.pool.query<{ product_id: string; id: string }>(`SELECT DISTINCT ON (product_id) product_id,id FROM product_assets WHERE product_id=ANY($1::uuid[]) AND type='IMAGE' AND purpose='STOREFRONT' AND status='ACTIVE' ORDER BY product_id,sort_order,created_at,id`, [ids]);
     return {
       items: items.rows.map((row) => {
         const productVariants = variants.rows.filter((variant) => variant.product_id === row.id);
-        const available = productVariants.filter((variant) => variant.status === "ACTIVE").map((variant) => variant.availability);
-        return { ...mapProduct(row),
+        const available = productVariants.filter((variant) => variant.status !== "ARCHIVED").map((variant) => variant.availability);
+        const cover = covers.rows.find(a => a.product_id === row.id);
+        return { ...mapProduct(row), coverUrl: cover ? `/api/v1/catalog/assets/${cover.id}/media` : null,
+          sellable: productVariants.filter(v => v.status !== "ARCHIVED").reduce((n,v) => n + v.sellable, 0),
           categories: categories.rows.filter((category) => category.product_id === row.id)
             .map(({ id, name, status }) => ({ id, name, status })),
           variants: productVariants.map((variant) => ({ id: variant.id, sku: variant.sku, status: variant.status,

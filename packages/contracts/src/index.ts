@@ -413,7 +413,8 @@ export const adminCategoryPatchRequestSchema = z.object({
 
 export const adminProductListQuerySchema = pageQuerySchema.extend({
   q: z.string().min(1).max(100).optional(),
-  status: productStatusSchema.optional()
+  status: productStatusSchema.optional(),
+  availability: z.enum(["IN_STOCK", "OUT_OF_STOCK"]).optional()
 });
 
 export const adminProductCreateRequestSchema = z.object({
@@ -434,6 +435,7 @@ export const adminProductPatchRequestSchema = z.object({
 }).refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
 export const adminVariantCreateRequestSchema = z.object({
+  operationKey: z.string().uuid().optional(),
   sku: z.string().min(1).max(100),
   attributes: jsonRecord.default({}),
   priceMinor: moneyMinor,
@@ -530,3 +532,6 @@ export const adminReturnDetailSchema = z.object({
   updatedAt: z.string().datetime()
 });
 export type AdminReturnDetail = z.infer<typeof adminReturnDetailSchema>;
+
+export * from "./owner-catalog.js";
+export * from "./owner-money.js";

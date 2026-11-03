@@ -134,7 +134,7 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     variantIds.push(variant.id);
     expect(variant).toMatchObject({ status: "DRAFT", currency: platformCurrency, priceMinor: 100_000 });
     const withDraftVariant = await service.listProducts({ q: searchToken, page: 1, limit: 20 });
-    expect(withDraftVariant.items[0]).toMatchObject({ variants: [{ id: variant.id, sku: variant.sku, status: "DRAFT", priceMinor: 100_000, currency: platformCurrency }], availability: "OUT_OF_STOCK" });
+    expect(withDraftVariant.items[0]).toMatchObject({ variants: [{ id: variant.id, sku: variant.sku, status: "DRAFT", priceMinor: 100_000, currency: platformCurrency }], availability: "UNKNOWN" });
     expect(variant.inventory).toMatchObject({
       sourceQuantity: null,
       safetyBuffer: 0,
@@ -301,9 +301,7 @@ describe.skipIf(!databaseUrl)("Catalog foundation against PostgreSQL", () => {
     ).rejects.toBeInstanceOf(ActiveProductInvariantError);
     const archived = await service.updateProduct(actorUserId, product.id, { status: "ARCHIVED" });
     expect(archived.status).toBe("ARCHIVED");
-    await expect(
-      service.updateProduct(actorUserId, product.id, { status: "DRAFT" })
-    ).rejects.toBeInstanceOf(CatalogValidationError);
+    expect((await service.updateProduct(actorUserId, product.id, { status: "DRAFT" })).status).toBe("DRAFT");
   });
 
   it("resets inventory source state when the external key changes", async () => {
